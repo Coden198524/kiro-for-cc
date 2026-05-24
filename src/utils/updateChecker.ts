@@ -87,7 +87,7 @@ export class UpdateChecker {
      * Show update notification
      */
     private showUpdateNotification(currentVersion: string, latestVersion: string): void {
-        const message = `Kiro for Agent Code ${latestVersion} is available! (current: ${currentVersion})`;
+        const message = `AutoCode ${latestVersion} is available! (current: ${currentVersion})`;
         this.outputChannel.appendLine(`[UpdateChecker] Showing update notification: ${message}`);
         
         vscode.window.showInformationMessage(

@@ -1,7 +1,7 @@
 {
   "name": "kiro-for-cc",
-  "displayName": "Kiro for Agent Code",
-  "description": "Spec-driven development with Claude Code, Codex, DeepSeek, GLM, and custom agents - inspired by Kiro",
+  "displayName": "AutoCode",
+  "description": "Spec-driven development with Claude Code, Codex, DeepSeek, GLM, and custom agents",
   "version": "0.2.9",
   "publisher": "heisebaiyun",
   "icon": "icon.png",
@@ -26,7 +26,7 @@
       "activitybar": [
         {
           "id": "kfc",
-          "title": "Kiro for Agent Code",
+          "title": "AutoCode",
           "icon": "./icons/kiro.svg"
         }
       ]
@@ -69,7 +69,7 @@
     "viewsWelcome": [
       {
         "view": "kfc.views.overview",
-        "contents": "Configure Kiro agent providers\n\n[$(gear) Open Settings](command:kfc.settings.open)\n[$(question) Help](command:kfc.help.open)"
+        "contents": "Configure AutoCode agent providers\n\n[$(gear) Open Settings](command:kfc.settings.open)\n[$(question) Help](command:kfc.help.open)"
       },
       {
         "view": "kfc.views.specExplorer",
@@ -85,149 +85,149 @@
       },
       {
         "view": "kfc.views.mcpServerStatus",
-        "contents": "Connect to external tools and services\nConfigure extension MCP servers in Kiro settings"
+        "contents": "Connect to external tools and services\nConfigure extension MCP servers in AutoCode settings"
       }
     ],
     "commands": [
       {
         "command": "kfc.spec.create",
         "title": "Create New Spec",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(plus)"
       },
       {
         "command": "kfc.spec.createWithAgents",
         "title": "New Spec with Agents",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.steering.create",
         "title": "Create Custom Steering",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(plus)"
       },
       {
         "command": "kfc.steering.generateInitial",
         "title": "Init Steering",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.steering.refine",
         "title": "Refine Steering",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.spec.delete",
         "title": "Delete Spec",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(trash)"
       },
       {
         "command": "kfc.steering.delete",
         "title": "Delete Steering",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(trash)"
       },
       {
         "command": "kfc.steering.createUserRule",
         "title": "Create User Rule",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(globe)"
       },
       {
         "command": "kfc.steering.createProjectRule",
         "title": "Create Project Rule",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(root-folder)"
       },
       {
         "command": "kfc.hooks.refresh",
         "title": "Refresh Hooks",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.mcp.refresh",
         "title": "Refresh MCP Status",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.settings.open",
-        "title": "Kiro Settings",
-        "category": "Kiro for Agent Code",
+        "title": "AutoCode Settings",
+        "category": "AutoCode",
         "icon": "$(gear)"
       },
       {
         "command": "kfc.checkForUpdates",
         "title": "Check for Updates",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(sync)"
       },
       {
         "command": "kfc.spec.refresh",
         "title": "Refresh Specs",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.steering.refresh",
         "title": "Refresh Steering",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.agents.refresh",
         "title": "Refresh Agents",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.help.open",
-        "title": "Kiro Help",
-        "category": "Kiro for Agent Code",
+        "title": "AutoCode Help",
+        "category": "AutoCode",
         "icon": "$(question)"
       },
       {
         "command": "kfc.menu.open",
-        "title": "Kiro Menu",
-        "category": "Kiro for Agent Code",
+        "title": "AutoCode Menu",
+        "category": "AutoCode",
         "icon": "$(ellipsis)"
       },
       {
         "command": "kfc.permission.check",
         "title": "Check Permission Status",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(info)"
       },
       {
         "command": "kfc.permission.reset",
         "title": "Reset Permissions",
-        "category": "Kiro for Agent Code",
+        "category": "AutoCode",
         "icon": "$(debug-restart)"
       },
       {
         "command": "kfc.spec.implTask",
         "title": "Implement Task",
-        "category": "Kiro for Agent Code"
+        "category": "AutoCode"
       },
       {
         "command": "kfc.spec.implAllTasks",
         "title": "Implement All Spec Tasks",
-        "category": "Kiro for Agent Code"
+        "category": "AutoCode"
       },
       {
         "command": "kfc.spec.markTaskDone",
         "title": "Mark Spec Task Done",
-        "category": "Kiro for Agent Code"
+        "category": "AutoCode"
       },
       {
         "command": "kfc.spec.viewTaskSession",
         "title": "View Spec Task AI Session",
-        "category": "Kiro for Agent Code"
+        "category": "AutoCode"
       }
     ],
     "menus": {
@@ -314,7 +314,7 @@
       ]
     },
     "configuration": {
-      "title": "Kiro for Agent Code",
+      "title": "AutoCode",
       "properties": {
         "kfc.claudePath": {
           "type": "string",

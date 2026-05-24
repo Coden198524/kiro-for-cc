@@ -1,4 +1,4 @@
-# Kiro for Claude Code
+# AutoCode
 
 [![Visual Studio Marketplace](https://img.shields.io/vscode-marketplace/v/heisebaiyun.kiro-for-cc.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
 [![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.kiro-for-cc.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
@@ -15,7 +15,7 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 
 **NEW: Create SPEC with Sub Agents:**
 
-1. Click the Kiro for CC icon in the activity bar
+1. Click the AutoCode icon in the activity bar
 2. In the SPEC view header, click the "New Spec with Agents" button (with sparkle icon ✨)
 3. Enter a feature description
 4. Claude will automatically:
@@ -64,7 +64,7 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 
 ## Screenshot
 
-![Kiro for Claude Code Extension](./screenshots/image.png)
+![AutoCode Extension](./screenshots/image.png)
 
 *The extension provides a comprehensive sidebar interface with organized views for specs, steering documents, MCP servers, and hooks management. All your Claude Code enhancement tools in one place.*
 
@@ -91,7 +91,7 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 
 1. Open VSCode
 2. Go to Extensions (Cmd+Shift+X)
-3. Search for "Kiro for Claude Code"
+3. Search for "AutoCode"
 4. Click Install
 
 Or via command line:
@@ -104,7 +104,7 @@ code --install-extension heisebaiyun.kiro-for-cc
 The extension is available on OpenVSX Registry. In Cursor:
 
 1. Go to Extensions
-2. Search for "Kiro for Claude Code"
+2. Search for "AutoCode"
 3. Click Install
 
 Or via command line:
@@ -132,7 +132,7 @@ Replace `{latest-version}` with the actual version number, e.g., `0.2.4`.
 ### Creating a Spec
 
 **Traditional Method:**
-1. Click the Kiro for CC icon in the activity bar
+1. Click the AutoCode icon in the activity bar
 2. In the SPEC view, click the `+` button
 3. Enter a feature description
 4. Claude will generate the requirements document

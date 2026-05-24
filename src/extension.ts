@@ -38,7 +38,7 @@ export function getPermissionManager(): PermissionManager {
 
 export async function activate(context: vscode.ExtensionContext) {
     // Create output channel for debugging
-    outputChannel = vscode.window.createOutputChannel('Kiro for Agent Code - Debug');
+    outputChannel = vscode.window.createOutputChannel('AutoCode - Debug');
 
     // Initialize PromptLoader
     try {
@@ -510,7 +510,7 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
 
         // Overview and settings commands
         vscode.commands.registerCommand('kfc.settings.open', async () => {
-            outputChannel.appendLine('Opening Kiro settings...');
+            outputChannel.appendLine('Opening AutoCode settings...');
 
             const settingsFile = await ensureSettingsFile();
             if (!settingsFile) {
@@ -524,13 +524,13 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         }),
 
         vscode.commands.registerCommand('kfc.help.open', async () => {
-            outputChannel.appendLine('Opening Kiro help...');
+            outputChannel.appendLine('Opening AutoCode help...');
             const helpUrl = 'https://github.com/notdp/kiro-for-cc#readme';
             vscode.env.openExternal(vscode.Uri.parse(helpUrl));
         }),
 
         vscode.commands.registerCommand('kfc.menu.open', async () => {
-            outputChannel.appendLine('Opening Kiro menu...');
+            outputChannel.appendLine('Opening AutoCode menu...');
             await toggleViews();
         }),
 

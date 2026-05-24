@@ -107,7 +107,7 @@ export class PermissionManager {
 
                 // 先显示确认对话框
                 const confirm = await vscode.window.showWarningMessage(
-                    'Are you sure you want to uninstall Kiro for Agent Code?',
+                    'Are you sure you want to uninstall AutoCode?',
                     'Keep It',
                     'Uninstall'
                 );

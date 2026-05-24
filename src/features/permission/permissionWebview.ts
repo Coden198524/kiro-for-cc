@@ -24,7 +24,7 @@ export class PermissionWebview {
         if (outputChannel) {
             this.outputChannel = outputChannel;
         } else if (!this.outputChannel) {
-            this.outputChannel = vscode.window.createOutputChannel('Kiro for Agent Code - Debug');
+            this.outputChannel = vscode.window.createOutputChannel('AutoCode - Debug');
         }
         this.outputChannel.appendLine(
             `[PermissionWebview] createOrShow called, current state: ` +

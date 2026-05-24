@@ -14,7 +14,7 @@ export class ClaudeCodeProvider extends TerminalAgentRuntime {
         super(context, outputChannel, getProviderConfig('claude'));
     }
 
-    async invokeClaudeSplitView(prompt: string, title: string = 'Kiro for Agent Code'): Promise<vscode.Terminal> {
+    async invokeClaudeSplitView(prompt: string, title: string = 'AutoCode'): Promise<vscode.Terminal> {
         return this.invokeInteractive({ prompt, title });
     }
 
