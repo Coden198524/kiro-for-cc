@@ -80,7 +80,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 - Strengthen spec-system-prompt-loader agent to prevent irrelevant responses
-- Remove kfc agents from version control (moved to .gitignore)
+- Remove AutoCode agents from version control (moved to .gitignore)
 
 ## [0.2.3] - 2025-07-28
 
@@ -106,7 +106,7 @@ All notable changes to this project will be documented in this file.
 - Force update built-in agents and system prompts on startup
   - Always overwrite built-in resources to ensure users have the latest versions
   - Prevents issues with outdated agents from previous installations
-  - Built-in agents remain in project's .claude/agents/kfc directory only
+  - Built-in agents remain in project's .claude/agents/autocode directory only
 
 ## [0.2.1] - 2025-07-26
 
@@ -205,7 +205,7 @@ All notable changes to this project will be documented in this file.
 
 - Add automatic update checker with GitHub API integration
   - Check for new versions on extension startup
-  - Manual check available via command palette: "Kiro: Check for Updates"
+  - Manual check available via command palette: "AutoCode: Check for Updates"
   - Show notification with "View Changelog" and "Skip" options
   - Rate limit checks to once per 24 hours
   - Skip specific versions to avoid repeated notifications
@@ -269,7 +269,7 @@ All notable changes to this project will be documented in this file.
 
 ### ✨ New Features
 
-- Initial release of Kiro for Claude Code
+- Initial release of AutoCode
 - Spec-driven development features
 - Steering document management
 - Claude CLI integration

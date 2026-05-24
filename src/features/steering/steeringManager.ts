@@ -58,7 +58,7 @@ export class SteeringManager {
 
             await this.agentRuntime.invokeInteractive({
                 prompt,
-                title: 'KFC - Create Steering',
+                title: 'AutoCode - Create Steering',
                 agentType: 'steering_writer'
             });
 
@@ -91,7 +91,7 @@ export class SteeringManager {
             // Execute the active agent command to update CLAUDE.md if needed.
             const result = await this.agentRuntime.invokeHeadless({
                 prompt,
-                title: 'KFC - Delete Steering',
+                title: 'AutoCode - Delete Steering',
                 agentType: 'steering_deleter'
             });
 
@@ -154,7 +154,7 @@ export class SteeringManager {
 
             await this.agentRuntime.invokeInteractive({
                 prompt,
-                title: 'KFC - Init Steering',
+                title: 'AutoCode - Init Steering',
                 agentType: 'steering_initializer'
             });
 
@@ -174,7 +174,7 @@ export class SteeringManager {
         // Send to the active agent.
         await this.agentRuntime.invokeInteractive({
             prompt,
-            title: 'KFC - Refine Steering',
+            title: 'AutoCode - Refine Steering',
             agentType: 'steering_refiner'
         });
 

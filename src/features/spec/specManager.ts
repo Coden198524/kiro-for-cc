@@ -109,7 +109,7 @@ export class SpecManager {
         // Send to the active agent and get the terminal.
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
-            title: useAgents ? 'KFC - Creating Spec (Agents)' : 'KFC - Creating Spec',
+            title: useAgents ? 'AutoCode - Creating Spec (Agents)' : 'AutoCode - Creating Spec',
             agentType: useAgents ? 'spec_with_agents' : 'spec_orchestrator'
         });
 
@@ -164,7 +164,7 @@ export class SpecManager {
 
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             agentType: 'task_implementer',
             reuseTerminal: true
         });
@@ -205,10 +205,10 @@ export class SpecManager {
 
         return {
             providerName: provider.displayName,
-            agentDirectory: path.join(workspacePath, '.autocode', 'agents', 'kfc'),
+            agentDirectory: path.join(workspacePath, '.autocode', 'agents', 'autocode'),
             agentConfigPath: '(not required)',
             agentInvocationInstruction: [
-                'Use the Claude/AutoCode project agents under `.autocode/agents/kfc` when your runtime exposes subagents.',
+                'Use the Claude/AutoCode project agents under `.autocode/agents/autocode` when your runtime exposes subagents.',
                 'Match each workflow phase to these agent names: spec-requirements, spec-design, spec-tasks, spec-judge, spec-impl, and spec-test.',
                 'If direct subagent spawning is unavailable, read the matching `.md` file and apply its instructions as the role instructions for that phase.'
             ].join('\n')
@@ -246,7 +246,7 @@ export class SpecManager {
         const prompt = this.buildAllTasksPrompt(taskFilePath, tasks, languagePreference, languageInstruction);
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
-            title: 'KFC - Implementing All Tasks',
+            title: 'AutoCode - Implementing All Tasks',
             agentType: 'task_implementer',
             reuseTerminal: true
         });
@@ -536,7 +536,7 @@ export class SpecManager {
         } catch (error) {
             // File doesn't exist, look for already open virtual documents
             // Create unique identifier for this spec document
-            const uniqueMarker = `<!-- kiro-spec: ${specName}/${type} -->`;
+            const uniqueMarker = `<!-- autocode-spec: ${specName}/${type} -->`;
 
             for (const doc of vscode.workspace.textDocuments) {
                 // Check if this is an untitled document with our unique marker

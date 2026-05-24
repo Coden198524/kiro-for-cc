@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { VSC_CONFIG_NAMESPACE } from '../constants';
+import { LEGACY_VSC_CONFIG_NAMESPACE, VSC_CONFIG_NAMESPACE } from '../constants';
 import { ConfigManager, CustomMcpServerSettings } from '../utils/configManager';
 
 export interface RuntimeProviderSettings {
@@ -34,7 +34,16 @@ function getVsCodeValue<T>(section: string, defaultValue: T | undefined): T | un
         return defaultValue;
     }
 
-    const config = vscode.workspace.getConfiguration(VSC_CONFIG_NAMESPACE);
+    const configValue = readConfigurationValue<T>(VSC_CONFIG_NAMESPACE, section, undefined);
+    if (configValue !== undefined) {
+        return configValue;
+    }
+
+    return readConfigurationValue<T>(LEGACY_VSC_CONFIG_NAMESPACE, section, defaultValue);
+}
+
+function readConfigurationValue<T>(namespace: string, section: string, defaultValue: T | undefined): T | undefined {
+    const config = vscode.workspace.getConfiguration(namespace);
     if (typeof config.inspect === 'function') {
         const inspected = config.inspect<T>(section);
         if (!inspected) {

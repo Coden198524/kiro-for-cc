@@ -1,5 +1,5 @@
 {
-  "name": "kiro-for-cc",
+  "name": "autocode",
   "displayName": "AutoCode",
   "description": "Spec-driven development with Claude Code, Codex, DeepSeek, GLM, and custom agents",
   "version": "0.2.9",
@@ -7,7 +7,7 @@
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/notdp/kiro-for-cc"
+    "url": "https://github.com/Coden198524/autocode"
   },
   "engines": {
     "vscode": "^1.84.0"
@@ -25,207 +25,207 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "kfc",
+          "id": "autocode",
           "title": "AutoCode",
-          "icon": "./icons/kiro.svg"
+          "icon": "./icons/autocode.svg"
         }
       ]
     },
     "views": {
-      "kfc": [
+      "autocode": [
         {
-          "id": "kfc.views.specExplorer",
+          "id": "autocode.views.specExplorer",
           "name": "Specs",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.specs.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.specs.visible"
         },
         {
-          "id": "kfc.views.agentsExplorer",
+          "id": "autocode.views.agentsExplorer",
           "name": "Agents",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.agents.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.agents.visible"
         },
         {
-          "id": "kfc.views.steeringExplorer",
+          "id": "autocode.views.steeringExplorer",
           "name": "Steering",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.steering.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.steering.visible"
         },
         {
-          "id": "kfc.views.mcpServerStatus",
+          "id": "autocode.views.mcpServerStatus",
           "name": "MCP Servers",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.mcp.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.mcp.visible"
         },
         {
-          "id": "kfc.views.hooksStatus",
+          "id": "autocode.views.hooksStatus",
           "name": "Hooks",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.hooks.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.hooks.visible"
         },
         {
-          "id": "kfc.views.overview",
+          "id": "autocode.views.overview",
           "name": "Settings",
           "visibility": "collapsed",
-          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.kfc.views.settings.visible"
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.settings.visible"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "kfc.views.overview",
-        "contents": "Configure AutoCode agent providers\n\n[$(gear) Open Settings](command:kfc.settings.open)\n[$(question) Help](command:kfc.help.open)"
+        "view": "autocode.views.overview",
+        "contents": "Configure AutoCode agent providers\n\n[$(gear) Open Settings](command:autocode.settings.open)\n[$(question) Help](command:autocode.help.open)"
       },
       {
-        "view": "kfc.views.specExplorer",
-        "contents": "Build complex features with structured planning\n\n[$(plus) Create New Spec](command:kfc.spec.create)\n\n[$(sparkle) Create New Spec With Agents](command:kfc.spec.createWithAgents)"
+        "view": "autocode.views.specExplorer",
+        "contents": "Build complex features with structured planning\n\n[$(plus) Create New Spec](command:autocode.spec.create)\n\n[$(sparkle) Create New Spec With Agents](command:autocode.spec.createWithAgents)"
       },
       {
-        "view": "kfc.views.hooksStatus",
+        "view": "autocode.views.hooksStatus",
         "contents": "Automate repetitive tasks with smart triggers"
       },
       {
-        "view": "kfc.views.steeringExplorer",
-        "contents": "[$(globe) Create User Rule](command:kfc.steering.createUserRule)\n\n[$(root-folder) Create Project Rule](command:kfc.steering.createProjectRule)"
+        "view": "autocode.views.steeringExplorer",
+        "contents": "[$(globe) Create User Rule](command:autocode.steering.createUserRule)\n\n[$(root-folder) Create Project Rule](command:autocode.steering.createProjectRule)"
       },
       {
-        "view": "kfc.views.mcpServerStatus",
+        "view": "autocode.views.mcpServerStatus",
         "contents": "Connect to external tools and services\nConfigure extension MCP servers in AutoCode settings"
       }
     ],
     "commands": [
       {
-        "command": "kfc.spec.create",
+        "command": "autocode.spec.create",
         "title": "Create New Spec",
         "category": "AutoCode",
         "icon": "$(plus)"
       },
       {
-        "command": "kfc.spec.createWithAgents",
+        "command": "autocode.spec.createWithAgents",
         "title": "New Spec with Agents",
         "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
-        "command": "kfc.steering.create",
+        "command": "autocode.steering.create",
         "title": "Create Custom Steering",
         "category": "AutoCode",
         "icon": "$(plus)"
       },
       {
-        "command": "kfc.steering.generateInitial",
+        "command": "autocode.steering.generateInitial",
         "title": "Init Steering",
         "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
-        "command": "kfc.steering.refine",
+        "command": "autocode.steering.refine",
         "title": "Refine Steering",
         "category": "AutoCode",
         "icon": "$(sparkle)"
       },
       {
-        "command": "kfc.spec.delete",
+        "command": "autocode.spec.delete",
         "title": "Delete Spec",
         "category": "AutoCode",
         "icon": "$(trash)"
       },
       {
-        "command": "kfc.steering.delete",
+        "command": "autocode.steering.delete",
         "title": "Delete Steering",
         "category": "AutoCode",
         "icon": "$(trash)"
       },
       {
-        "command": "kfc.steering.createUserRule",
+        "command": "autocode.steering.createUserRule",
         "title": "Create User Rule",
         "category": "AutoCode",
         "icon": "$(globe)"
       },
       {
-        "command": "kfc.steering.createProjectRule",
+        "command": "autocode.steering.createProjectRule",
         "title": "Create Project Rule",
         "category": "AutoCode",
         "icon": "$(root-folder)"
       },
       {
-        "command": "kfc.hooks.refresh",
+        "command": "autocode.hooks.refresh",
         "title": "Refresh Hooks",
         "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
-        "command": "kfc.mcp.refresh",
+        "command": "autocode.mcp.refresh",
         "title": "Refresh MCP Status",
         "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
-        "command": "kfc.settings.open",
+        "command": "autocode.settings.open",
         "title": "AutoCode Settings",
         "category": "AutoCode",
         "icon": "$(gear)"
       },
       {
-        "command": "kfc.checkForUpdates",
+        "command": "autocode.checkForUpdates",
         "title": "Check for Updates",
         "category": "AutoCode",
         "icon": "$(sync)"
       },
       {
-        "command": "kfc.spec.refresh",
+        "command": "autocode.spec.refresh",
         "title": "Refresh Specs",
         "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
-        "command": "kfc.steering.refresh",
+        "command": "autocode.steering.refresh",
         "title": "Refresh Steering",
         "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
-        "command": "kfc.agents.refresh",
+        "command": "autocode.agents.refresh",
         "title": "Refresh Agents",
         "category": "AutoCode",
         "icon": "$(refresh)"
       },
       {
-        "command": "kfc.help.open",
+        "command": "autocode.help.open",
         "title": "AutoCode Help",
         "category": "AutoCode",
         "icon": "$(question)"
       },
       {
-        "command": "kfc.menu.open",
+        "command": "autocode.menu.open",
         "title": "AutoCode Menu",
         "category": "AutoCode",
         "icon": "$(ellipsis)"
       },
       {
-        "command": "kfc.permission.check",
+        "command": "autocode.permission.check",
         "title": "Check Permission Status",
         "category": "AutoCode",
         "icon": "$(info)"
       },
       {
-        "command": "kfc.permission.reset",
+        "command": "autocode.permission.reset",
         "title": "Reset Permissions",
         "category": "AutoCode",
         "icon": "$(debug-restart)"
       },
       {
-        "command": "kfc.spec.implTask",
+        "command": "autocode.spec.implTask",
         "title": "Implement Task",
         "category": "AutoCode"
       },
       {
-        "command": "kfc.spec.implAllTasks",
+        "command": "autocode.spec.implAllTasks",
         "title": "Implement All Spec Tasks",
         "category": "AutoCode"
       },
       {
-        "command": "kfc.spec.markTaskDone",
+        "command": "autocode.spec.markTaskDone",
         "title": "Mark Spec Task Done",
         "category": "AutoCode"
       },
       {
-        "command": "kfc.spec.viewTaskSession",
+        "command": "autocode.spec.viewTaskSession",
         "title": "View Spec Task AI Session",
         "category": "AutoCode"
       }
@@ -233,95 +233,95 @@
     "menus": {
       "view/title": [
         {
-          "command": "kfc.menu.open",
-          "when": "view == kfc.views.overview",
+          "command": "autocode.menu.open",
+          "when": "view == autocode.views.overview",
           "group": "navigation"
         },
         {
-          "command": "kfc.spec.create",
-          "when": "view == kfc.views.specExplorer",
+          "command": "autocode.spec.create",
+          "when": "view == autocode.views.specExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "kfc.spec.createWithAgents",
-          "when": "view == kfc.views.specExplorer",
+          "command": "autocode.spec.createWithAgents",
+          "when": "view == autocode.views.specExplorer",
           "group": "navigation@2"
         },
         {
-          "command": "kfc.spec.refresh",
-          "when": "view == kfc.views.specExplorer",
+          "command": "autocode.spec.refresh",
+          "when": "view == autocode.views.specExplorer",
           "group": "navigation@3"
         },
         {
-          "command": "kfc.steering.generateInitial",
-          "when": "view == kfc.views.steeringExplorer",
+          "command": "autocode.steering.generateInitial",
+          "when": "view == autocode.views.steeringExplorer",
           "group": "navigation@2"
         },
         {
-          "command": "kfc.steering.create",
-          "when": "view == kfc.views.steeringExplorer",
+          "command": "autocode.steering.create",
+          "when": "view == autocode.views.steeringExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "kfc.steering.refresh",
-          "when": "view == kfc.views.steeringExplorer",
+          "command": "autocode.steering.refresh",
+          "when": "view == autocode.views.steeringExplorer",
           "group": "navigation@3"
         },
         {
-          "command": "kfc.mcp.refresh",
-          "when": "view == kfc.views.mcpServerStatus",
+          "command": "autocode.mcp.refresh",
+          "when": "view == autocode.views.mcpServerStatus",
           "group": "navigation"
         },
         {
-          "command": "kfc.hooks.refresh",
-          "when": "view == kfc.views.hooksStatus",
+          "command": "autocode.hooks.refresh",
+          "when": "view == autocode.views.hooksStatus",
           "group": "navigation"
         },
         {
-          "command": "kfc.agents.refresh",
-          "when": "view == kfc.views.agentsExplorer",
+          "command": "autocode.agents.refresh",
+          "when": "view == autocode.views.agentsExplorer",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "kfc.spec.delete",
-          "when": "view == kfc.views.specExplorer && viewItem == spec",
+          "command": "autocode.spec.delete",
+          "when": "view == autocode.views.specExplorer && viewItem == spec",
           "group": "7_modification"
         },
         {
-          "command": "kfc.steering.refine",
-          "when": "view == kfc.views.steeringExplorer && viewItem == steering-document",
+          "command": "autocode.steering.refine",
+          "when": "view == autocode.views.steeringExplorer && viewItem == steering-document",
           "group": "inline"
         },
         {
-          "command": "kfc.steering.delete",
-          "when": "view == kfc.views.steeringExplorer && viewItem == steering-document",
+          "command": "autocode.steering.delete",
+          "when": "view == autocode.views.steeringExplorer && viewItem == steering-document",
           "group": "7_modification"
         }
       ],
       "commandPalette": [
         {
-          "command": "kfc.spec.create"
+          "command": "autocode.spec.create"
         },
         {
-          "command": "kfc.steering.create",
+          "command": "autocode.steering.create",
           "when": "workspaceFolderCount > 0"
         },
         {
-          "command": "kfc.checkForUpdates"
+          "command": "autocode.checkForUpdates"
         }
       ]
     },
     "configuration": {
       "title": "AutoCode",
       "properties": {
-        "kfc.claudePath": {
+        "autocode.claudePath": {
           "type": "string",
           "default": "claude",
-          "description": "Legacy path to Claude Code CLI executable. Prefer kfc.providers.claude.command."
+          "description": "Legacy path to Claude Code CLI executable. Prefer autocode.providers.claude.command."
         },
-        "kfc.agent.provider": {
+        "autocode.agent.provider": {
           "type": "string",
           "default": "claude",
           "enum": [
@@ -333,22 +333,22 @@
           ],
           "description": "Active agent provider used for spec, steering, and task execution."
         },
-        "kfc.agent.model": {
+        "autocode.agent.model": {
           "type": "string",
           "default": "",
           "description": "Optional model identifier for future API-backed runtimes."
         },
-        "kfc.providers.claude.command": {
+        "autocode.providers.claude.command": {
           "type": "string",
           "default": "claude",
           "description": "Claude Code CLI command."
         },
-        "kfc.providers.codex.command": {
+        "autocode.providers.codex.command": {
           "type": "string",
           "default": "codex",
           "description": "Codex/OpenAI CLI command."
         },
-        "kfc.providers.codex.args": {
+        "autocode.providers.codex.args": {
           "type": "array",
           "default": [],
           "items": {
@@ -356,12 +356,12 @@
           },
           "description": "Additional arguments passed before the prompt for the Codex/OpenAI CLI."
         },
-        "kfc.providers.deepseek.command": {
+        "autocode.providers.deepseek.command": {
           "type": "string",
           "default": "deepseek",
           "description": "DeepSeek CLI command."
         },
-        "kfc.providers.deepseek.args": {
+        "autocode.providers.deepseek.args": {
           "type": "array",
           "default": [],
           "items": {
@@ -369,12 +369,12 @@
           },
           "description": "Additional arguments passed before the prompt for the DeepSeek CLI."
         },
-        "kfc.providers.glm.command": {
+        "autocode.providers.glm.command": {
           "type": "string",
           "default": "glm",
           "description": "GLM/Z.AI CLI command."
         },
-        "kfc.providers.glm.args": {
+        "autocode.providers.glm.args": {
           "type": "array",
           "default": [],
           "items": {
@@ -382,17 +382,17 @@
           },
           "description": "Additional arguments passed before the prompt for the GLM/Z.AI CLI."
         },
-        "kfc.providers.custom.displayName": {
+        "autocode.providers.custom.displayName": {
           "type": "string",
           "default": "Custom Agent",
           "description": "Display name for the custom agent provider."
         },
-        "kfc.providers.custom.command": {
+        "autocode.providers.custom.command": {
           "type": "string",
           "default": "agent",
           "description": "Custom agent CLI command."
         },
-        "kfc.providers.custom.args": {
+        "autocode.providers.custom.args": {
           "type": "array",
           "default": [],
           "items": {
@@ -400,12 +400,12 @@
           },
           "description": "Additional arguments passed before the prompt for the custom CLI."
         },
-        "kfc.providers.custom.commandTemplate": {
+        "autocode.providers.custom.commandTemplate": {
           "type": "string",
           "default": "{command} {args} \"{prompt}\"",
           "description": "Custom command template. Tokens: {command}, {args}, {model}, {prompt}."
         },
-        "kfc.mcp.customServers": {
+        "autocode.mcp.customServers": {
           "type": "array",
           "default": [],
           "description": "Extension-level custom MCP servers available to non-Claude providers.",
@@ -436,54 +436,54 @@
             }
           }
         },
-        "kfc.spec.autoMarkTaskDone": {
+        "autocode.spec.autoMarkTaskDone": {
           "type": "boolean",
           "default": true,
           "description": "Automatically mark a spec task done after the active agent completes and a follow-up model verification confirms completion."
         },
-        "kfc.spec.autoMarkTaskDoneMinConfidence": {
+        "autocode.spec.autoMarkTaskDoneMinConfidence": {
           "type": "number",
           "default": 0.8,
           "minimum": 0,
           "maximum": 1,
           "description": "Minimum verification confidence required before automatically marking a spec task done."
         },
-        "kfc.autoRefreshSpecs": {
+        "autocode.autoRefreshSpecs": {
           "type": "boolean",
           "default": true,
           "description": "Automatically refresh specs when requirements are saved"
         },
-        "kfc.showWelcomeMessage": {
+        "autocode.showWelcomeMessage": {
           "type": "boolean",
           "default": true,
           "description": "Show welcome message on startup"
         },
-        "kfc.views.specs.visible": {
+        "autocode.views.specs.visible": {
           "type": "boolean",
           "default": true,
           "description": "Show Specs view"
         },
-        "kfc.views.agents.visible": {
+        "autocode.views.agents.visible": {
           "type": "boolean",
           "default": true,
           "description": "Show Agents view"
         },
-        "kfc.views.hooks.visible": {
+        "autocode.views.hooks.visible": {
           "type": "boolean",
           "default": true,
           "description": "Show Agent Hooks view"
         },
-        "kfc.views.steering.visible": {
+        "autocode.views.steering.visible": {
           "type": "boolean",
           "default": true,
           "description": "Show Agent Steering view"
         },
-        "kfc.views.mcp.visible": {
+        "autocode.views.mcp.visible": {
           "type": "boolean",
           "default": true,
           "description": "Show MCP Servers view"
         },
-        "kfc.views.settings.visible": {
+        "autocode.views.settings.visible": {
           "type": "boolean",
           "default": false,
           "description": "Show Settings view"

@@ -80,7 +80,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                     element.specName!,
                     'requirements',
                     {
-                        command: 'kfc.spec.navigate.requirements',
+                        command: 'autocode.spec.navigate.requirements',
                         title: 'Open Requirements',
                         arguments: [element.specName]
                     },
@@ -94,7 +94,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                     element.specName!,
                     'design',
                     {
-                        command: 'kfc.spec.navigate.design',
+                        command: 'autocode.spec.navigate.design',
                         title: 'Open Design',
                         arguments: [element.specName]
                     },
@@ -108,7 +108,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                     element.specName!,
                     'tasks',
                     {
-                        command: 'kfc.spec.navigate.tasks',
+                        command: 'autocode.spec.navigate.tasks',
                         title: 'Open Tasks',
                         arguments: [element.specName]
                     },

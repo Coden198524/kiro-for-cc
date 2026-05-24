@@ -38,7 +38,7 @@
   {
     "tag_name": "v0.1.8",
     "name": "Release v0.1.8",
-    "html_url": "https://github.com/notdp/kiro-for-cc/releases/tag/v0.1.8",
+    "html_url": "https://github.com/Coden198524/autocode/releases/tag/v0.1.8",
     "body": "Release notes"
   }
   ```
@@ -52,7 +52,7 @@
 
 **预期结果**:
 
-- fetch 调用 URL: `https://api.github.com/repos/notdp/kiro-for-cc/releases/latest`
+- fetch 调用 URL: `https://api.github.com/repos/Coden198524/autocode/releases/latest`
 - 日志包含: `[UpdateChecker] Fetching latest release from GitHub...`
 - 日志包含: `[UpdateChecker] Latest release: v0.1.8`
 
@@ -149,7 +149,7 @@
 
 **预期结果**:
 
-- 通知消息：`🎉 Kiro for CC 0.1.9 is available! (current: 0.1.8)`
+- 通知消息：`🎉 AutoCode 0.1.9 is available! (current: 0.1.8)`
 - 按钮选项：["View Changelog", "Skip"]
 - 使用 showInformationMessage 方法
 
@@ -160,7 +160,7 @@
 **准备数据**:
 
 - Mock 用户点击 "View Changelog"
-- 预期 URL：`https://github.com/notdp/kiro-for-cc/releases/latest`
+- 预期 URL：`https://github.com/Coden198524/autocode/releases/latest`
 
 **测试步骤**:
 
@@ -194,7 +194,7 @@
 **预期结果**:
 
 - globalState.update 被调用
-- 保存键：`kfc.skipVersion`
+- 保存键：`autocode.skipVersion`
 - 保存值：`0.1.9`
 - 显示 5 秒自动消失的确认通知
 

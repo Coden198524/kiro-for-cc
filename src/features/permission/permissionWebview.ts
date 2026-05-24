@@ -127,7 +127,7 @@ export class PermissionWebview {
                             // 注意：不在这里关闭 webview，由 Manager 控制
                             return;
                         case 'openIssue':
-                            await vscode.env.openExternal(vscode.Uri.parse('https://github.com/notdp/kiro-for-cc/issues/3'));
+                            await vscode.env.openExternal(vscode.Uri.parse('https://github.com/Coden198524/autocode/issues/3'));
                             return;
                     }
                 },

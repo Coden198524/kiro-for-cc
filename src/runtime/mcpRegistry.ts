@@ -41,7 +41,7 @@ const BUILT_IN_SERVERS: McpServerInfo[] = [
         args: ['-y', '@upstash/context7-mcp@latest'],
         status: 'available',
         description: 'Documentation lookup for libraries and frameworks',
-        providerSource: 'Kiro'
+        providerSource: 'AutoCode'
     },
     {
         name: 'puppeteer',
@@ -51,7 +51,7 @@ const BUILT_IN_SERVERS: McpServerInfo[] = [
         args: ['-y', '@anthropic-ai/puppeteer-mcp-server'],
         status: 'available',
         description: 'Browser automation for frontend validation',
-        providerSource: 'Kiro'
+        providerSource: 'AutoCode'
     },
     {
         name: 'electron',
@@ -61,7 +61,7 @@ const BUILT_IN_SERVERS: McpServerInfo[] = [
         args: ['-y', 'electron-mcp-server'],
         status: 'available',
         description: 'Electron app automation via Chrome DevTools Protocol',
-        providerSource: 'Kiro'
+        providerSource: 'AutoCode'
     }
 ];
 

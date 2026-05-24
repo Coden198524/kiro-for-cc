@@ -2,7 +2,7 @@
 
 ## Goal
 
-Extend Kiro for Agent Code from a Claude-only terminal integration into a multi-provider Agent Runtime that can run Claude, Codex/OpenAI, DeepSeek, GLM/Z.AI, and custom OpenAI-compatible models. The VS Code extension should remain the UI and workspace integration layer; provider selection, command construction, agent capability mapping, and MCP server discovery should move behind a runtime abstraction.
+Extend AutoCode from a Claude-only terminal integration into a multi-provider Agent Runtime that can run Claude, Codex/OpenAI, DeepSeek, GLM/Z.AI, and custom OpenAI-compatible models. The VS Code extension should remain the UI and workspace integration layer; provider selection, command construction, agent capability mapping, and MCP server discovery should move behind a runtime abstraction.
 
 ## Reference Architecture
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a VSCode extension called "Kiro for Claude Code" that enhances Claude Code with structured spec-driven development features. The extension provides visual management of specs (requirements, design, tasks) and steering documents.
+This is a VSCode extension called "AutoCode" that enhances Claude Code with structured spec-driven development features. The extension provides visual management of specs (requirements, design, tasks) and steering documents.
 
 ## Development Commands
 
@@ -63,7 +63,7 @@ src/
 
 - **Manager Pattern**: Each feature has a Manager class that handles file operations and business logic
 - **Provider Pattern**: Each tree view has a Provider class extending `vscode.TreeDataProvider`
-- **Command Registration**: All commands are registered in `activate()` with pattern `kfc.{feature}.{action}`
+- **Command Registration**: All commands are registered in `activate()` with pattern `autocode.{feature}.{action}`
 
 ### Data Structure
 

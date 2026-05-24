@@ -62,7 +62,7 @@ describe('UpdateChecker', () => {
             const mockRelease = {
                 tag_name: 'v0.1.8',
                 name: 'Release v0.1.8',
-                html_url: 'https://github.com/notdp/kiro-for-cc/releases/tag/v0.1.8',
+                html_url: 'https://github.com/Coden198524/autocode/releases/tag/v0.1.8',
                 body: 'Release notes'
             };
 
@@ -74,7 +74,7 @@ describe('UpdateChecker', () => {
             await updateChecker.checkForUpdates();
 
             expect(global.fetch).toHaveBeenCalledWith(
-                'https://api.github.com/repos/notdp/kiro-for-cc/releases/latest'
+                'https://api.github.com/repos/Coden198524/autocode/releases/latest'
             );
             expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
                 '[UpdateChecker] Fetching latest release from GitHub...'
@@ -177,7 +177,7 @@ describe('UpdateChecker', () => {
             await new Promise(resolve => setTimeout(resolve, 0));
 
             expect(vscode.env.openExternal).toHaveBeenCalledWith(
-                vscode.Uri.parse('https://github.com/notdp/kiro-for-cc/releases/latest')
+                vscode.Uri.parse('https://github.com/Coden198524/autocode/releases/latest')
             );
         });
 
@@ -200,13 +200,13 @@ describe('UpdateChecker', () => {
             // Wait for the promise to resolve
             await new Promise(resolve => setTimeout(resolve, 0));
 
-            expect(mockGlobalState.update).toHaveBeenCalledWith('kfc.skipVersion', '0.1.9');
+            expect(mockGlobalState.update).toHaveBeenCalledWith('autocode.skipVersion', '0.1.9');
         });
 
         it('should not show notification for skipped version', async () => {
             // Set up skipped version
             mockGlobalState.get.mockImplementation((key: string) => {
-                if (key === 'kfc.skipVersion') return '0.1.9';
+                if (key === 'autocode.skipVersion') return '0.1.9';
                 return undefined;
             });
 
@@ -231,7 +231,7 @@ describe('UpdateChecker', () => {
             // Set last check to 1 hour ago
             const oneHourAgo = Date.now() - (60 * 60 * 1000);
             mockGlobalState.get.mockImplementation((key: string) => {
-                if (key === 'kfc.lastUpdateCheck') return oneHourAgo;
+                if (key === 'autocode.lastUpdateCheck') return oneHourAgo;
                 return undefined;
             });
 
@@ -244,7 +244,7 @@ describe('UpdateChecker', () => {
             // Set last check to 1 hour ago
             const oneHourAgo = Date.now() - (60 * 60 * 1000);
             mockGlobalState.get.mockImplementation((key: string) => {
-                if (key === 'kfc.lastUpdateCheck') return oneHourAgo;
+                if (key === 'autocode.lastUpdateCheck') return oneHourAgo;
                 return undefined;
             });
 
@@ -267,7 +267,7 @@ describe('UpdateChecker', () => {
     describe('Real API Test (Manual)', () => {
         it.skip('should actually fetch from GitHub API', async () => {
             // This test actually calls the GitHub API - skip in CI
-            const response = await fetch('https://api.github.com/repos/notdp/kiro-for-cc/releases/latest');
+            const response = await fetch('https://api.github.com/repos/Coden198524/autocode/releases/latest');
             const data = await response.json() as any;
 
             console.log('Latest release:', data.tag_name);

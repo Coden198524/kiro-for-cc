@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a TypeScript VS Code extension for Kiro for Agent Code. Core code lives in `src/`, with `src/extension.ts` as the activation entry point. Feature logic is under `src/features/`, tree providers under `src/providers/`, runtime provider integration under `src/runtime/`, helpers under `src/utils/`, and prompt loading under `src/services/`. Prompt templates live in `src/prompts/` and `src/resources/`; generated modules go to `src/prompts/target/`. Static assets are in `icons/`, `media/`, and `screenshots/`. Tests are under `tests/`.
+This is a TypeScript VS Code extension for AutoCode. Core code lives in `src/`, with `src/extension.ts` as the activation entry point. Feature logic is under `src/features/`, tree providers under `src/providers/`, runtime provider integration under `src/runtime/`, helpers under `src/utils/`, and prompt loading under `src/services/`. Prompt templates live in `src/prompts/` and `src/resources/`; generated modules go to `src/prompts/target/`. Static assets are in `icons/`, `media/`, and `screenshots/`. Tests are under `tests/`.
 
 ## Build, Test, and Development Commands
 
@@ -19,7 +19,7 @@ Use VS Code's `F5` Extension Development Host for manual debugging.
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript with `strict` mode enabled. Follow nearby files: single quotes, semicolons, named exports where practical, `PascalCase` for classes/providers, and `camelCase` for functions, variables, and command handlers. VS Code commands use `kfc.{feature}.{action}`, for example `kfc.spec.create`. Keep file operations based on `vscode.Uri` and workspace-relative paths. Do not hand-edit `src/prompts/target/`; update prompt sources and run `npm run build-prompts`.
+Use TypeScript with `strict` mode enabled. Follow nearby files: single quotes, semicolons, named exports where practical, `PascalCase` for classes/providers, and `camelCase` for functions, variables, and command handlers. VS Code commands use `autocode.{feature}.{action}`, for example `autocode.spec.create`. Keep file operations based on `vscode.Uri` and workspace-relative paths. Do not hand-edit `src/prompts/target/`; update prompt sources and run `npm run build-prompts`.
 
 ## Testing Guidelines
 

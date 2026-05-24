@@ -115,12 +115,12 @@ export class PermissionManager {
                 if (confirm === 'Uninstall') {
                     try {
                         // 执行卸载命令
-                        await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', 'heisebaiyun.kiro-for-cc');
+                        await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', 'heisebaiyun.autocode');
                         this.outputChannel.appendLine('[PermissionManager] Uninstall command executed');
                     } catch (error) {
                         this.outputChannel.appendLine(`[PermissionManager] Failed to uninstall: ${error}`);
                     }
-                    await vscode.commands.executeCommand('extension.open', 'heisebaiyun.kiro-for-cc');
+                    await vscode.commands.executeCommand('extension.open', 'heisebaiyun.autocode');
                     break;
                 }
 

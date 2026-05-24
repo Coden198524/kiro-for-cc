@@ -35,7 +35,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
             codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
                 title: `Start All Tasks (${runnableTasks.length})`,
                 tooltip: 'Implement all pending and in-progress tasks in one agent session',
-                command: 'kfc.spec.implAllTasks',
+                command: 'autocode.spec.implAllTasks',
                 arguments: [document.uri]
             }));
         }
@@ -53,7 +53,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
                 codeLenses.push(new vscode.CodeLens(range, {
                     title: 'View Session',
                     tooltip: 'Open the saved AI session for this completed task',
-                    command: 'kfc.spec.viewTaskSession',
+                    command: 'autocode.spec.viewTaskSession',
                     arguments: [document.uri, i, task.description]
                 }));
                 continue;
@@ -63,7 +63,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
                 codeLenses.push(new vscode.CodeLens(range, {
                     title: 'Start Task',
                     tooltip: 'Start this task with the active agent provider',
-                    command: 'kfc.spec.implTask',
+                    command: 'autocode.spec.implTask',
                     arguments: [document.uri, i, task.description, false]
                 }));
                 continue;
@@ -72,21 +72,21 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
             codeLenses.push(new vscode.CodeLens(range, {
                 title: 'Resume Task',
                 tooltip: 'Continue this in-progress task without starting over',
-                command: 'kfc.spec.implTask',
+                command: 'autocode.spec.implTask',
                 arguments: [document.uri, i, task.description, true]
             }));
 
             codeLenses.push(new vscode.CodeLens(range, {
                 title: 'Mark Done',
                 tooltip: 'Mark this task as completed',
-                command: 'kfc.spec.markTaskDone',
+                command: 'autocode.spec.markTaskDone',
                 arguments: [document.uri, i]
             }));
 
             codeLenses.push(new vscode.CodeLens(range, {
                 title: 'View Session',
                 tooltip: 'Open the saved AI session for this in-progress task',
-                command: 'kfc.spec.viewTaskSession',
+                command: 'autocode.spec.viewTaskSession',
                 arguments: [document.uri, i, task.description]
             }));
         }

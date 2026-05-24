@@ -1,5 +1,6 @@
 // VSCode configuration namespace for this extension
-export const VSC_CONFIG_NAMESPACE = 'kfc';
+export const VSC_CONFIG_NAMESPACE = 'autocode';
+export const LEGACY_VSC_CONFIG_NAMESPACE = 'kfc';
 
 // File names
 export const CONFIG_FILE_NAME = 'autocode-settings.json';

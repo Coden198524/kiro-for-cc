@@ -116,7 +116,7 @@ export class SteeringExplorerProvider implements vscode.TreeDataProvider<Steerin
                     '',
                     this.context,
                     {
-                        command: 'kfc.steering.createUserRule',
+                        command: 'autocode.steering.createUserRule',
                         title: 'Create Global CLAUDE.md'
                     }
                 ));
@@ -130,7 +130,7 @@ export class SteeringExplorerProvider implements vscode.TreeDataProvider<Steerin
                     '',
                     this.context,
                     {
-                        command: 'kfc.steering.createProjectRule',
+                        command: 'autocode.steering.createProjectRule',
                         title: 'Create Project CLAUDE.md'
                     }
                 ));

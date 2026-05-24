@@ -41,7 +41,7 @@ describe('TerminalAgentRuntime', () => {
         (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
 
         context = {
-            globalStorageUri: { fsPath: '/tmp/kfc-storage' },
+            globalStorageUri: { fsPath: '/tmp/autocode-storage' },
             subscriptions: []
         } as any;
         outputChannel = {
@@ -62,9 +62,9 @@ describe('TerminalAgentRuntime', () => {
             capabilities: claudeCapabilities()
         });
 
-        const command = (runtime as any).buildCommand('/tmp/kfc-storage/prompt-12345.md');
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md');
 
-        expect(command).toBe(`claude --permission-mode bypassPermissions ${expectedPromptArg('/tmp/kfc-storage/prompt-12345.md')}`);
+        expect(command).toBe(`claude --permission-mode bypassPermissions ${expectedPromptArg('/tmp/autocode-storage/prompt-12345.md')}`);
     });
 
     test('builds CLI command with configured args', () => {
@@ -76,9 +76,9 @@ describe('TerminalAgentRuntime', () => {
             capabilities: cliCapabilities()
         });
 
-        const command = (runtime as any).buildCommand('/tmp/kfc-storage/prompt-12345.md');
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md');
 
-        expect(command).toBe(`${expectedPromptRead('/tmp/kfc-storage/prompt-12345.md')} | codex exec --model gpt-5.5 -`);
+        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex exec --model gpt-5.5 -`);
     });
 
     test('builds custom provider command template', () => {
@@ -92,9 +92,9 @@ describe('TerminalAgentRuntime', () => {
             capabilities: cliCapabilities()
         });
 
-        const command = (runtime as any).buildCommand('/tmp/kfc-storage/prompt-12345.md');
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md');
 
-        expect(command).toBe(`local-agent run --model "local model" --input ${expectedPromptArg('/tmp/kfc-storage/prompt-12345.md')}`);
+        expect(command).toBe(`local-agent run --model "local model" --input ${expectedPromptArg('/tmp/autocode-storage/prompt-12345.md')}`);
     });
 
     test('quotes commands and args containing spaces', () => {
@@ -106,9 +106,9 @@ describe('TerminalAgentRuntime', () => {
             capabilities: cliCapabilities()
         });
 
-        const command = (runtime as any).buildCommand('/tmp/kfc-storage/prompt-12345.md');
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md');
 
-        expect(command).toBe(`${expectedPromptRead('/tmp/kfc-storage/prompt-12345.md')} | "/opt/Agent CLI/codex" exec --profile "team default" -`);
+        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | "/opt/Agent CLI/codex" exec --profile "team default" -`);
     });
 
     test('adds agent capability and MCP context to prompts', () => {
@@ -170,7 +170,7 @@ describe('TerminalAgentRuntime', () => {
 
         await runtime.invokeInteractive({
             prompt: 'Feature Description: 支持中文 Spec',
-            title: 'KFC - Creating Spec'
+            title: 'AutoCode - Creating Spec'
         });
 
         jest.advanceTimersByTime(800);
@@ -198,14 +198,14 @@ describe('TerminalAgentRuntime', () => {
 
         await runtime.invokeInteractive({
             prompt: 'First task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
         await jest.advanceTimersByTimeAsync(2300);
 
         await runtime.invokeInteractive({
             prompt: 'Second task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
         await jest.advanceTimersByTimeAsync(800);
@@ -234,12 +234,12 @@ describe('TerminalAgentRuntime', () => {
 
         await runtime.invokeInteractive({
             prompt: 'First task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
         await runtime.invokeInteractive({
             prompt: 'Second task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
 
@@ -274,12 +274,12 @@ describe('TerminalAgentRuntime', () => {
 
         await runtime.invokeInteractive({
             prompt: 'First task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
         await runtime.invokeInteractive({
             prompt: 'Second task',
-            title: 'KFC - Implementing Task',
+            title: 'AutoCode - Implementing Task',
             reuseTerminal: true
         });
 

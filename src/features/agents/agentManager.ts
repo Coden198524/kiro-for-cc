@@ -67,7 +67,7 @@ export class AgentManager {
             return;
         }
 
-        const targetDir = path.join(this.workspaceRoot, AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc');
+        const targetDir = path.join(this.workspaceRoot, AgentManager.PROJECT_DATA_DIR, 'agents', 'autocode');
         const codexTargetDir = path.join(this.workspaceRoot, AgentManager.CODEX_DATA_DIR, 'agents');
         
         try {
@@ -276,7 +276,7 @@ export class AgentManager {
      */
     checkAgentExists(agentName: string, location: 'project' | 'user'): boolean {
         const basePath = location === 'project' 
-            ? (this.workspaceRoot ? this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc') : null)
+            ? (this.workspaceRoot ? this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'autocode') : null)
             : path.join(os.homedir(), '.claude/agents');
 
         if (!basePath) {
@@ -293,7 +293,7 @@ export class AgentManager {
     getAgentPath(agentName: string): string | null {
         // Check project agents first
         if (this.workspaceRoot) {
-            const projectPath = this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc', `${agentName}.md`);
+            const projectPath = this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'autocode', `${agentName}.md`);
             if (fs.existsSync(projectPath)) {
                 return projectPath;
             }

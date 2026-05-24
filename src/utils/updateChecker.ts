@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import { NotificationUtils } from './notificationUtils';
 
 export class UpdateChecker {
-    private static readonly SKIP_VERSION_KEY = 'kfc.skipVersion';
-    private static readonly LAST_CHECK_KEY = 'kfc.lastUpdateCheck';
+    private static readonly SKIP_VERSION_KEY = 'autocode.skipVersion';
+    private static readonly LAST_CHECK_KEY = 'autocode.lastUpdateCheck';
+    private static readonly LEGACY_SKIP_VERSION_KEY = 'kfc.skipVersion';
+    private static readonly LEGACY_LAST_CHECK_KEY = 'kfc.lastUpdateCheck';
     private static readonly CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
     
     constructor(
@@ -37,7 +39,10 @@ export class UpdateChecker {
             }
             
             const latestVersion = latestRelease.tag_name.replace(/^v/, '');
-            const skipVersion = this.context.globalState.get<string>(UpdateChecker.SKIP_VERSION_KEY);
+            const skipVersion = this.getGlobalStateValue<string>(
+                UpdateChecker.SKIP_VERSION_KEY,
+                UpdateChecker.LEGACY_SKIP_VERSION_KEY
+            );
             
             // Check if there's a new version that hasn't been skipped
             if (this.isNewerVersion(currentVersion, latestVersion) && latestVersion !== skipVersion) {
@@ -57,7 +62,7 @@ export class UpdateChecker {
      * Get current extension version
      */
     private getCurrentVersion(): string | undefined {
-        const extension = vscode.extensions.getExtension('heisebaiyun.kiro-for-cc');
+        const extension = vscode.extensions.getExtension('heisebaiyun.autocode');
         return extension?.packageJSON.version;
     }
     
@@ -67,7 +72,7 @@ export class UpdateChecker {
     private async fetchLatestRelease(): Promise<any> {
         try {
             this.outputChannel.appendLine('[UpdateChecker] Fetching latest release from GitHub...');
-            const response = await fetch('https://api.github.com/repos/notdp/kiro-for-cc/releases/latest');
+            const response = await fetch('https://api.github.com/repos/Coden198524/autocode/releases/latest');
             
             if (!response.ok) {
                 this.outputChannel.appendLine(`[UpdateChecker] GitHub API returned ${response.status}: ${response.statusText}`);
@@ -97,7 +102,7 @@ export class UpdateChecker {
         ).then(async (selection) => {
             if (selection === 'View Changelog') {
                 // Open GitHub releases page
-                const releaseUrl = 'https://github.com/notdp/kiro-for-cc/releases/latest';
+                const releaseUrl = 'https://github.com/Coden198524/autocode/releases/latest';
                 await vscode.env.openExternal(vscode.Uri.parse(releaseUrl));
             } else if (selection === 'Skip') {
                 // Remember skipped version
@@ -137,9 +142,22 @@ export class UpdateChecker {
      * Check if we've already checked for updates recently
      */
     private hasCheckedRecently(): boolean {
-        const lastCheck = this.context.globalState.get<number>(UpdateChecker.LAST_CHECK_KEY, 0);
+        const lastCheck = this.getGlobalStateValue<number>(
+            UpdateChecker.LAST_CHECK_KEY,
+            UpdateChecker.LEGACY_LAST_CHECK_KEY,
+            0
+        );
         const now = Date.now();
         return (now - lastCheck) < UpdateChecker.CHECK_INTERVAL;
+    }
+
+    private getGlobalStateValue<T>(key: string, legacyKey: string, defaultValue?: T): T {
+        const currentValue = this.context.globalState.get<T | undefined>(key, undefined);
+        if (currentValue !== undefined) {
+            return currentValue;
+        }
+
+        return this.context.globalState.get<T>(legacyKey, defaultValue as T);
     }
     
     /**

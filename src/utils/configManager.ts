@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { DEFAULT_PATHS, CONFIG_FILE_NAME, DEFAULT_VIEW_VISIBILITY, LEGACY_CONFIG_FILE_NAME, LEGACY_PATHS } from '../constants';
 
-export interface KfcSettings {
+export interface AutoCodeSettings {
     agent: {
         provider: string;
         model?: string;
@@ -58,7 +58,7 @@ export interface CustomMcpServerSettings {
 
 export class ConfigManager {
     private static instance: ConfigManager;
-    private settings: KfcSettings | null = null;
+    private settings: AutoCodeSettings | null = null;
     private workspaceFolder: vscode.WorkspaceFolder | undefined;
     
     // Internal constants
@@ -75,7 +75,7 @@ export class ConfigManager {
         return ConfigManager.instance;
     }
 
-    async loadSettings(): Promise<KfcSettings> {
+    async loadSettings(): Promise<AutoCodeSettings> {
         if (!this.workspaceFolder) {
             return this.getDefaultSettings();
         }
@@ -85,13 +85,13 @@ export class ConfigManager {
 
         try {
             const fileContent = await vscode.workspace.fs.readFile(vscode.Uri.file(settingsPath));
-            const settings = JSON.parse(Buffer.from(fileContent).toString()) as Partial<KfcSettings>;
+            const settings = JSON.parse(Buffer.from(fileContent).toString()) as Partial<AutoCodeSettings>;
             this.settings = this.mergeSettings(settings);
             return this.settings!;
         } catch (error) {
             try {
                 const fileContent = await vscode.workspace.fs.readFile(vscode.Uri.file(legacySettingsPath));
-                const settings = JSON.parse(Buffer.from(fileContent).toString()) as Partial<KfcSettings>;
+                const settings = JSON.parse(Buffer.from(fileContent).toString()) as Partial<AutoCodeSettings>;
                 this.settings = this.mergeSettings(this.migrateLegacySettings(settings));
                 return this.settings!;
             } catch {
@@ -102,7 +102,7 @@ export class ConfigManager {
         }
     }
 
-    getSettings(): KfcSettings {
+    getSettings(): AutoCodeSettings {
         if (!this.settings) {
             this.settings = this.getDefaultSettings();
         }
@@ -153,7 +153,7 @@ export class ConfigManager {
         return ConfigManager.TERMINAL_VENV_ACTIVATION_DELAY;
     }
 
-    private getDefaultSettings(): KfcSettings {
+    private getDefaultSettings(): AutoCodeSettings {
         return {
             agent: {
                 provider: 'claude',
@@ -190,10 +190,10 @@ export class ConfigManager {
         };
     }
 
-    private mergeSettings(settings: Partial<KfcSettings>): KfcSettings {
+    private mergeSettings(settings: Partial<AutoCodeSettings>): AutoCodeSettings {
         const defaults = this.getDefaultSettings();
         const providerSettings = settings.providers ?? {};
-        const viewSettings: Partial<KfcSettings['views']> = settings.views ?? {};
+        const viewSettings: Partial<AutoCodeSettings['views']> = settings.views ?? {};
 
         return {
             ...defaults,
@@ -267,7 +267,7 @@ export class ConfigManager {
         };
     }
 
-    async saveSettings(settings: KfcSettings): Promise<void> {
+    async saveSettings(settings: AutoCodeSettings): Promise<void> {
         if (!this.workspaceFolder) {
             throw new Error('No workspace folder found');
         }
@@ -305,7 +305,7 @@ export class ConfigManager {
         return path.join(this.workspaceFolder.uri.fsPath, LEGACY_PATHS.settings, LEGACY_CONFIG_FILE_NAME);
     }
 
-    private migrateLegacySettings(settings: Partial<KfcSettings>): Partial<KfcSettings> {
+    private migrateLegacySettings(settings: Partial<AutoCodeSettings>): Partial<AutoCodeSettings> {
         const paths = settings.paths;
         if (!paths) {
             return settings;

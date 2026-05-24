@@ -304,7 +304,7 @@ describe('PermissionManager', () => {
             );
             expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
                 'workbench.extensions.uninstallExtension',
-                'heisebaiyun.kiro-for-cc'
+                'heisebaiyun.autocode'
             );
             expect(result).toBe(false);
         });

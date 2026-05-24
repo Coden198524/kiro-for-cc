@@ -1,7 +1,7 @@
-# Kiro for Claude Code
+# AutoCode
 
-[![Visual Studio Marketplace](https://img.shields.io/vscode-marketplace/v/heisebaiyun.kiro-for-cc.svg)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
-[![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.kiro-for-cc.svg)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
+[![Visual Studio Marketplace](https://img.shields.io/vscode-marketplace/v/heisebaiyun.autocode.svg)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.autocode)
+[![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.autocode.svg)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.autocode)
 
 > [!IMPORTANT]
 > **🎉 重要更新：Sub Agent 版本已上线！**  
@@ -11,7 +11,7 @@
 
 **新功能：使用 Sub Agent 创建 SPEC ：**
 
-1. 点击活动栏中的 Kiro for CC 图标
+1. 点击活动栏中的 AutoCode 图标
 2. 在 SPEC 视图右上角，点击 "New Spec with Agents" 按钮（带闪光图标 ✨）
 3. 输入功能描述
 4. Claude 将自动：
@@ -60,7 +60,7 @@
 
 ## 界面截图
 
-![Kiro for Claude Code 扩展界面](./screenshots/image.png)
+![AutoCode 扩展界面](./screenshots/image.png)
 
 *该扩展提供了一个综合性的侧边栏界面，包含规范、引导文档、MCP 服务器和钩子管理等有序组织的视图。所有 Claude Code 增强工具都集中在一个地方。*
 
@@ -87,38 +87,38 @@
 
 1. 打开 VSCode
 2. 进入扩展页面 (Cmd+Shift+X)
-3. 搜索 "Kiro for Claude Code"
+3. 搜索 "AutoCode"
 4. 点击安装
 
 或使用命令行：
 
 ```bash
-code --install-extension heisebaiyun.kiro-for-cc
+code --install-extension heisebaiyun.autocode
 ```
 
 **Cursor 用户：**
 该扩展已发布到 OpenVSX Registry。在 Cursor 中：
 
 1. 进入扩展页面
-2. 搜索 "Kiro for Claude Code"
+2. 搜索 "AutoCode"
 3. 点击安装
 
 或使用命令行：
 
 ```bash
-cursor --install-extension heisebaiyun.kiro-for-cc
+cursor --install-extension heisebaiyun.autocode
 ```
 
 ### 从 VSIX 文件安装
 
-从 [GitHub Releases](https://github.com/notdp/kiro-for-cc/releases/latest) 下载最新的 `.vsix` 文件，然后：
+从 [GitHub Releases](https://github.com/Coden198524/autocode/releases/latest) 下载最新的 `.vsix` 文件，然后：
 
 ```bash
 # VSCode
-code --install-extension kiro-for-cc-{latest-version}.vsix
+code --install-extension autocode-{latest-version}.vsix
 
 # Cursor
-cursor --install-extension kiro-for-cc-{latest-version}.vsix
+cursor --install-extension autocode-{latest-version}.vsix
 ```
 
 将 `{latest-version}` 替换为实际版本号，例如 `0.2.4`。
@@ -129,7 +129,7 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 
 **传统方法：**
 
-1. 点击活动栏中的 Kiro for CC 图标
+1. 点击活动栏中的 AutoCode 图标
 2. 在 SPEC 视图中，点击 `+` 按钮
 3. 输入功能描述
 4. Claude 将生成需求文档
@@ -194,7 +194,7 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 │       ├── design.md        # 如何构建
 │       └── tasks.md         # 实施步骤
 ├── agents/                  # Claude Code agents
-│   └── kfc/                 # 内置 agents（自动初始化）
+│   └── autocode/            # 内置 agents（自动初始化）
 │       ├── spec-requirements.md
 │       ├── spec-design.md
 │       ├── spec-tasks.md
@@ -222,8 +222,8 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 
 ```bash
 # 克隆仓库
-git clone https://github.com/notdp/kiro-for-cc.git
-cd kiro-for-cc
+git clone https://github.com/Coden198524/autocode.git
+cd autocode
 
 # 安装依赖
 npm install
@@ -247,7 +247,7 @@ npm run watch
 # 构建 VSIX 包
 npm run package
 
-# 输出：kiro-for-cc-{latest-version}.vsix
+# 输出：autocode-{latest-version}.vsix
 ```
 
 ### 项目代码结构
@@ -287,7 +287,7 @@ src/
 
 - **管理器模式**：每个功能都有一个 Manager 类处理业务逻辑
 - **提供者模式**：树形视图扩展 `vscode.TreeDataProvider`
-- **命令模式**：所有命令遵循 `kfc.{feature}.{action}` 命名规范
+- **命令模式**：所有命令遵循 `autocode.{feature}.{action}` 命名规范
 - **配置管理**：通过 `ConfigManager` 集中管理，提供灵活性
 
 ## 许可证

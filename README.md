@@ -1,9 +1,9 @@
 # AutoCode
 
-[![Visual Studio Marketplace](https://img.shields.io/vscode-marketplace/v/heisebaiyun.kiro-for-cc.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
-[![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.kiro-for-cc.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.kiro-for-cc)
-[![GitHub stars](https://img.shields.io/github/stars/notdp/kiro-for-cc.svg?style=flat-square)](https://github.com/notdp/kiro-for-cc/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/notdp/kiro-for-cc.svg?style=flat-square)](https://github.com/notdp/kiro-for-cc/issues)
+[![Visual Studio Marketplace](https://img.shields.io/vscode-marketplace/v/heisebaiyun.autocode.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.autocode)
+[![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.autocode.svg?style=flat-square)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.autocode)
+[![GitHub stars](https://img.shields.io/github/stars/Coden198524/autocode.svg?style=flat-square)](https://github.com/Coden198524/autocode/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/Coden198524/autocode.svg?style=flat-square)](https://github.com/Coden198524/autocode/issues)
 
 [中文版](./README.zh-CN.md)
 
@@ -97,7 +97,7 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 Or via command line:
 
 ```bash
-code --install-extension heisebaiyun.kiro-for-cc
+code --install-extension heisebaiyun.autocode
 ```
 
 **Cursor users:**
@@ -110,19 +110,19 @@ The extension is available on OpenVSX Registry. In Cursor:
 Or via command line:
 
 ```bash
-cursor --install-extension heisebaiyun.kiro-for-cc
+cursor --install-extension heisebaiyun.autocode
 ```
 
 ### From VSIX file
 
-Download the latest `.vsix` file from [GitHub Releases](https://github.com/notdp/kiro-for-cc/releases/latest), then:
+Download the latest `.vsix` file from [GitHub Releases](https://github.com/Coden198524/autocode/releases/latest), then:
 
 ```bash
 # VSCode
-code --install-extension kiro-for-cc-{latest-version}.vsix
+code --install-extension autocode-{latest-version}.vsix
 
 # Cursor
-cursor --install-extension kiro-for-cc-{latest-version}.vsix
+cursor --install-extension autocode-{latest-version}.vsix
 ```
 
 Replace `{latest-version}` with the actual version number, e.g., `0.2.4`.
@@ -197,7 +197,7 @@ The extension creates the following structure in your workspace:
 │       ├── design.md        # How to build
 │       └── tasks.md         # Implementation steps
 ├── agents/                  # Claude Code agents
-│   └── kfc/                 # Built-in agents (auto-initialized)
+│   └── autocode/            # Built-in agents (auto-initialized)
 │       ├── spec-requirements.md
 │       ├── spec-design.md
 │       ├── spec-tasks.md
@@ -225,8 +225,8 @@ The extension creates the following structure in your workspace:
 
 ```bash
 # Clone the repository
-git clone https://github.com/notdp/kiro-for-cc.git
-cd kiro-for-cc
+git clone https://github.com/Coden198524/autocode.git
+cd autocode
 
 # Install dependencies
 npm install
@@ -250,7 +250,7 @@ npm run watch
 # Build VSIX package
 npm run package
 
-# Output: kiro-for-cc-{latest-version}.vsix
+# Output: autocode-{latest-version}.vsix
 ```
 
 ### Project Structure
@@ -290,7 +290,7 @@ src/
 
 - **Manager Pattern**: Each feature has a Manager class handling business logic
 - **Provider Pattern**: Tree views extend `vscode.TreeDataProvider`
-- **Command Pattern**: All commands follow `kfc.{feature}.{action}` naming
+- **Command Pattern**: All commands follow `autocode.{feature}.{action}` naming
 - **Configuration**: Centralized through `ConfigManager` for flexibility
 
 ## License

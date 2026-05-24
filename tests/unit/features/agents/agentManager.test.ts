@@ -63,7 +63,7 @@ describe('AgentManager', () => {
     });
 
     test('initializes built-in project agents under .autocode', async () => {
-        const targetPath = path.join(mockWorkspaceRoot, '.autocode', 'agents', 'kfc');
+        const targetPath = path.join(mockWorkspaceRoot, '.autocode', 'agents', 'autocode');
         const codexTargetPath = path.join(mockWorkspaceRoot, '.codex', 'agents');
         (fs.promises.readFile as jest.Mock).mockResolvedValue(`---
 name: spec-requirements
@@ -140,7 +140,7 @@ Agent content here`;
         });
     });
 
-    test('includes built-in project agents from the kfc directory', async () => {
+    test('includes built-in project agents from the autocode directory', async () => {
         const mockAgentContent = `---\r
 name: spec-requirements\r
 description: Built-in requirements agent\r
@@ -153,11 +153,11 @@ Agent content here`;
 
             if (normalizedPath.endsWith('.autocode/agents')) {
                 return Promise.resolve([
-                    ['kfc', vscode.FileType.Directory]
+                    ['autocode', vscode.FileType.Directory]
                 ]);
             }
 
-            if (normalizedPath.endsWith('.autocode/agents/kfc')) {
+            if (normalizedPath.endsWith('.autocode/agents/autocode')) {
                 return Promise.resolve([
                     ['spec-requirements.md', vscode.FileType.File]
                 ]);
@@ -242,10 +242,10 @@ tools: Read, Write, Task
 
     test('resolves project agent path under .autocode before user agents', () => {
         (fs.existsSync as jest.Mock).mockImplementation((candidatePath: string) => (
-            candidatePath.includes('.autocode/agents/kfc/test-agent.md')
+            candidatePath.includes('.autocode/agents/autocode/test-agent.md')
         ));
 
-        expect(agentManager.getAgentPath('test-agent')).toBe(`${mockWorkspaceRoot}/.autocode/agents/kfc/test-agent.md`);
+        expect(agentManager.getAgentPath('test-agent')).toBe(`${mockWorkspaceRoot}/.autocode/agents/autocode/test-agent.md`);
     });
 
     test('returns null for a missing agent path', () => {
@@ -256,7 +256,7 @@ tools: Read, Write, Task
 
     test('checks whether a project agent exists', () => {
         (fs.existsSync as jest.Mock).mockImplementation((candidatePath: string) => (
-            candidatePath.includes('kfc/existing-agent.md')
+            candidatePath.includes('autocode/existing-agent.md')
         ));
 
         expect(agentManager.checkAgentExists('existing-agent', 'project')).toBe(true);

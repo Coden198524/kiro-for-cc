@@ -46,7 +46,7 @@ export class TaskCompletionVerifier {
         const prompt = this.buildVerificationPrompt(request);
         const result = await this.agentRuntime.invokeHeadless({
             prompt,
-            title: 'KFC - Verify Task Completion',
+            title: 'AutoCode - Verify Task Completion',
             agentType: 'task_implementer'
         });
 

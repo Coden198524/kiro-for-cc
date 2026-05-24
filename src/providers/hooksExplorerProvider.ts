@@ -150,7 +150,7 @@ export class HooksExplorerProvider implements vscode.TreeDataProvider<HookItem> 
                             'hook-command', // 使用特定的 contextValue
                             `${element.id}-command-${index}`,
                             {
-                                command: 'kfc.hooks.copyCommand',
+                                command: 'autocode.hooks.copyCommand',
                                 title: 'Copy Command',
                                 arguments: [hook.command]
                             },

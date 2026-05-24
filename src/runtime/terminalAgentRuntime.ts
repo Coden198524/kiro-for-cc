@@ -68,7 +68,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
 
             const promptFilePath = await this.createTempFile(prompt, 'prompt');
             const command = this.buildCommand(promptFilePath, provider);
-            const title = request.title || `KFC - ${provider.displayName}`;
+            const title = request.title || `AutoCode - ${provider.displayName}`;
             const terminal = request.reuseTerminal
                 ? this.getOrCreateCommandTerminal(title, provider.id)
                 : this.createTerminal(title);
@@ -237,7 +237,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
 
     private createTerminal(title?: string): vscode.Terminal {
         return vscode.window.createTerminal({
-            name: title || `KFC - ${this.provider.displayName}`,
+            name: title || `AutoCode - ${this.provider.displayName}`,
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
             location: {
                 viewColumn: vscode.ViewColumn.Two

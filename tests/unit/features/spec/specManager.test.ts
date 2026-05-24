@@ -110,7 +110,7 @@ describe('SpecManager', () => {
         const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'KFC - Implementing All Tasks',
+            title: 'AutoCode - Implementing All Tasks',
             reuseTerminal: true
         }));
         expect(capturedPrompt).toContain('Line 2: 1. First task');

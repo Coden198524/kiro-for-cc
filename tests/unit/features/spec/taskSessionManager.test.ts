@@ -35,7 +35,7 @@ describe('TaskSessionManager', () => {
             mode: 'start',
             provider: provider(),
             prompt: 'Implement the task',
-            terminal: { name: 'KFC - Implementing Task' } as any
+            terminal: { name: 'AutoCode - Implementing Task' } as any
         });
 
         expect(session.status).toBe('inProgress');
@@ -43,7 +43,7 @@ describe('TaskSessionManager', () => {
         expect(session.invocations[0]).toMatchObject({
             mode: 'start',
             providerName: 'Codex',
-            terminalName: 'KFC - Implementing Task'
+            terminalName: 'AutoCode - Implementing Task'
         });
 
         const store = readStore();
