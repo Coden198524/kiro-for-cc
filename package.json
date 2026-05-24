@@ -215,6 +215,11 @@
         "category": "Kiro for Agent Code"
       },
       {
+        "command": "kfc.spec.implAllTasks",
+        "title": "Implement All Spec Tasks",
+        "category": "Kiro for Agent Code"
+      },
+      {
         "command": "kfc.spec.markTaskDone",
         "title": "Mark Spec Task Done",
         "category": "Kiro for Agent Code"

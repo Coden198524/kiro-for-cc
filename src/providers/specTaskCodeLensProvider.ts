@@ -27,6 +27,18 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
 
         const codeLenses: vscode.CodeLens[] = [];
         const lines = document.getText().split(/\r?\n/);
+        const runnableTasks = lines
+            .map(line => parseSpecTaskLine(line))
+            .filter(task => task && task.status !== 'completed');
+
+        if (runnableTasks.length > 0) {
+            codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                title: `Start All Tasks (${runnableTasks.length})`,
+                tooltip: 'Implement all pending and in-progress tasks in one agent session',
+                command: 'kfc.spec.implAllTasks',
+                arguments: [document.uri]
+            }));
+        }
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];

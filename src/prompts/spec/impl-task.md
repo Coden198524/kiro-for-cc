@@ -28,6 +28,14 @@ variables:
     type: string
     required: true
     description: Language-specific response instructions
+  completionSignalPath:
+    type: string
+    required: true
+    description: Path to write when the task is ready for verification
+  completionSignalInstruction:
+    type: string
+    required: true
+    description: Instructions for signaling task completion
 ---
 <user_input>
 I just completed a spec workflow and now need to implement one of the specific tasks.
@@ -36,6 +44,7 @@ Task File Path: {{taskFilePath}}
 Task Description: {{taskDescription}}
 Task Mode: {{taskMode}}
 Language Preference: {{languagePreference}}
+Completion Signal Path: {{completionSignalPath}}
 
 {{taskModeInstruction}}
 
@@ -51,6 +60,10 @@ Please help me:
 4. Ensure code quality, including error handling, performance, and security
 5. Add or update focused tests for the implemented code
 6. When finished, report what changed and what you verified in the language specified above
+
+Completion signal:
+
+{{{completionSignalInstruction}}}
 
 Task status is managed by the VS Code extension. Do not mark the task as `- [x]` yourself unless the user explicitly asks you to edit task status.
 </user_input>

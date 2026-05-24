@@ -14,7 +14,7 @@ describe('TaskSessionManager', () => {
 
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
-            const content = files.get(uri.fsPath);
+            const content = files.get(uri.fsPath) ?? files.get(uri.fsPath.replace(/\\/g, '/'));
             if (!content) {
                 throw new Error(`missing ${uri.fsPath}`);
             }
@@ -87,8 +87,42 @@ describe('TaskSessionManager', () => {
         expect(vscode.window.showTextDocument).toHaveBeenCalled();
     });
 
+    test('reads legacy .kfc session store when new store is absent', async () => {
+        const legacyStorePath = '/mock/workspace/.autocode/specs/demo/.kfc/task-sessions.json';
+        const legacyPromptPath = '/mock/workspace/.autocode/specs/demo/.kfc/session-prompts/session-1-invocation-1.md';
+        files.set(legacyStorePath, Buffer.from(JSON.stringify({
+            version: 1,
+            sessions: [{
+                id: 'session-1',
+                taskFilePath,
+                taskFileRelativePath: '.autocode/specs/demo/tasks.md',
+                lineNumber: 2,
+                taskDescription: '2. Continue me',
+                status: 'inProgress',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+                invocations: [{
+                    id: 'invocation-1',
+                    mode: 'start',
+                    startedAt: '2026-01-01T00:00:00.000Z',
+                    providerId: 'codex',
+                    providerName: 'Codex',
+                    promptSnapshotPath: legacyPromptPath
+                }]
+            }]
+        })));
+        files.set(legacyPromptPath, Buffer.from('Legacy prompt'));
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        expect(vscode.workspace.openTextDocument).toHaveBeenCalledWith(expect.objectContaining({
+            language: 'markdown',
+            content: expect.stringContaining('Legacy prompt')
+        }));
+    });
+
     function readStore() {
-        const storePath = [...files.keys()].find(filePath => filePath.replace(/\\/g, '/').endsWith('/.kfc/task-sessions.json'));
+        const storePath = [...files.keys()].find(filePath => filePath.replace(/\\/g, '/').endsWith('/.autocode/task-sessions.json'));
         if (!storePath) {
             throw new Error('task session store was not written');
         }

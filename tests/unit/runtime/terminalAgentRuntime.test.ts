@@ -19,15 +19,26 @@ jest.mock('fs', () => ({
 describe('TerminalAgentRuntime', () => {
     let context: vscode.ExtensionContext;
     let outputChannel: vscode.OutputChannel;
+    let configValues: Record<string, unknown>;
 
     beforeEach(() => {
         jest.clearAllMocks();
+        configValues = {};
         (ConfigManager as any).instance = undefined;
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace as any).getConfiguration = jest.fn(() => ({
-            inspect: jest.fn(() => undefined),
-            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue)
+            inspect: jest.fn((key: string) => (
+                Object.prototype.hasOwnProperty.call(configValues, key)
+                    ? { workspaceValue: configValues[key] }
+                    : undefined
+            )),
+            get: jest.fn((key: string, defaultValue?: unknown) => (
+                Object.prototype.hasOwnProperty.call(configValues, key)
+                    ? configValues[key]
+                    : defaultValue
+            ))
         }));
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
 
         context = {
             globalStorageUri: { fsPath: '/tmp/kfc-storage' },
@@ -167,6 +178,117 @@ describe('TerminalAgentRuntime', () => {
 
         jest.advanceTimersByTime(1500);
         expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
+    });
+
+    test('reuses interactive terminal when requested', async () => {
+        jest.useFakeTimers();
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'claude',
+            displayName: 'Claude Code',
+            command: 'claude',
+            capabilities: claudeCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'First task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+        await jest.advanceTimersByTimeAsync(2300);
+
+        await runtime.invokeInteractive({
+            prompt: 'Second task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+        await jest.advanceTimersByTimeAsync(800);
+
+        expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~First task\x1b[201~', false);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(3, '\x1b[200~Second task\x1b[201~', false);
+    });
+
+    test('reuses allocated interactive terminal before launch delay completes', async () => {
+        jest.useFakeTimers();
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'claude',
+            displayName: 'Claude Code',
+            command: 'claude',
+            capabilities: claudeCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'First task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+        await runtime.invokeInteractive({
+            prompt: 'Second task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+
+        await jest.advanceTimersByTimeAsync(2800);
+
+        expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~First task\x1b[201~', false);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(3, '\x1b[200~Second task\x1b[201~', false);
+    });
+
+    test('reuses command terminal for non-interactive CLI providers when requested', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'deepseek';
+        configValues['providers.deepseek.command'] = 'deepseek-chat';
+        configValues['providers.deepseek.args'] = ['--model', 'deepseek-reasoner'];
+
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'deepseek',
+            displayName: 'DeepSeek',
+            command: 'deepseek-chat',
+            args: ['--model', 'deepseek-reasoner'],
+            capabilities: cliCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'First task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+        await runtime.invokeInteractive({
+            prompt: 'Second task',
+            title: 'KFC - Implementing Task',
+            reuseTerminal: true
+        });
+
+        jest.advanceTimersByTime(800);
+
+        expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
+        expect(terminal.sendText).toHaveBeenCalledTimes(2);
+        expect(terminal.sendText.mock.calls[0][0]).toContain('deepseek-chat --model deepseek-reasoner');
+        expect(terminal.sendText.mock.calls[1][0]).toContain('deepseek-chat --model deepseek-reasoner');
     });
 
     test('submits interactive prompt with an explicit carriage return', () => {

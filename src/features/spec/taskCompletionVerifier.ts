@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { AgentRuntime } from '../../runtime/agentRuntime';
 import { getRuntimeValue } from '../../runtime/runtimeSettings';
-import { replaceSpecTaskStatus } from './taskStatus';
+import { parseSpecTaskLine, replaceSpecTaskStatus } from './taskStatus';
 import { TaskSessionManager } from './taskSessionManager';
 
 interface TaskCompletionVerification {
@@ -37,7 +37,8 @@ export class TaskCompletionVerifier {
         }
 
         const currentTask = await this.readTaskLine(request.taskFilePath, request.lineNumber);
-        if (!currentTask || !currentTask.includes('- [-]')) {
+        const parsedTask = currentTask ? parseSpecTaskLine(currentTask) : undefined;
+        if (!parsedTask || parsedTask.status !== 'inProgress') {
             this.outputChannel.appendLine('[TaskVerifier] Task is no longer in progress; skipping verification.');
             return false;
         }
@@ -63,10 +64,12 @@ export class TaskCompletionVerifier {
 
         const marked = await this.markTaskDone(request.taskFilePath, request.lineNumber);
         if (!marked) {
+            this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
             return false;
         }
 
         await this.taskSessionManager.markCompleted(request.taskFilePath, request.lineNumber, request.taskDescription);
+        this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${request.taskDescription}`);
         vscode.window.showInformationMessage(`Task verified and marked done: ${request.taskDescription}`);
         return true;
     }

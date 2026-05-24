@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { SpecManager } from './features/spec/specManager';
 import { SteeringManager } from './features/steering/steeringManager';
 import { SpecExplorerProvider } from './providers/specExplorerProvider';
@@ -355,7 +356,16 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
 
             const run = await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
             if (run?.terminal) {
-                registerAutoTaskCompletion(context, run.terminal, documentUri.fsPath, lineNumber, effectiveDescription);
+                registerAutoTaskCompletion(context, run.terminal, documentUri.fsPath, lineNumber, effectiveDescription, run.completionSignalPath);
+            }
+        }),
+        vscode.commands.registerCommand('kfc.spec.implAllTasks', async (documentUri: vscode.Uri) => {
+            outputChannel.appendLine(`[Task Execute] Starting all tasks: ${documentUri.fsPath}`);
+
+            const run = await specManager.implAllTasks(documentUri.fsPath);
+            if (run?.terminal && run.completionSignalPaths) {
+                await markRunnableTasksInProgress(documentUri);
+                registerAutoTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
             }
         }),
         vscode.commands.registerCommand('kfc.spec.markTaskDone', async (documentUri: vscode.Uri, lineNumber: number) => {
@@ -571,6 +581,37 @@ async function updateTaskLineStatus(documentUri: vscode.Uri, lineNumber: number,
     return task;
 }
 
+async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(documentUri);
+    const edit = new vscode.WorkspaceEdit();
+    let changed = false;
+
+    for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
+        const line = document.lineAt(lineNumber);
+        const task = parseSpecTaskLine(line.text);
+        if (!task || task.status !== 'pending') {
+            continue;
+        }
+
+        const newLine = replaceSpecTaskStatus(line.text, 'inProgress');
+        if (!newLine || newLine === line.text) {
+            continue;
+        }
+
+        edit.replace(documentUri, new vscode.Range(lineNumber, 0, lineNumber, line.text.length), newLine);
+        changed = true;
+    }
+
+    if (!changed) {
+        return;
+    }
+
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (applied) {
+        await document.save();
+    }
+}
+
 async function readTaskLine(documentUri: vscode.Uri, lineNumber: number) {
     const document = await vscode.workspace.openTextDocument(documentUri);
     return parseSpecTaskLine(document.lineAt(lineNumber).text);
@@ -581,7 +622,8 @@ function registerAutoTaskCompletion(
     terminal: vscode.Terminal,
     taskFilePath: string,
     lineNumber: number,
-    taskDescription: string
+    taskDescription: string,
+    completionSignalPath?: string
 ) {
     if (!taskCompletionVerifier.isEnabled()) {
         return;
@@ -596,6 +638,7 @@ function registerAutoTaskCompletion(
         handled = true;
         closeDisposable.dispose();
         shellEndDisposable.dispose();
+        signalDisposable?.dispose();
 
         await taskCompletionVerifier.verifyAndMarkDone({
             taskFilePath,
@@ -621,7 +664,111 @@ function registerAutoTaskCompletion(
     });
 
     const closeDisposable = disposable;
-    context.subscriptions.push(closeDisposable, shellEndDisposable);
+    const signalDisposable = completionSignalPath
+        ? registerTaskCompletionSignalWatcher(completionSignalPath, runVerification)
+        : undefined;
+    context.subscriptions.push(...[closeDisposable, shellEndDisposable, signalDisposable].filter((item): item is vscode.Disposable => Boolean(item)));
+}
+
+function registerAutoTaskCompletionSignals(
+    context: vscode.ExtensionContext,
+    terminal: vscode.Terminal,
+    taskFilePath: string,
+    completionSignalPaths: string[]
+) {
+    if (!taskCompletionVerifier.isEnabled()) {
+        return;
+    }
+
+    const disposables: vscode.Disposable[] = [];
+    const completedSignals = new Set<string>();
+
+    const verifySignal = async (completionSignalPath: string) => {
+        if (completedSignals.has(completionSignalPath)) {
+            return;
+        }
+
+        completedSignals.add(completionSignalPath);
+        const lineNumber = parseCompletionSignalLineNumber(completionSignalPath);
+        if (lineNumber === undefined) {
+            outputChannel.appendLine(`[Task Complete] Could not infer task line from signal path: ${completionSignalPath}`);
+            return;
+        }
+
+        const task = await readTaskLine(vscode.Uri.file(taskFilePath), lineNumber);
+        if (!task) {
+            outputChannel.appendLine(`[Task Complete] Could not read task line ${lineNumber + 1} for signal: ${completionSignalPath}`);
+            return;
+        }
+
+        await taskCompletionVerifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber,
+            taskDescription: task.description
+        });
+    };
+
+    for (const signalPath of completionSignalPaths) {
+        disposables.push(registerTaskCompletionSignalWatcher(signalPath, () => verifySignal(signalPath)));
+    }
+
+    const terminalDisposable = vscode.window.onDidCloseTerminal(closedTerminal => {
+        if (closedTerminal !== terminal) {
+            return;
+        }
+
+        disposables.forEach(disposable => disposable.dispose());
+        terminalDisposable.dispose();
+    });
+
+    context.subscriptions.push(...disposables, terminalDisposable);
+}
+
+function parseCompletionSignalLineNumber(completionSignalPath: string): number | undefined {
+    const match = path.basename(completionSignalPath).match(/^task-completion-(\d+)\.json$/);
+    if (!match) {
+        return undefined;
+    }
+
+    return Number(match[1]) - 1;
+}
+
+function registerTaskCompletionSignalWatcher(completionSignalPath: string, onSignal: () => Promise<void>): vscode.Disposable {
+    const signalUri = vscode.Uri.file(completionSignalPath);
+    const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(path.dirname(signalUri.fsPath), path.basename(signalUri.fsPath))
+    );
+    let timer: NodeJS.Timeout | undefined;
+
+    const trigger = (uri: vscode.Uri) => {
+        if (uri.fsPath !== signalUri.fsPath) {
+            return;
+        }
+
+        outputChannel.appendLine(`[Task Complete] Completion signal detected: ${uri.fsPath}`);
+
+        if (timer) {
+            clearTimeout(timer);
+        }
+
+        timer = setTimeout(() => {
+            onSignal().catch(error => {
+                outputChannel.appendLine(`[Task Complete] Failed to verify completion signal: ${error}`);
+            });
+        }, 500);
+    };
+
+    watcher.onDidCreate(trigger);
+    watcher.onDidChange(trigger);
+
+    return {
+        dispose: () => {
+            if (timer) {
+                clearTimeout(timer);
+            }
+            watcher.dispose();
+        }
+    };
 }
 
 function setupFileWatchers(

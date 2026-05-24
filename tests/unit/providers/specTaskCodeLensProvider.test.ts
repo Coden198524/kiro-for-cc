@@ -25,6 +25,7 @@ describe('SpecTaskCodeLensProvider', () => {
         const commands = lenses.map(lens => (lens as any).command);
 
         expect(commands.map(command => command?.title)).toEqual([
+            'Start All Tasks (3)',
             'Start Task',
             'Resume Task',
             'Mark Done',
@@ -34,12 +35,13 @@ describe('SpecTaskCodeLensProvider', () => {
             'View Session',
             'View Session'
         ]);
-        expect(commands[0]?.arguments).toEqual([document.uri, 1, '1. Start me', false]);
-        expect(commands[1]?.arguments).toEqual([document.uri, 2, '2. Continue me', true]);
-        expect(commands[2]?.arguments).toEqual([document.uri, 2]);
-        expect(commands[3]?.arguments).toEqual([document.uri, 2, '2. Continue me']);
-        expect(commands[4]?.arguments).toEqual([document.uri, 3, '3. Continue me too', true]);
-        expect(commands[7]?.arguments).toEqual([document.uri, 4, '4. Done']);
+        expect(commands[0]?.arguments).toEqual([document.uri]);
+        expect(commands[1]?.arguments).toEqual([document.uri, 1, '1. Start me', false]);
+        expect(commands[2]?.arguments).toEqual([document.uri, 2, '2. Continue me', true]);
+        expect(commands[3]?.arguments).toEqual([document.uri, 2]);
+        expect(commands[4]?.arguments).toEqual([document.uri, 2, '2. Continue me']);
+        expect(commands[5]?.arguments).toEqual([document.uri, 3, '3. Continue me too', true]);
+        expect(commands[8]?.arguments).toEqual([document.uri, 4, '4. Done']);
     });
 
     test('ignores markdown files outside configured spec tasks documents', async () => {

@@ -223,7 +223,7 @@ export class TaskSessionManager {
         invocationId: string,
         prompt: string
     ): Promise<string> {
-        const promptDir = path.join(this.getKfcDir(taskFilePath), 'session-prompts');
+        const promptDir = path.join(this.getAutocodeDir(taskFilePath), 'session-prompts');
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(promptDir));
 
         const promptPath = path.join(promptDir, `${sessionId}-${invocationId}.md`);
@@ -232,25 +232,33 @@ export class TaskSessionManager {
     }
 
     private async readStore(taskFilePath: string): Promise<TaskSessionStore> {
-        const storePath = this.getStorePath(taskFilePath);
-        try {
-            const content = await vscode.workspace.fs.readFile(vscode.Uri.file(storePath));
-            const parsed = JSON.parse(Buffer.from(content).toString()) as Partial<TaskSessionStore>;
-            return {
-                version: 1,
-                sessions: Array.isArray(parsed.sessions) ? parsed.sessions as TaskSessionRecord[] : []
-            };
-        } catch {
-            return {
-                version: 1,
-                sessions: []
-            };
+        const storePaths = [
+            this.getStorePath(taskFilePath),
+            this.getLegacyStorePath(taskFilePath)
+        ];
+
+        for (const storePath of storePaths) {
+            try {
+                const content = await vscode.workspace.fs.readFile(vscode.Uri.file(storePath));
+                const parsed = JSON.parse(Buffer.from(content).toString()) as Partial<TaskSessionStore>;
+                return {
+                    version: 1,
+                    sessions: Array.isArray(parsed.sessions) ? parsed.sessions as TaskSessionRecord[] : []
+                };
+            } catch {
+                // Try the next store location.
+            }
         }
+
+        return {
+            version: 1,
+            sessions: []
+        };
     }
 
     private async writeStore(taskFilePath: string, store: TaskSessionStore): Promise<void> {
-        const kfcDir = this.getKfcDir(taskFilePath);
-        await vscode.workspace.fs.createDirectory(vscode.Uri.file(kfcDir));
+        const autocodeDir = this.getAutocodeDir(taskFilePath);
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(autocodeDir));
         await vscode.workspace.fs.writeFile(
             vscode.Uri.file(this.getStorePath(taskFilePath)),
             Buffer.from(JSON.stringify(store, null, 2))
@@ -258,11 +266,15 @@ export class TaskSessionManager {
     }
 
     private getStorePath(taskFilePath: string): string {
-        return path.join(this.getKfcDir(taskFilePath), 'task-sessions.json');
+        return path.join(this.getAutocodeDir(taskFilePath), 'task-sessions.json');
     }
 
-    private getKfcDir(taskFilePath: string): string {
-        return path.join(path.dirname(taskFilePath), '.kfc');
+    private getLegacyStorePath(taskFilePath: string): string {
+        return path.join(path.dirname(taskFilePath), '.kfc', 'task-sessions.json');
+    }
+
+    private getAutocodeDir(taskFilePath: string): string {
+        return path.join(path.dirname(taskFilePath), '.autocode');
     }
 
     private getWorkspaceRelativePath(filePath: string): string {

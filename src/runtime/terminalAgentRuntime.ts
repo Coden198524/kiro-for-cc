@@ -18,6 +18,12 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 500;
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 3000;
     private configManager: ConfigManager;
+    private interactiveTerminal: vscode.Terminal | undefined;
+    private interactiveTerminalProviderId: string | undefined;
+    private interactiveTerminalStarted = false;
+    private interactivePromptQueue: Promise<void> = Promise.resolve();
+    private commandTerminal: vscode.Terminal | undefined;
+    private commandTerminalProviderId: string | undefined;
 
     constructor(
         private context: vscode.ExtensionContext,
@@ -33,29 +39,39 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 this.provider = getProviderConfig();
             }
         });
+
+        vscode.window.onDidCloseTerminal(terminal => {
+            if (terminal === this.interactiveTerminal) {
+                this.interactiveTerminal = undefined;
+                this.interactiveTerminalProviderId = undefined;
+                this.interactiveTerminalStarted = false;
+                this.interactivePromptQueue = Promise.resolve();
+            }
+
+            if (terminal === this.commandTerminal) {
+                this.commandTerminal = undefined;
+                this.commandTerminalProviderId = undefined;
+            }
+        });
     }
 
     async invokeInteractive(request: AgentInvocationRequest): Promise<vscode.Terminal> {
         try {
             await this.refreshProviderConfig();
             await this.ensureProviderReady();
+            const provider = this.provider;
             const prompt = this.decoratePrompt(request.prompt, request.agentType);
 
-            if (this.provider.id === 'claude' || this.provider.id === 'codex') {
-                return this.invokePromptPastedInteractive(prompt, request.title);
+            if (provider.id === 'claude' || provider.id === 'codex') {
+                return this.invokePromptPastedInteractive(prompt, request.title, request.reuseTerminal);
             }
 
             const promptFilePath = await this.createTempFile(prompt, 'prompt');
-            const command = this.buildCommand(promptFilePath);
-            const title = request.title || `KFC - ${this.provider.displayName}`;
-
-            const terminal = vscode.window.createTerminal({
-                name: title,
-                cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-                location: {
-                    viewColumn: vscode.ViewColumn.Two
-                }
-            });
+            const command = this.buildCommand(promptFilePath, provider);
+            const title = request.title || `KFC - ${provider.displayName}`;
+            const terminal = request.reuseTerminal
+                ? this.getOrCreateCommandTerminal(title, provider.id)
+                : this.createTerminal(title);
 
             terminal.show();
 
@@ -149,26 +165,84 @@ export class TerminalAgentRuntime implements AgentRuntime {
         this.provider = getProviderConfig();
     }
 
-    private async invokePromptPastedInteractive(prompt: string, title?: string): Promise<vscode.Terminal> {
-        const terminal = vscode.window.createTerminal({
+    private async invokePromptPastedInteractive(prompt: string, title?: string, reuseTerminal = false): Promise<vscode.Terminal> {
+        const provider = this.provider;
+        const terminal = reuseTerminal
+            ? this.getOrCreateInteractiveTerminal(title, provider.id)
+            : this.createTerminal(title);
+
+        terminal.show();
+
+        if (reuseTerminal) {
+            this.enqueueInteractivePrompt(terminal, provider, prompt);
+            return terminal;
+        }
+
+        const delay = this.configManager.getTerminalDelay();
+        setTimeout(() => {
+            terminal.sendText(this.buildInteractiveCommand(provider), true);
+            setTimeout(() => this.sendPromptToInteractiveTerminal(terminal, prompt), TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
+        }, delay);
+
+        return terminal;
+    }
+
+    private enqueueInteractivePrompt(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): void {
+        const run = this.interactivePromptQueue.then(() => this.runQueuedInteractivePrompt(terminal, provider, prompt));
+        this.interactivePromptQueue = run.catch(error => {
+            this.outputChannel.appendLine(`[AgentRuntime] Failed to send queued prompt: ${error}`);
+        });
+    }
+
+    private async runQueuedInteractivePrompt(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): Promise<void> {
+        if (terminal === this.interactiveTerminal && this.interactiveTerminalStarted && this.interactiveTerminalProviderId === provider.id) {
+            const submitDelay = this.sendPromptToInteractiveTerminal(terminal, prompt);
+            await this.wait(submitDelay);
+            return;
+        }
+
+        await this.wait(this.configManager.getTerminalDelay());
+        terminal.sendText(this.buildInteractiveCommand(provider), true);
+        this.interactiveTerminal = terminal;
+        this.interactiveTerminalProviderId = provider.id;
+        this.interactiveTerminalStarted = true;
+        await this.wait(TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
+        const submitDelay = this.sendPromptToInteractiveTerminal(terminal, prompt);
+        await this.wait(submitDelay);
+    }
+
+    private getOrCreateInteractiveTerminal(title: string | undefined, providerId: string): vscode.Terminal {
+        if (this.interactiveTerminal && this.interactiveTerminalProviderId === providerId) {
+            return this.interactiveTerminal;
+        }
+
+        const terminal = this.createTerminal(title);
+        this.interactiveTerminal = terminal;
+        this.interactiveTerminalProviderId = providerId;
+        this.interactiveTerminalStarted = false;
+        this.interactivePromptQueue = Promise.resolve();
+        return terminal;
+    }
+
+    private getOrCreateCommandTerminal(title: string | undefined, providerId: string): vscode.Terminal {
+        if (this.commandTerminal && this.commandTerminalProviderId === providerId) {
+            return this.commandTerminal;
+        }
+
+        const terminal = this.createTerminal(title);
+        this.commandTerminal = terminal;
+        this.commandTerminalProviderId = providerId;
+        return terminal;
+    }
+
+    private createTerminal(title?: string): vscode.Terminal {
+        return vscode.window.createTerminal({
             name: title || `KFC - ${this.provider.displayName}`,
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
             location: {
                 viewColumn: vscode.ViewColumn.Two
             }
         });
-
-        terminal.show();
-
-        const delay = this.configManager.getTerminalDelay();
-        setTimeout(() => {
-            terminal.sendText(this.buildInteractiveCommand(), true);
-            setTimeout(() => {
-                this.sendPromptToInteractiveTerminal(terminal, prompt);
-            }, TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
-        }, delay);
-
-        return terminal;
     }
 
     private decoratePrompt(prompt: string, agentType?: AgentType): string {
@@ -229,22 +303,22 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         return this.convertPathIfWSL(tempFile);
     }
 
-    private buildCommand(promptFilePath: string): string {
+    private buildCommand(promptFilePath: string, provider: AgentProviderConfig = this.provider): string {
         const promptSubstitution = this.buildPromptSubstitution(promptFilePath);
-        const args = (this.provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
-        const command = this.quoteCommand(this.provider.command);
+        const args = (provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
+        const command = this.quoteCommand(provider.command);
 
-        if (this.provider.id === 'claude') {
+        if (provider.id === 'claude') {
             return `${command} --permission-mode bypassPermissions "${promptSubstitution}"`;
         }
 
-        if (this.provider.id === 'codex') {
+        if (provider.id === 'codex') {
             return `${this.buildPromptReadCommand(promptFilePath)} | ${command} exec ${args} -`.replace(/\s+/g, ' ').trim();
         }
 
-        if (this.provider.commandTemplate) {
-            const model = this.provider.model ? this.quoteShellArg(this.provider.model) : '';
-            return this.provider.commandTemplate
+        if (provider.commandTemplate) {
+            const model = provider.model ? this.quoteShellArg(provider.model) : '';
+            return provider.commandTemplate
                 .replaceAll('{command}', command)
                 .replaceAll('{args}', args)
                 .replaceAll('{model}', model)
@@ -256,32 +330,42 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         return [command, args, `"${promptSubstitution}"`].filter(Boolean).join(' ');
     }
 
-    private buildInteractiveCommand(): string {
-        const args = (this.provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
+    private buildInteractiveCommand(provider: AgentProviderConfig = this.provider): string {
+        const args = (provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
 
-        if (this.provider.id === 'claude') {
-            return `${this.quoteCommand(this.provider.command)} --permission-mode bypassPermissions`;
+        if (provider.id === 'claude') {
+            return `${this.quoteCommand(provider.command)} --permission-mode bypassPermissions`;
         }
 
-        return [this.quoteCommand(this.provider.command), args].filter(Boolean).join(' ');
+        return [this.quoteCommand(provider.command), args].filter(Boolean).join(' ');
     }
 
-    private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, prompt: string): void {
+    private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, prompt: string): number {
         const normalizedPrompt = prompt.replace(/\r\n/g, '\n');
         terminal.show();
         terminal.sendText(`\x1b[200~${normalizedPrompt}\x1b[201~`, false);
 
-        const submitDelay = Math.min(
+        const submitDelay = this.getInteractivePromptSubmitDelay(normalizedPrompt);
+
+        setTimeout(() => {
+            this.submitInteractivePrompt(terminal);
+        }, submitDelay);
+
+        return submitDelay;
+    }
+
+    private getInteractivePromptSubmitDelay(normalizedPrompt: string): number {
+        return Math.min(
             TerminalAgentRuntime.INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY,
             Math.max(
                 TerminalAgentRuntime.INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY,
                 Math.ceil(normalizedPrompt.length / 200)
             )
         );
+    }
 
-        setTimeout(() => {
-            this.submitInteractivePrompt(terminal);
-        }, submitDelay);
+    private wait(delayMs: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
     private submitInteractivePrompt(terminal: vscode.Terminal): void {

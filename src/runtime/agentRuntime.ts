@@ -30,6 +30,7 @@ export interface AgentInvocationRequest {
     title?: string;
     mode?: AgentRuntimeMode;
     agentType?: AgentType;
+    reuseTerminal?: boolean;
 }
 
 export interface AgentInvocationResult {

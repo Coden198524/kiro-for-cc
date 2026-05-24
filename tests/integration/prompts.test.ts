@@ -136,7 +136,9 @@ describe('Prompt Integration Tests', () => {
             taskMode: 'resume',
             taskModeInstruction: 'Resume this in-progress task.',
             languagePreference: 'Chinese (中文)',
-            languageInstruction: 'Use Chinese (中文) for all conversational responses.'
+            languageInstruction: 'Use Chinese (中文) for all conversational responses.',
+            completionSignalPath: '/test/.autocode/specs/demo/.autocode/task-completion-1.json',
+            completionSignalInstruction: 'Write the completion signal when ready.'
           }
         },
         {
@@ -226,12 +228,16 @@ describe('Prompt Integration Tests', () => {
         taskMode: 'start',
         taskModeInstruction: '从当前 spec 上下文开始执行这个任务。',
         languagePreference: 'Chinese (中文)',
-        languageInstruction: 'Use Chinese (中文) for all conversational responses.'
+        languageInstruction: 'Use Chinese (中文) for all conversational responses.',
+        completionSignalPath: '/test/.autocode/specs/demo/.autocode/task-completion-1.json',
+        completionSignalInstruction: 'Write the completion signal when ready.'
       });
 
       expect(result).toContain('Language Preference: Chinese (中文)');
       expect(result).toContain('Language rules:');
       expect(result).toContain('Use Chinese (中文) for all conversational responses.');
+      expect(result).toContain('Completion Signal Path: /test/.autocode/specs/demo/.autocode/task-completion-1.json');
+      expect(result).toContain('Completion signal:');
       expect(result).toContain('1. 实现中文任务');
     });
   });

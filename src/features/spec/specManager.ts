@@ -5,11 +5,21 @@ import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
 import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
+import { parseSpecTaskLine } from './taskStatus';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
 export interface TaskImplementationRun {
     terminal: vscode.Terminal;
+    completionSignalPath?: string;
+    completionSignalPaths?: string[];
+}
+
+interface RunnableTask {
+    lineNumber: number;
+    description: string;
+    status: 'pending' | 'inProgress';
+    completionSignalPath: string;
 }
 
 export class SpecManager {
@@ -119,12 +129,25 @@ export class SpecManager {
         // Show notification immediately after user input
         NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing your task. Check the terminal for progress.`);
 
+        const completionSignalPath = lineNumber !== undefined
+            ? this.getCompletionSignalPath(taskFilePath, lineNumber)
+            : undefined;
+        if (completionSignalPath) {
+            await this.prepareCompletionSignalFile(completionSignalPath);
+        }
+
         const languagePreference = await this.detectTaskLanguagePreference(taskFilePath, taskDescription);
         const taskModeInstruction = this.getTaskModeInstruction(resume, languagePreference);
         const languageInstruction = [
             `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
             'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
         ].join(' ');
+        const completionSignalInstruction = this.getCompletionSignalInstruction(
+            taskFilePath,
+            taskDescription,
+            lineNumber,
+            completionSignalPath
+        );
 
         const prompt = this.promptLoader.renderPrompt('impl-task', {
             taskFilePath,
@@ -132,13 +155,16 @@ export class SpecManager {
             taskMode: resume ? 'resume' : 'start',
             taskModeInstruction,
             languagePreference,
-            languageInstruction
+            languageInstruction,
+            completionSignalPath: completionSignalPath || '(not available)',
+            completionSignalInstruction
         });
 
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
             title: 'KFC - Implementing Task',
-            agentType: 'task_implementer'
+            agentType: 'task_implementer',
+            reuseTerminal: true
         });
 
         if (this.taskSessionManager && lineNumber !== undefined) {
@@ -154,7 +180,174 @@ export class SpecManager {
             });
         }
 
-        return { terminal };
+        return { terminal, completionSignalPath };
+    }
+
+    async implAllTasks(taskFilePath: string): Promise<TaskImplementationRun | undefined> {
+        await this.agentRuntime.refreshProvider?.();
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace folder open');
+            return undefined;
+        }
+
+        const tasks = await this.getRunnableTasks(taskFilePath);
+        if (tasks.length === 0) {
+            vscode.window.showInformationMessage('No pending or in-progress spec tasks found.');
+            return undefined;
+        }
+
+        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing all remaining tasks. Check the terminal for progress.`);
+
+        for (const task of tasks) {
+            await this.prepareCompletionSignalFile(task.completionSignalPath);
+        }
+
+        const combinedDescription = tasks.map(task => task.description).join('\n');
+        const languagePreference = await this.detectTaskLanguagePreference(taskFilePath, combinedDescription);
+        const languageInstruction = [
+            `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
+            'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
+        ].join(' ');
+
+        const prompt = this.buildAllTasksPrompt(taskFilePath, tasks, languagePreference, languageInstruction);
+        const terminal = await this.agentRuntime.invokeInteractive({
+            prompt,
+            title: 'KFC - Implementing All Tasks',
+            agentType: 'task_implementer',
+            reuseTerminal: true
+        });
+
+        if (this.taskSessionManager) {
+            for (const task of tasks) {
+                await this.taskSessionManager.recordInvocation({
+                    taskFilePath,
+                    lineNumber: task.lineNumber,
+                    taskDescription: task.description,
+                    mode: task.status === 'inProgress' ? 'resume' : 'start',
+                    provider: this.agentRuntime.provider,
+                    prompt,
+                    terminal
+                });
+            }
+        }
+
+        return {
+            terminal,
+            completionSignalPaths: tasks.map(task => task.completionSignalPath)
+        };
+    }
+
+    private async getRunnableTasks(taskFilePath: string): Promise<RunnableTask[]> {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(taskFilePath));
+        const tasks: RunnableTask[] = [];
+
+        for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
+            const task = parseSpecTaskLine(document.lineAt(lineNumber).text);
+            if (!task || task.status === 'completed') {
+                continue;
+            }
+
+            tasks.push({
+                lineNumber,
+                description: task.description,
+                status: task.status,
+                completionSignalPath: this.getCompletionSignalPath(taskFilePath, lineNumber)
+            });
+        }
+
+        return tasks;
+    }
+
+    private buildAllTasksPrompt(
+        taskFilePath: string,
+        tasks: RunnableTask[],
+        languagePreference: string,
+        languageInstruction: string
+    ): string {
+        const taskLines = tasks.map(task => [
+            `- Line ${task.lineNumber + 1}: ${task.description}`,
+            `  Status: ${task.status}`,
+            `  Completion signal path: ${task.completionSignalPath}`
+        ].join('\n')).join('\n');
+
+        const signalPayloads = tasks.map(task => [
+            `For line ${task.lineNumber + 1}, write this JSON to ${task.completionSignalPath}:`,
+            JSON.stringify({
+                status: 'ready_for_verification',
+                taskFilePath,
+                lineNumber: task.lineNumber,
+                taskDescription: task.description
+            }, null, 2)
+        ].join('\n')).join('\n\n');
+
+        return [
+            '<user_input>',
+            'Implement all remaining tasks from this spec task file in one continuous coding session.',
+            '',
+            `Task File Path: ${taskFilePath}`,
+            `Language Preference: ${languagePreference}`,
+            '',
+            'Language rules:',
+            languageInstruction,
+            '',
+            'Tasks to implement, in order:',
+            taskLines,
+            '',
+            'Execution rules:',
+            '1. First read tasks.md, requirements.md, and design.md from the spec folder.',
+            '2. Implement each listed task in order.',
+            '3. Keep the work scoped to these tasks and avoid unrelated refactors.',
+            '4. Add or update focused tests as appropriate.',
+            '5. After each task is fully implemented, write its completion signal JSON file.',
+            '6. Do not edit task checkboxes yourself. The extension will independently verify and mark completed tasks.',
+            '',
+            'Completion signals:',
+            signalPayloads,
+            '</user_input>'
+        ].join('\n');
+    }
+
+    private getCompletionSignalPath(taskFilePath: string, lineNumber: number): string {
+        return path.join(path.dirname(taskFilePath), '.autocode', `task-completion-${lineNumber + 1}.json`);
+    }
+
+    private async prepareCompletionSignalFile(completionSignalPath: string): Promise<void> {
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(completionSignalPath)));
+        try {
+            await vscode.workspace.fs.delete(vscode.Uri.file(completionSignalPath));
+        } catch {
+            // The signal file normally does not exist before a task run.
+        }
+    }
+
+    private getCompletionSignalInstruction(
+        taskFilePath: string,
+        taskDescription: string,
+        lineNumber: number | undefined,
+        completionSignalPath: string | undefined
+    ): string {
+        if (lineNumber === undefined || !completionSignalPath) {
+            return 'No completion signal file is available for this invocation. Finish with a clear summary; the user may mark the task manually.';
+        }
+
+        const payload = JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber,
+            taskDescription
+        }, null, 2);
+
+        return [
+            'When you believe this task is fully implemented, create or overwrite the completion signal file with the JSON object below.',
+            'The VS Code extension will run an independent model verification and will mark the task checkbox as completed only if verification passes.',
+            'Do not edit the task checkbox yourself.',
+            '',
+            `Completion signal path: ${completionSignalPath}`,
+            '',
+            payload
+        ].join('\n');
     }
 
     private async detectTaskLanguagePreference(taskFilePath: string, taskDescription: string): Promise<string> {
