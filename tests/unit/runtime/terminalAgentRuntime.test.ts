@@ -180,6 +180,42 @@ describe('TerminalAgentRuntime', () => {
         expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
     });
 
+    test('pastes and submits prompt into Codex interactive terminal after Codex delay', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'Feature Description: 支持中文 Spec',
+            title: 'AutoCode - Creating Spec'
+        });
+
+        jest.advanceTimersByTime(800);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex', true);
+
+        jest.advanceTimersByTime(1500);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
+
+        jest.advanceTimersByTime(2999);
+        expect(terminal.sendText).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(1);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(3, '', true);
+    });
+
     test('reuses interactive terminal when requested', async () => {
         jest.useFakeTimers();
         const terminal = {
@@ -291,46 +327,54 @@ describe('TerminalAgentRuntime', () => {
         expect(terminal.sendText.mock.calls[1][0]).toContain('deepseek-chat --model deepseek-reasoner');
     });
 
-    test('submits interactive prompt with an explicit carriage return', () => {
+    test('delays and submits Codex interactive prompt with terminal newline', () => {
         jest.useFakeTimers();
-        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
-        const runtime = createRuntime({
+        const provider: AgentProviderConfig = {
             id: 'codex',
             displayName: 'Codex',
             command: 'codex',
             capabilities: cliCapabilities()
-        });
+        };
+        const runtime = createRuntime(provider);
         const terminal = {
             sendText: jest.fn(),
             show: jest.fn()
         };
 
-        (runtime as any).sendPromptToInteractiveTerminal(terminal, 'line 1\r\nline 2');
-        jest.advanceTimersByTime(500);
+        const submitDelay = (runtime as any).sendPromptToInteractiveTerminal(terminal, provider, 'line 1\r\nline 2');
+        jest.advanceTimersByTime(2999);
 
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, '\x1b[200~line 1\nline 2\x1b[201~', false);
-        expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.terminal.sendSequence', { text: '\r' });
+        expect(submitDelay).toBe(3000);
+        expect(terminal.sendText).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(1);
+
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '', true);
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     });
 
-    test('falls back to terminal sendText if sendSequence fails', async () => {
+    test('falls back to terminal newline if sendSequence fails for non-Codex prompts', async () => {
         jest.useFakeTimers();
         (vscode.commands.executeCommand as jest.Mock).mockRejectedValue(new Error('send failed'));
-        const runtime = createRuntime({
-            id: 'codex',
-            displayName: 'Codex',
-            command: 'codex',
-            capabilities: cliCapabilities()
-        });
+        const provider = {
+            id: 'claude',
+            displayName: 'Claude Code',
+            command: 'claude',
+            capabilities: claudeCapabilities()
+        } as AgentProviderConfig;
+        const runtime = createRuntime(provider);
         const terminal = {
             sendText: jest.fn(),
             show: jest.fn()
         };
 
-        (runtime as any).sendPromptToInteractiveTerminal(terminal, 'line 1');
+        (runtime as any).sendPromptToInteractiveTerminal(terminal, provider, 'line 1');
         jest.advanceTimersByTime(500);
         await Promise.resolve();
 
-        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\r', false);
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.terminal.sendSequence', { text: '\r' });
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '', true);
     });
 
     test('keeps Windows prompt paths for non-WSL providers', () => {

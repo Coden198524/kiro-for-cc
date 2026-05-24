@@ -17,6 +17,9 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly INTERACTIVE_PROMPT_PASTE_DELAY = 1500;
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 500;
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 3000;
+    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 3000;
+    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 12000;
+    private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 6;
     private configManager: ConfigManager;
     private interactiveTerminal: vscode.Terminal | undefined;
     private interactiveTerminalProviderId: string | undefined;
@@ -181,7 +184,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
         const delay = this.configManager.getTerminalDelay();
         setTimeout(() => {
             terminal.sendText(this.buildInteractiveCommand(provider), true);
-            setTimeout(() => this.sendPromptToInteractiveTerminal(terminal, prompt), TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
+            setTimeout(() => this.sendPromptToInteractiveTerminal(terminal, provider, prompt), TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
         }, delay);
 
         return terminal;
@@ -196,7 +199,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
 
     private async runQueuedInteractivePrompt(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): Promise<void> {
         if (terminal === this.interactiveTerminal && this.interactiveTerminalStarted && this.interactiveTerminalProviderId === provider.id) {
-            const submitDelay = this.sendPromptToInteractiveTerminal(terminal, prompt);
+            const submitDelay = this.sendPromptToInteractiveTerminal(terminal, provider, prompt);
             await this.wait(submitDelay);
             return;
         }
@@ -207,7 +210,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
         this.interactiveTerminalProviderId = provider.id;
         this.interactiveTerminalStarted = true;
         await this.wait(TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
-        const submitDelay = this.sendPromptToInteractiveTerminal(terminal, prompt);
+        const submitDelay = this.sendPromptToInteractiveTerminal(terminal, provider, prompt);
         await this.wait(submitDelay);
     }
 
@@ -340,21 +343,31 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         return [this.quoteCommand(provider.command), args].filter(Boolean).join(' ');
     }
 
-    private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, prompt: string): number {
+    private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): number {
         const normalizedPrompt = prompt.replace(/\r\n/g, '\n');
         terminal.show();
         terminal.sendText(`\x1b[200~${normalizedPrompt}\x1b[201~`, false);
 
-        const submitDelay = this.getInteractivePromptSubmitDelay(normalizedPrompt);
+        const submitDelay = this.getInteractivePromptSubmitDelay(normalizedPrompt, provider);
 
         setTimeout(() => {
-            this.submitInteractivePrompt(terminal);
+            this.submitInteractivePrompt(terminal, provider);
         }, submitDelay);
 
         return submitDelay;
     }
 
-    private getInteractivePromptSubmitDelay(normalizedPrompt: string): number {
+    private getInteractivePromptSubmitDelay(normalizedPrompt: string, provider: AgentProviderConfig): number {
+        if (provider.id === 'codex') {
+            return Math.min(
+                TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY,
+                Math.max(
+                    TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY,
+                    Math.ceil(normalizedPrompt.length / TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS)
+                )
+            );
+        }
+
         return Math.min(
             TerminalAgentRuntime.INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY,
             Math.max(
@@ -368,11 +381,17 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         return new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
-    private submitInteractivePrompt(terminal: vscode.Terminal): void {
+    private submitInteractivePrompt(terminal: vscode.Terminal, provider: AgentProviderConfig): void {
         terminal.show();
+
+        if (provider.id === 'codex') {
+            terminal.sendText('', true);
+            return;
+        }
+
         vscode.commands.executeCommand('workbench.action.terminal.sendSequence', { text: '\r' }).then(
             undefined,
-            () => terminal.sendText('\r', false)
+            () => terminal.sendText('', true)
         );
     }
 
