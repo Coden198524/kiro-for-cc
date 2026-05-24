@@ -1,13 +1,18 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { AgentProviderConfig } from '../runtime/agentRuntime';
+import { getProviderConfig } from '../runtime/providerRegistry';
 
 export class HooksExplorerProvider implements vscode.TreeDataProvider<HookItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<HookItem | undefined | null | void> = new vscode.EventEmitter<HookItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<HookItem | undefined | null | void> = this._onDidChangeTreeData.event;
     private isLoading: boolean = false;
     
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(
+        private context: vscode.ExtensionContext,
+        private provider?: AgentProviderConfig
+    ) {
         // Start with loading state
         this.isLoading = true;
         this.loadHooks().then(() => {
@@ -17,6 +22,7 @@ export class HooksExplorerProvider implements vscode.TreeDataProvider<HookItem> 
     }
     
     refresh(): void {
+        this.provider = getProviderConfig();
         this.isLoading = true;
         this._onDidChangeTreeData.fire(); // Fire immediately to show loading state
         this.loadHooks().then(() => {
@@ -40,6 +46,19 @@ export class HooksExplorerProvider implements vscode.TreeDataProvider<HookItem> 
         }
         
         if (!element) {
+            if (this.provider && !this.provider.capabilities.claudeHooks) {
+                return [
+                    new HookItem(
+                        `Claude Code hooks are unavailable for ${this.provider.displayName}`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'provider-unsupported',
+                        'provider-unsupported',
+                        undefined,
+                        this.context
+                    )
+                ];
+            }
+
             // Show loading state
             if (this.isLoading) {
                 return [
@@ -219,6 +238,8 @@ class HookItem extends vscode.TreeItem {
         // Set appropriate icons
         if (contextValue === 'loading') {
             this.iconPath = new vscode.ThemeIcon('sync~spin');
+        } else if (contextValue === 'provider-unsupported') {
+            this.iconPath = new vscode.ThemeIcon('info');
         } else if (contextValue === 'no-hooks') {
             this.iconPath = new vscode.ThemeIcon('info');
         } else if (contextValue === 'hook') {
@@ -247,7 +268,9 @@ class HookItem extends vscode.TreeItem {
         // 不需要显示 Active/Inactive，因为出现在配置文件中的都是激活的
         
         // Set tooltips
-        if (contextValue === 'no-hooks') {
+        if (contextValue === 'provider-unsupported') {
+            this.tooltip = 'This view reads Claude Code hooks from .claude/settings.json.';
+        } else if (contextValue === 'no-hooks') {
             this.tooltip = 'Configure hooks in Claude Code CLI';
         } else if (contextValue === 'hook-detail' && label.startsWith('Command:')) {
             this.tooltip = label.substring(9); // Show full command in tooltip

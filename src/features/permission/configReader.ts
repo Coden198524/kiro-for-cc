@@ -8,7 +8,15 @@ export class ConfigReader {
     private watchCallback?: () => void;
 
     constructor(private outputChannel: vscode.OutputChannel) {
-        this.configPath = path.join(os.homedir(), '.claude.json');
+        this.configPath = this.joinHomePath('.claude.json');
+    }
+
+    private joinHomePath(fileName: string): string {
+        const homeDir = os.homedir();
+        if (homeDir.includes('/') && !homeDir.includes('\\')) {
+            return `${homeDir.replace(/\/+$/, '')}/${fileName}`;
+        }
+        return path.join(homeDir, fileName);
     }
 
     /**

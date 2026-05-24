@@ -1,7 +1,7 @@
 {
   "name": "kiro-for-cc",
-  "displayName": "Kiro for Claude Code",
-  "description": "Spec-driven development with Claude Code - inspired by Kiro",
+  "displayName": "Kiro for Agent Code",
+  "description": "Spec-driven development with Claude Code, Codex, DeepSeek, GLM, and custom agents - inspired by Kiro",
   "version": "0.2.9",
   "publisher": "heisebaiyun",
   "icon": "icon.png",
@@ -26,7 +26,7 @@
       "activitybar": [
         {
           "id": "kfc",
-          "title": "Kiro for CC",
+          "title": "Kiro for Agent Code",
           "icon": "./icons/kiro.svg"
         }
       ]
@@ -69,7 +69,7 @@
     "viewsWelcome": [
       {
         "view": "kfc.views.overview",
-        "contents": "Configure Kiro for Claude Code\n\n[$(gear) Open Settings](command:kfc.settings.open)\n[$(question) Help](command:kfc.help.open)"
+        "contents": "Configure Kiro agent providers\n\n[$(gear) Open Settings](command:kfc.settings.open)\n[$(question) Help](command:kfc.help.open)"
       },
       {
         "view": "kfc.views.specExplorer",
@@ -85,134 +85,144 @@
       },
       {
         "view": "kfc.views.mcpServerStatus",
-        "contents": "Connect to external tools and services\nUse 'claude mcp add' to configure servers"
+        "contents": "Connect to external tools and services\nConfigure extension MCP servers in Kiro settings"
       }
     ],
     "commands": [
       {
         "command": "kfc.spec.create",
         "title": "Create New Spec",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(plus)"
       },
       {
         "command": "kfc.spec.createWithAgents",
         "title": "New Spec with Agents",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.steering.create",
         "title": "Create Custom Steering",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(plus)"
       },
       {
         "command": "kfc.steering.generateInitial",
         "title": "Init Steering",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.steering.refine",
         "title": "Refine Steering",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(sparkle)"
       },
       {
         "command": "kfc.spec.delete",
         "title": "Delete Spec",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(trash)"
       },
       {
         "command": "kfc.steering.delete",
         "title": "Delete Steering",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(trash)"
       },
       {
         "command": "kfc.steering.createUserRule",
         "title": "Create User Rule",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(globe)"
       },
       {
         "command": "kfc.steering.createProjectRule",
         "title": "Create Project Rule",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(root-folder)"
       },
       {
         "command": "kfc.hooks.refresh",
         "title": "Refresh Hooks",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.mcp.refresh",
         "title": "Refresh MCP Status",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.settings.open",
         "title": "Kiro Settings",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(gear)"
       },
       {
         "command": "kfc.checkForUpdates",
         "title": "Check for Updates",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(sync)"
       },
       {
         "command": "kfc.spec.refresh",
         "title": "Refresh Specs",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.steering.refresh",
         "title": "Refresh Steering",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.agents.refresh",
         "title": "Refresh Agents",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(refresh)"
       },
       {
         "command": "kfc.help.open",
         "title": "Kiro Help",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(question)"
       },
       {
         "command": "kfc.menu.open",
         "title": "Kiro Menu",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(ellipsis)"
       },
       {
         "command": "kfc.permission.check",
         "title": "Check Permission Status",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(info)"
       },
       {
         "command": "kfc.permission.reset",
         "title": "Reset Permissions",
-        "category": "Kiro for CC",
+        "category": "Kiro for Agent Code",
         "icon": "$(debug-restart)"
       },
       {
         "command": "kfc.spec.implTask",
         "title": "Implement Task",
-        "category": "Kiro for CC"
+        "category": "Kiro for Agent Code"
+      },
+      {
+        "command": "kfc.spec.markTaskDone",
+        "title": "Mark Spec Task Done",
+        "category": "Kiro for Agent Code"
+      },
+      {
+        "command": "kfc.spec.viewTaskSession",
+        "title": "View Spec Task AI Session",
+        "category": "Kiro for Agent Code"
       }
     ],
     "menus": {
@@ -299,12 +309,127 @@
       ]
     },
     "configuration": {
-      "title": "Kiro for Claude Code",
+      "title": "Kiro for Agent Code",
       "properties": {
         "kfc.claudePath": {
           "type": "string",
           "default": "claude",
-          "description": "Path to Claude Code CLI executable"
+          "description": "Legacy path to Claude Code CLI executable. Prefer kfc.providers.claude.command."
+        },
+        "kfc.agent.provider": {
+          "type": "string",
+          "default": "claude",
+          "enum": [
+            "claude",
+            "codex",
+            "deepseek",
+            "glm",
+            "custom"
+          ],
+          "description": "Active agent provider used for spec, steering, and task execution."
+        },
+        "kfc.agent.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model identifier for future API-backed runtimes."
+        },
+        "kfc.providers.claude.command": {
+          "type": "string",
+          "default": "claude",
+          "description": "Claude Code CLI command."
+        },
+        "kfc.providers.codex.command": {
+          "type": "string",
+          "default": "codex",
+          "description": "Codex/OpenAI CLI command."
+        },
+        "kfc.providers.codex.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed before the prompt for the Codex/OpenAI CLI."
+        },
+        "kfc.providers.deepseek.command": {
+          "type": "string",
+          "default": "deepseek",
+          "description": "DeepSeek CLI command."
+        },
+        "kfc.providers.deepseek.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed before the prompt for the DeepSeek CLI."
+        },
+        "kfc.providers.glm.command": {
+          "type": "string",
+          "default": "glm",
+          "description": "GLM/Z.AI CLI command."
+        },
+        "kfc.providers.glm.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed before the prompt for the GLM/Z.AI CLI."
+        },
+        "kfc.providers.custom.displayName": {
+          "type": "string",
+          "default": "Custom Agent",
+          "description": "Display name for the custom agent provider."
+        },
+        "kfc.providers.custom.command": {
+          "type": "string",
+          "default": "agent",
+          "description": "Custom agent CLI command."
+        },
+        "kfc.providers.custom.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed before the prompt for the custom CLI."
+        },
+        "kfc.providers.custom.commandTemplate": {
+          "type": "string",
+          "default": "{command} {args} \"{prompt}\"",
+          "description": "Custom command template. Tokens: {command}, {args}, {model}, {prompt}."
+        },
+        "kfc.mcp.customServers": {
+          "type": "array",
+          "default": [],
+          "description": "Extension-level custom MCP servers available to non-Claude providers.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "type": {
+                "type": "string",
+                "enum": ["stdio", "command", "sse", "http"]
+              },
+              "command": { "type": "string" },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              },
+              "url": { "type": "string" },
+              "headers": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              },
+              "description": { "type": "string" }
+            }
+          }
         },
         "kfc.autoRefreshSpecs": {
           "type": "boolean",

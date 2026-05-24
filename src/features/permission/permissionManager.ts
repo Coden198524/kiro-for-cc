@@ -4,6 +4,7 @@ import { PermissionCache, IPermissionCache } from './permissionCache';
 import { PermissionWebview } from './permissionWebview';
 import { ClaudeCodeProvider } from '../../providers/claudeCodeProvider';
 import { NotificationUtils } from '../../utils/notificationUtils';
+import { getActiveProviderId } from '../../runtime/providerRegistry';
 
 export class PermissionManager {
     private cache: IPermissionCache;
@@ -63,6 +64,10 @@ export class PermissionManager {
      */
     async initializePermissions(): Promise<boolean> {
         this.outputChannel.appendLine('[PermissionManager] Initializing permissions...');
+        if (getActiveProviderId() !== 'claude') {
+            this.outputChannel.appendLine('[PermissionManager] Skipping Claude Code permissions for non-Claude provider');
+            return true;
+        }
 
         // 总是启动文件监听，这样可以检测权限变化
         this.startMonitoring();
@@ -102,7 +107,7 @@ export class PermissionManager {
 
                 // 先显示确认对话框
                 const confirm = await vscode.window.showWarningMessage(
-                    'Are you sure you want to uninstall Kiro for Claude Code?',
+                    'Are you sure you want to uninstall Kiro for Agent Code?',
                     'Keep It',
                     'Uninstall'
                 );

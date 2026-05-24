@@ -37,6 +37,18 @@ export const window = {
   showInputBox: jest.fn(),
   showQuickPick: jest.fn(),
   showTextDocument: jest.fn(),
+  createTerminal: jest.fn(() => ({
+    name: 'Mock Terminal',
+    processId: Promise.resolve(undefined),
+    creationOptions: {},
+    exitStatus: undefined,
+    shellIntegration: undefined,
+    sendText: jest.fn(),
+    show: jest.fn(),
+    hide: jest.fn(),
+    dispose: jest.fn()
+  })),
+  onDidEndTerminalShellExecution: jest.fn(() => ({ dispose: jest.fn() })),
   createOutputChannel: jest.fn(() => ({
     appendLine: jest.fn(),
     append: jest.fn(),
@@ -66,9 +78,50 @@ export const workspace = {
     name: 'mock-workspace',
     index: 0
   }],
+  getConfiguration: jest.fn(() => ({
+    get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+    inspect: jest.fn(() => undefined),
+    update: jest.fn()
+  })),
+  onDidChangeConfiguration: jest.fn(() => ({ dispose: jest.fn() })),
+  applyEdit: jest.fn(),
   openTextDocument: jest.fn(),
   createFileSystemWatcher: jest.fn(),
   textDocuments: []
+};
+
+export const languages = {
+  registerCodeLensProvider: jest.fn(() => ({ dispose: jest.fn() }))
+};
+
+export class Position {
+  constructor(public line: number, public character: number) {}
+}
+
+export class Range {
+  public start: Position;
+  public end: Position;
+
+  constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
+    this.start = new Position(startLine, startCharacter);
+    this.end = new Position(endLine, endCharacter);
+  }
+}
+
+export class CodeLens {
+  constructor(public range: Range, public command?: any) {}
+}
+
+export class WorkspaceEdit {
+  public entries: Array<{ uri: Uri; range: Range; newText: string }> = [];
+
+  replace(uri: Uri, range: Range, newText: string): void {
+    this.entries.push({ uri, range, newText });
+  }
+}
+
+export const ConfigurationTarget = {
+  Workspace: 2
 };
 
 export class RelativePattern {

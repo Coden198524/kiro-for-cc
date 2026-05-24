@@ -1,4 +1,34 @@
 {
+  "agent": {
+    "provider": "claude",
+    "model": ""
+  },
+  "providers": {
+    "claude": {
+      "command": "claude"
+    },
+    "codex": {
+      "command": "codex",
+      "args": []
+    },
+    "deepseek": {
+      "command": "deepseek",
+      "args": []
+    },
+    "glm": {
+      "command": "glm",
+      "args": []
+    },
+    "custom": {
+      "displayName": "Custom Agent",
+      "command": "agent",
+      "args": [],
+      "commandTemplate": "{command} {args} \"{prompt}\""
+    }
+  },
+  "mcp": {
+    "customServers": []
+  },
   "paths": {
     "specs": ".claude/specs",
     "steering": ".claude/steering",
@@ -6,6 +36,9 @@
   },
   "views": {
     "specs": {
+      "visible": true
+    },
+    "agents": {
       "visible": true
     },
     "steering": {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ClaudeCodeProvider } from '../../providers/claudeCodeProvider';
+import { AgentRuntime } from '../../runtime/agentRuntime';
 import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
@@ -10,7 +10,7 @@ export class SteeringManager {
     private promptLoader: PromptLoader;
 
     constructor(
-        private claudeCodeProvider: ClaudeCodeProvider,
+        private agentRuntime: AgentRuntime,
         private outputChannel: vscode.OutputChannel
     ) {
         this.configManager = ConfigManager.getInstance();
@@ -23,6 +23,8 @@ export class SteeringManager {
     }
 
     async createCustom() {
+        await this.agentRuntime.refreshProvider?.();
+
         // Get project context and guidance needs
         const description = await vscode.window.showInputBox({
             title: '📝 Create Steering Document 📝',
@@ -54,10 +56,14 @@ export class SteeringManager {
                 steeringPath: this.getSteeringBasePath()
             });
 
-            await this.claudeCodeProvider.invokeClaudeSplitView(prompt, 'KFC - Create Steering');
+            await this.agentRuntime.invokeInteractive({
+                prompt,
+                title: 'KFC - Create Steering',
+                agentType: 'steering_writer'
+            });
 
             // Show auto-dismiss notification
-            await NotificationUtils.showAutoDismissNotification('Claude is creating a steering document based on your needs. Check the terminal for progress.');
+            await NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is creating a steering document based on your needs. Check the terminal for progress.`);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to create steering document: ${error}`);
         }
@@ -67,6 +73,8 @@ export class SteeringManager {
      * Delete a steering document and update CLAUDE.md
      */
     async delete(documentName: string, documentPath: string): Promise<{ success: boolean; error?: string }> {
+        await this.agentRuntime.refreshProvider?.();
+
         try {
             // First delete the file
             await vscode.workspace.fs.delete(vscode.Uri.file(documentPath));
@@ -78,10 +86,14 @@ export class SteeringManager {
             });
 
             // Show progress notification
-            await NotificationUtils.showAutoDismissNotification(`Deleting "${documentName}" and updating CLAUDE.md...`);
+            await NotificationUtils.showAutoDismissNotification(`Deleting "${documentName}" and updating steering references...`);
 
-            // Execute Claude command to update CLAUDE.md
-            const result = await this.claudeCodeProvider.invokeClaudeHeadless(prompt);
+            // Execute the active agent command to update CLAUDE.md if needed.
+            const result = await this.agentRuntime.invokeHeadless({
+                prompt,
+                title: 'KFC - Delete Steering',
+                agentType: 'steering_deleter'
+            });
 
             if (result.exitCode === 0) {
                 await NotificationUtils.showAutoDismissNotification(`Steering document "${documentName}" deleted and CLAUDE.md updated successfully.`);
@@ -104,6 +116,8 @@ export class SteeringManager {
     * Generate initial steering documents by analyzing the project
     */
     async init() {
+        await this.agentRuntime.refreshProvider?.();
+
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage('No workspace folder open');
@@ -138,7 +152,11 @@ export class SteeringManager {
                 steeringPath: this.getSteeringBasePath()
             });
 
-            await this.claudeCodeProvider.invokeClaudeSplitView(prompt, 'KFC - Init Steering');
+            await this.agentRuntime.invokeInteractive({
+                prompt,
+                title: 'KFC - Init Steering',
+                agentType: 'steering_initializer'
+            });
 
             // Auto-dismiss notification after 3 seconds
             await NotificationUtils.showAutoDismissNotification('Steering documents generation started. Check the terminal for progress.');
@@ -146,16 +164,22 @@ export class SteeringManager {
     }
 
     async refine(uri: vscode.Uri) {
+        await this.agentRuntime.refreshProvider?.();
+
         // Load and render the refine prompt
         const prompt = this.promptLoader.renderPrompt('refine-steering', {
             filePath: uri.fsPath
         });
 
-        // Send to Claude
-        await this.claudeCodeProvider.invokeClaudeSplitView(prompt, 'KFC - Refine Steering');
+        // Send to the active agent.
+        await this.agentRuntime.invokeInteractive({
+            prompt,
+            title: 'KFC - Refine Steering',
+            agentType: 'steering_refiner'
+        });
 
         // Show auto-dismiss notification
-        await NotificationUtils.showAutoDismissNotification('Claude is refining the steering document. Check the terminal for progress.');
+        await NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is refining the steering document. Check the terminal for progress.`);
     }
 
     async getSteeringDocuments(): Promise<Array<{ name: string, path: string }>> {
@@ -184,6 +208,13 @@ export class SteeringManager {
      * Create project-level CLAUDE.md file using Claude CLI
      */
     async createProjectClaudeMd() {
+        await this.agentRuntime.refreshProvider?.();
+
+        if (!this.agentRuntime.provider.capabilities.permissions) {
+            vscode.window.showWarningMessage('Project CLAUDE.md initialization is only available when the active provider is Claude Code.');
+            return;
+        }
+
         const terminal = vscode.window.createTerminal({
             name: 'Claude Code - Init',
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
@@ -196,7 +227,7 @@ export class SteeringManager {
         // Wait for Python extension to finish venv activation
         const delay = this.configManager.getTerminalDelay();
         setTimeout(() => {
-            terminal.sendText('claude --permission-mode bypassPermissions "/init"');
+            terminal.sendText(`${this.agentRuntime.provider.command} --permission-mode bypassPermissions "/init"`);
         }, delay);
     }
 
@@ -204,6 +235,13 @@ export class SteeringManager {
      * Create global CLAUDE.md file in user's home directory
      */
     async createUserClaudeMd() {
+        await this.agentRuntime.refreshProvider?.();
+
+        if (!this.agentRuntime.provider.capabilities.permissions) {
+            vscode.window.showWarningMessage('Global CLAUDE.md creation is only available when the active provider is Claude Code.');
+            return;
+        }
+
         const claudeDir = path.join(process.env.HOME || '', '.claude');
         const filePath = path.join(claudeDir, 'CLAUDE.md');
 

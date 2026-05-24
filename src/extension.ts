@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { ClaudeCodeProvider } from './providers/claudeCodeProvider';
 import { SpecManager } from './features/spec/specManager';
 import { SteeringManager } from './features/steering/steeringManager';
 import { SpecExplorerProvider } from './providers/specExplorerProvider';
@@ -16,12 +15,17 @@ import { UpdateChecker } from './utils/updateChecker';
 import { PermissionManager } from './features/permission/permissionManager';
 import { NotificationUtils } from './utils/notificationUtils';
 import { SpecTaskCodeLensProvider } from './providers/specTaskCodeLensProvider';
+import { AgentRuntime } from './runtime/agentRuntime';
+import { TerminalAgentRuntime } from './runtime/terminalAgentRuntime';
+import { parseSpecTaskLine, replaceSpecTaskStatus, SpecTaskStatus } from './features/spec/taskStatus';
+import { TaskSessionManager } from './features/spec/taskSessionManager';
 
-let claudeCodeProvider: ClaudeCodeProvider;
+let agentRuntime: AgentRuntime;
 let specManager: SpecManager;
 let steeringManager: SteeringManager;
 let permissionManager: PermissionManager;
 let agentManager: AgentManager;
+let taskSessionManager: TaskSessionManager;
 export let outputChannel: vscode.OutputChannel;
 
 // 导出 getter 函数供其他模块使用
@@ -31,7 +35,7 @@ export function getPermissionManager(): PermissionManager {
 
 export async function activate(context: vscode.ExtensionContext) {
     // Create output channel for debugging
-    outputChannel = vscode.window.createOutputChannel('Kiro for Claude Code - Debug');
+    outputChannel = vscode.window.createOutputChannel('Kiro for Agent Code - Debug');
 
     // Initialize PromptLoader
     try {
@@ -50,18 +54,26 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
 
-    // Initialize Claude Code SDK provider with output channel
-    claudeCodeProvider = new ClaudeCodeProvider(context, outputChannel);
+    const configManager = ConfigManager.getInstance();
+    await configManager.loadSettings();
+
+    // Initialize agent runtime with output channel
+    agentRuntime = new TerminalAgentRuntime(context, outputChannel);
 
     // 创建并初始化 PermissionManager
     permissionManager = new PermissionManager(context, outputChannel);
 
     // 初始化权限系统（包含重试逻辑）
-    await permissionManager.initializePermissions();
+    if (agentRuntime.provider.capabilities.permissions) {
+        await permissionManager.initializePermissions();
+    } else {
+        outputChannel.appendLine(`[AgentRuntime] Skipping Claude permission setup for ${agentRuntime.provider.displayName}`);
+    }
 
     // Initialize feature managers with output channel
-    specManager = new SpecManager(claudeCodeProvider, outputChannel);
-    steeringManager = new SteeringManager(claudeCodeProvider, outputChannel);
+    taskSessionManager = new TaskSessionManager(outputChannel);
+    specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager);
+    steeringManager = new SteeringManager(agentRuntime, outputChannel);
 
     // Initialize Agent Manager and agents
     agentManager = new AgentManager(context, outputChannel);
@@ -71,9 +83,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const overviewProvider = new OverviewProvider(context);
     const specExplorer = new SpecExplorerProvider(context, outputChannel);
     const steeringExplorer = new SteeringExplorerProvider(context);
-    const hooksExplorer = new HooksExplorerProvider(context);
+    const hooksExplorer = new HooksExplorerProvider(context, agentRuntime.provider);
     const mcpExplorer = new MCPExplorerProvider(context, outputChannel);
-    const agentsExplorer = new AgentsExplorerProvider(context, agentManager, outputChannel);
+    const agentsExplorer = new AgentsExplorerProvider(context, agentManager, outputChannel, agentRuntime.provider);
 
     // Set managers
     specExplorer.setSpecManager(specManager);
@@ -105,7 +117,6 @@ export async function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine('Update check initiated');
 
     const specTaskCodeLensProvider = new SpecTaskCodeLensProvider();
-    const configManager = ConfigManager.getInstance();
 
     let specDir = '.claude/specs';
     try {
@@ -141,12 +152,15 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 async function initializeDefaultSettings() {
+    await ensureSettingsFile();
+}
+
+async function ensureSettingsFile(): Promise<vscode.Uri | undefined> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
-        return;
+        return undefined;
     }
 
-    // Create .claude/settings directory if it doesn't exist
     const claudeDir = vscode.Uri.joinPath(workspaceFolder.uri, '.claude');
     const settingsDir = vscode.Uri.joinPath(claudeDir, 'settings');
 
@@ -157,28 +171,34 @@ async function initializeDefaultSettings() {
         // Directory might already exist
     }
 
-    // Create kfc-settings.json if it doesn't exist
     const settingsFile = vscode.Uri.joinPath(settingsDir, CONFIG_FILE_NAME);
+    const configManager = ConfigManager.getInstance();
 
     try {
-        // Check if file exists
         await vscode.workspace.fs.stat(settingsFile);
     } catch (error) {
-        // File doesn't exist, create it with default settings
-        const configManager = ConfigManager.getInstance();
-        const defaultSettings = configManager.getSettings();
-
-        await vscode.workspace.fs.writeFile(
-            settingsFile,
-            Buffer.from(JSON.stringify(defaultSettings, null, 2))
-        );
+        await configManager.loadSettings();
+        await configManager.saveSettings(configManager.getSettings());
+        return settingsFile;
     }
+
+    try {
+        const fileContent = await vscode.workspace.fs.readFile(settingsFile);
+        JSON.parse(Buffer.from(fileContent).toString());
+        await configManager.loadSettings();
+        await configManager.saveSettings(configManager.getSettings());
+    } catch (error) {
+        outputChannel?.appendLine(`[Settings] Existing settings file is not valid JSON: ${error}`);
+    }
+
+    return settingsFile;
 }
 
 async function toggleViews() {
     const config = vscode.workspace.getConfiguration(VSC_CONFIG_NAMESPACE);
     const currentVisibility = {
         specs: config.get('views.specs.visible', true),
+        agents: config.get('views.agents.visible', true),
         hooks: config.get('views.hooks.visible', true),
         steering: config.get('views.steering.visible', true),
         mcp: config.get('views.mcp.visible', true)
@@ -189,6 +209,11 @@ async function toggleViews() {
             label: `$(${currentVisibility.specs ? 'check' : 'blank'}) Specs`,
             picked: currentVisibility.specs,
             id: 'specs'
+        },
+        {
+            label: `$(${currentVisibility.agents ? 'check' : 'blank'}) Agents`,
+            picked: currentVisibility.agents,
+            id: 'agents'
         },
         {
             label: `$(${currentVisibility.hooks ? 'check' : 'blank'}) Agent Hooks`,
@@ -215,15 +240,31 @@ async function toggleViews() {
     if (selected) {
         const newVisibility = {
             specs: selected.some(item => item.id === 'specs'),
+            agents: selected.some(item => item.id === 'agents'),
             hooks: selected.some(item => item.id === 'hooks'),
             steering: selected.some(item => item.id === 'steering'),
             mcp: selected.some(item => item.id === 'mcp')
         };
 
         await config.update('views.specs.visible', newVisibility.specs, vscode.ConfigurationTarget.Workspace);
+        await config.update('views.agents.visible', newVisibility.agents, vscode.ConfigurationTarget.Workspace);
         await config.update('views.hooks.visible', newVisibility.hooks, vscode.ConfigurationTarget.Workspace);
         await config.update('views.steering.visible', newVisibility.steering, vscode.ConfigurationTarget.Workspace);
         await config.update('views.mcp.visible', newVisibility.mcp, vscode.ConfigurationTarget.Workspace);
+
+        const configManager = ConfigManager.getInstance();
+        const settings = configManager.getSettings();
+        await configManager.saveSettings({
+            ...settings,
+            views: {
+                ...settings.views,
+                specs: { visible: newVisibility.specs },
+                agents: { visible: newVisibility.agents },
+                hooks: { visible: newVisibility.hooks },
+                steering: { visible: newVisibility.steering },
+                mcp: { visible: newVisibility.mcp }
+            }
+        });
 
         vscode.window.showInformationMessage('View visibility updated!');
     }
@@ -235,6 +276,13 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
     // Permission commands
     context.subscriptions.push(
         vscode.commands.registerCommand('kfc.permission.reset', async () => {
+            await agentRuntime.refreshProvider?.();
+
+            if (!agentRuntime.provider.capabilities.permissions) {
+                vscode.window.showInformationMessage(`Permissions are not required for ${agentRuntime.provider.displayName}.`);
+                return;
+            }
+
             const confirm = await vscode.window.showWarningMessage(
                 'Are you sure you want to reset Claude Code permissions? This will revoke the granted permissions.',
                 'Yes', 'No'
@@ -290,20 +338,43 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
             await specManager.navigateToDocument(specName, 'tasks');
         }),
 
-        vscode.commands.registerCommand('kfc.spec.implTask', async (documentUri: vscode.Uri, lineNumber: number, taskDescription: string) => {
+        vscode.commands.registerCommand('kfc.spec.implTask', async (documentUri: vscode.Uri, lineNumber: number, taskDescription: string, resume = false) => {
             outputChannel.appendLine(`[Task Execute] Line ${lineNumber + 1}: ${taskDescription}`);
 
-            // 更新任务状态为已完成
-            const document = await vscode.workspace.openTextDocument(documentUri);
-            const edit = new vscode.WorkspaceEdit();
-            const line = document.lineAt(lineNumber);
-            const newLine = line.text.replace('- [ ]', '- [x]');
-            const range = new vscode.Range(lineNumber, 0, lineNumber, line.text.length);
-            edit.replace(documentUri, range, newLine);
-            await vscode.workspace.applyEdit(edit);
+            const task = await updateTaskLineStatus(documentUri, lineNumber, 'inProgress');
+            if (task?.status === 'completed') {
+                vscode.window.showInformationMessage(`Task is already completed: ${task.description}`);
+                return;
+            }
 
-            // 使用 Claude Code 执行任务
-            await specManager.implTask(documentUri.fsPath, taskDescription);
+            const effectiveDescription = task?.description || taskDescription;
+            const shouldResume = resume || task?.status === 'inProgress';
+
+            await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
+        }),
+        vscode.commands.registerCommand('kfc.spec.markTaskDone', async (documentUri: vscode.Uri, lineNumber: number) => {
+            outputChannel.appendLine(`[Task Complete] Line ${lineNumber + 1}`);
+
+            const task = await updateTaskLineStatus(documentUri, lineNumber, 'completed');
+            if (!task) {
+                vscode.window.showWarningMessage('Could not find a task checkbox on the selected line.');
+                return;
+            }
+
+            await taskSessionManager.markCompleted(documentUri.fsPath, lineNumber, task.description);
+            vscode.window.showInformationMessage(`Task marked done: ${task.description}`);
+        }),
+        vscode.commands.registerCommand('kfc.spec.viewTaskSession', async (documentUri: vscode.Uri, lineNumber: number, taskDescription?: string) => {
+            outputChannel.appendLine(`[Task Session] Line ${lineNumber + 1}`);
+
+            const task = await readTaskLine(documentUri, lineNumber);
+            const effectiveDescription = task?.description || taskDescription;
+            if (!effectiveDescription) {
+                vscode.window.showWarningMessage('Could not find a task checkbox on the selected line.');
+                return;
+            }
+
+            await taskSessionManager.showSession(documentUri.fsPath, lineNumber, effectiveDescription);
         }),
         vscode.commands.registerCommand('kfc.spec.refresh', async () => {
             outputChannel.appendLine('[Manual Refresh] Refreshing spec explorer...');
@@ -390,7 +461,7 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         })
     );
 
-    // Claude Code integration commands
+    // Agent integration commands
     // (removed unused kfc.claude.implementTask command)
 
     // Hooks commands (only refresh for Claude Code hooks)
@@ -420,38 +491,10 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         vscode.commands.registerCommand('kfc.settings.open', async () => {
             outputChannel.appendLine('Opening Kiro settings...');
 
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (!workspaceFolder) {
+            const settingsFile = await ensureSettingsFile();
+            if (!settingsFile) {
                 vscode.window.showErrorMessage('No workspace folder found');
                 return;
-            }
-
-            // Create .claude/settings directory if it doesn't exist
-            const claudeDir = vscode.Uri.joinPath(workspaceFolder.uri, '.claude');
-            const settingsDir = vscode.Uri.joinPath(claudeDir, 'settings');
-
-            try {
-                await vscode.workspace.fs.createDirectory(claudeDir);
-                await vscode.workspace.fs.createDirectory(settingsDir);
-            } catch (error) {
-                // Directory might already exist
-            }
-
-            // Create or open kfc-settings.json
-            const settingsFile = vscode.Uri.joinPath(settingsDir, CONFIG_FILE_NAME);
-
-            try {
-                // Check if file exists
-                await vscode.workspace.fs.stat(settingsFile);
-            } catch (error) {
-                // File doesn't exist, create it with default settings
-                const configManager = ConfigManager.getInstance();
-                const defaultSettings = configManager.getSettings();
-
-                await vscode.workspace.fs.writeFile(
-                    settingsFile,
-                    Buffer.from(JSON.stringify(defaultSettings, null, 2))
-                );
             }
 
             // Open the settings file
@@ -472,12 +515,18 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
 
         // Permission debug commands
         vscode.commands.registerCommand('kfc.permission.check', async () => {
-            // 使用新的 PermissionManager 检查真实的权限状态
+            await agentRuntime.refreshProvider?.();
+
+            if (!agentRuntime.provider.capabilities.permissions) {
+                vscode.window.showInformationMessage(`Permissions are not required for ${agentRuntime.provider.displayName}.`);
+                return;
+            }
+
             const hasPermission = await permissionManager.checkPermission();
             const configPath = require('os').homedir() + '/.claude.json';
 
             vscode.window.showInformationMessage(
-                `Claude Code Permission Status: ${hasPermission ? '✅ Granted' : '❌ Not Granted'}`
+                `Claude Code Permission Status: ${hasPermission ? 'Granted' : 'Not Granted'}`
             );
 
             outputChannel.appendLine(`[Permission Check] Status: ${hasPermission}`);
@@ -486,6 +535,39 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         }),
 
     );
+}
+
+async function updateTaskLineStatus(documentUri: vscode.Uri, lineNumber: number, status: SpecTaskStatus) {
+    const document = await vscode.workspace.openTextDocument(documentUri);
+    const line = document.lineAt(lineNumber);
+    const task = parseSpecTaskLine(line.text);
+    if (!task) {
+        return undefined;
+    }
+
+    if (task.status === 'completed' && status !== 'completed') {
+        return task;
+    }
+
+    const newLine = replaceSpecTaskStatus(line.text, status);
+    if (!newLine || newLine === line.text) {
+        return task;
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    const range = new vscode.Range(lineNumber, 0, lineNumber, line.text.length);
+    edit.replace(documentUri, range, newLine);
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (applied) {
+        await document.save();
+    }
+
+    return task;
+}
+
+async function readTaskLine(documentUri: vscode.Uri, lineNumber: number) {
+    const document = await vscode.workspace.openTextDocument(documentUri);
+    return parseSpecTaskLine(document.lineAt(lineNumber).text);
 }
 
 function setupFileWatchers(
@@ -506,7 +588,9 @@ function setupFileWatchers(
         if (refreshTimeout) {
             clearTimeout(refreshTimeout);
         }
-        refreshTimeout = setTimeout(() => {
+        refreshTimeout = setTimeout(async () => {
+            await ConfigManager.getInstance().loadSettings();
+            await agentRuntime.refreshProvider?.();
             specExplorer.refresh();
             steeringExplorer.refresh();
             hooksExplorer.refresh();

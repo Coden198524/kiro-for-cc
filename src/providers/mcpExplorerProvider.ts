@@ -1,43 +1,30 @@
 import * as vscode from 'vscode';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
-
-interface MCPServerInfo {
-    name: string;
-    type: 'stdio' | 'sse' | 'http';
-    scope: 'local' | 'project' | 'user';
-    scopeDisplay?: string;  // Full scope text from output
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    url?: string;
-    headers?: Record<string, string>;
-    isLoadingDetails?: boolean;  // Whether details are being loaded
-    status?: 'connected' | 'disconnected';  // Whether the server is connected
-    removeCommand?: string;  // Command to remove the server
-}
+import { AgentProviderConfig } from '../runtime/agentRuntime';
+import { getProviderConfig } from '../runtime/providerRegistry';
+import { McpServerInfo } from '../runtime/mcpRegistry';
+import { McpStatusService } from '../runtime/mcpStatusService';
 
 export class MCPExplorerProvider implements vscode.TreeDataProvider<MCPItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<MCPItem | undefined | null | void> = new vscode.EventEmitter<MCPItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<MCPItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-    private servers: Map<string, MCPServerInfo> = new Map();
-    private outputChannel: vscode.OutputChannel;
-    private isLoading: boolean = true;
+    private servers: McpServerInfo[] = [];
+    private isLoading = true;
+    private provider: AgentProviderConfig;
 
     constructor(
         private context: vscode.ExtensionContext,
-        outputChannel: vscode.OutputChannel
+        private outputChannel: vscode.OutputChannel,
+        provider: AgentProviderConfig = getProviderConfig()
     ) {
-        this.outputChannel = outputChannel;
+        this.provider = provider;
         this.loadMCPServers();
     }
 
     refresh(): void {
+        this.provider = getProviderConfig();
         this.isLoading = true;
-        this._onDidChangeTreeData.fire(); // Fire immediately to show loading state
+        this._onDidChangeTreeData.fire();
         this.loadMCPServers();
     }
 
@@ -47,334 +34,111 @@ export class MCPExplorerProvider implements vscode.TreeDataProvider<MCPItem> {
 
     async getChildren(element?: MCPItem): Promise<MCPItem[]> {
         if (!element) {
-            // Root level - show all MCP servers
-            const items: MCPItem[] = [];
-
             if (this.isLoading) {
-                items.push(new MCPItem(
-                    'Loading MCP servers...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'mcp-loading',
-                    'loading',
-                    undefined,
-                    this.context
-                ));
-                return items;
+                return [
+                    new MCPItem(
+                        'Loading MCP servers...',
+                        vscode.TreeItemCollapsibleState.None,
+                        'mcp-loading',
+                        'loading',
+                        undefined,
+                        this.context
+                    )
+                ];
             }
 
-            for (const [name, server] of this.servers) {
-                items.push(new MCPItem(
-                    name,
-                    vscode.TreeItemCollapsibleState.Collapsed,
-                    'mcp-server',
-                    `mcp-${name}`,
-                    server,
-                    this.context
-                ));
+            if (this.servers.length === 0) {
+                return [
+                    new MCPItem(
+                        'No MCP servers configured',
+                        vscode.TreeItemCollapsibleState.None,
+                        'mcp-empty',
+                        'empty',
+                        undefined,
+                        this.context
+                    )
+                ];
             }
 
-            if (items.length === 0) {
-                items.push(new MCPItem(
-                    'No MCP servers configured',
-                    vscode.TreeItemCollapsibleState.None,
-                    'mcp-empty',
-                    'empty',
-                    undefined,
-                    this.context
-                ));
-            }
-
-            return items;
-        } else if (element.contextValue === 'mcp-server' && element.serverInfo) {
-            // Show server details as children in the order: Scope, Type, Command, Environment (if any)
-            const server = element.serverInfo;
-            const items: MCPItem[] = [];
-
-            // If still loading details, show loading message
-            if (server.isLoadingDetails) {
-                items.push(new MCPItem(
-                    'Loading server details...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'mcp-loading',
-                    `${element.id}-loading`,
-                    undefined,
-                    this.context
-                ));
-                return items;
-            }
-
-            // 1. Scope (first)
-            const scopeItem = new MCPItem(
-                `Scope: ${server.scope}`,
-                vscode.TreeItemCollapsibleState.None,
-                'mcp-detail',
-                `${element.id}-scope`,
-                undefined,
-                this.context
-            );
-            // If we have full scope display text, extract the description for tooltip
-            if (server.scopeDisplay) {
-                const match = server.scopeDisplay.match(/Scope:\s*\w+\s*\(([^)]+)\)/);
-                if (match) {
-                    scopeItem.tooltip = match[1];
-                }
-            }
-            items.push(scopeItem);
-
-            // 2. Type
-            items.push(new MCPItem(
-                `Type: ${server.type}`,
-                vscode.TreeItemCollapsibleState.None,
-                'mcp-detail',
-                `${element.id}-type`,
-                undefined,
+            return this.servers.map((server, index) => new MCPItem(
+                server.name,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'mcp-server',
+                `mcp-${server.providerSource || 'runtime'}-${server.name}-${index}`,
+                server,
                 this.context
             ));
-
-            // 3. Command (based on server type)
-            if (server.type === 'stdio') {
-                // Combine command and args
-                let commandStr = server.command || '';
-                if (server.args && server.args.length > 0) {
-                    commandStr += ' ' + server.args.join(' ');
-                }
-                if (commandStr) {
-                    items.push(new MCPItem(
-                        `Command: ${commandStr}`,
-                        vscode.TreeItemCollapsibleState.None,
-                        'mcp-detail',
-                        `${element.id}-command`,
-                        undefined,
-                        this.context
-                    ));
-                }
-            } else if (server.type === 'sse' || server.type === 'http') {
-                if (server.url) {
-                    items.push(new MCPItem(
-                        `URL: ${server.url}`,
-                        vscode.TreeItemCollapsibleState.None,
-                        'mcp-detail',
-                        `${element.id}-url`,
-                        undefined,
-                        this.context
-                    ));
-                }
-                if (server.headers && Object.keys(server.headers).length > 0) {
-                    items.push(new MCPItem(
-                        `Headers: ${Object.keys(server.headers).join(', ')}`,
-                        vscode.TreeItemCollapsibleState.None,
-                        'mcp-detail',
-                        `${element.id}-headers`,
-                        undefined,
-                        this.context
-                    ));
-                }
-            }
-
-            // 4. Environment variables - only show if not empty
-            if (server.env && Object.keys(server.env).length > 0) {
-                const envStr = Object.entries(server.env)
-                    .map(([k, v]) => `${k}=${v}`)
-                    .join(', ');
-                items.push(new MCPItem(
-                    `Environment: ${envStr}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'mcp-detail',
-                    `${element.id}-env`,
-                    undefined,
-                    this.context
-                ));
-            }
-
-            return items;
         }
 
-        return [];
+        if (element.contextValue !== 'mcp-server' || !element.serverInfo) {
+            return [];
+        }
+
+        return this.getServerDetailItems(element);
     }
 
-    private async loadMCPServers() {
-        this.servers.clear();
-
+    private async loadMCPServers(): Promise<void> {
         try {
-            // Get workspace folder path
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
-
-            // Execute claude mcp list command in the workspace directory
-            const { stdout, stderr } = await execAsync('claude mcp list', { cwd });
-
-
-            // Only log errors, not normal output
-            if (stderr) {
-                this.outputChannel.appendLine(`claude mcp list stderr: ${stderr}`);
-
-                if (!stdout) {
-                    return;
-                }
-            }
-
-
-            // Parse the output
-            await this.parseMCPListOutput(stdout);
-
-            // Mark loading complete and refresh UI to show the list
-            this.isLoading = false;
-            this._onDidChangeTreeData.fire();
-
-            // Load detailed info for each server asynchronously (don't await)
-            this.loadAllServerDetailsAsync();
-
+            const service = new McpStatusService(this.outputChannel, this.provider);
+            this.servers = await service.listServers();
         } catch (error) {
             this.outputChannel.appendLine(`Failed to load MCP servers: ${error}`);
-            // Show error in tree view
-            this.servers.clear();
-        }
-    }
-
-    private async parseMCPListOutput(output: string) {
-        // Parse output format: "playwright: npx @playwright/mcp@latest - ✓ Connected"
-        const lines = output.split('\n').filter(line => line.trim());
-
-        for (const line of lines) {
-            const colonIndex = line.indexOf(':');
-            if (colonIndex > 0) {
-                const name = line.substring(0, colonIndex).trim();
-                
-                // Parse status from the line
-                let status: 'connected' | 'disconnected' = 'disconnected';
-                if (line.includes('✓ Connected')) {
-                    status = 'connected';
-                } else if (line.includes('✗ Failed to connect')) {
-                    status = 'disconnected';
-                }
-                
-                this.servers.set(name, {
-                    name,
-                    type: 'stdio', // Default, will be updated with details
-                    scope: 'local', // Default, will be updated with details
-                    status, // Set the parsed status
-                    isLoadingDetails: true // Mark as loading
-                });
-            }
-        }
-    }
-
-    private async loadAllServerDetailsAsync() {
-        // Load all server details in parallel
-        const detailPromises = Array.from(this.servers.keys()).map(async (name) => {
-            await this.loadServerDetails(name);
-            // After loading each server, refresh just that server in the UI
+            this.servers = [];
+        } finally {
+            this.isLoading = false;
             this._onDidChangeTreeData.fire();
-        });
-
-        // Don't await - let them run in background
-        Promise.all(detailPromises).catch(err => {
-            this.outputChannel.appendLine(`Error loading server details: ${err}`);
-        });
-    }
-
-    private async loadServerDetails(name: string) {
-        try {
-            // Get workspace folder path
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
-
-            const { stdout, stderr } = await execAsync(`claude mcp get ${name}`, { cwd });
-
-            if (stderr) {
-                this.outputChannel.appendLine(`Error getting details for ${name}: ${stderr}`);
-                // Don't return here - stderr might just be warnings
-            }
-
-            // Parse the details output
-            const server = this.servers.get(name);
-            if (server) {
-                this.parseServerDetails(server, stdout);
-                server.isLoadingDetails = false; // Mark as loaded
-            }
-
-        } catch (error) {
-            this.outputChannel.appendLine(`Failed to get details for ${name}: ${error}`);
-            // Don't remove the server from the list, just show it with default values
-            const server = this.servers.get(name);
-            if (server) {
-                server.isLoadingDetails = false; // Mark as loaded even on error
-            }
         }
     }
 
-    private parseServerDetails(server: MCPServerInfo, output: string) {
-        const lines = output.split('\n');
+    private getServerDetailItems(element: MCPItem): MCPItem[] {
+        const server = element.serverInfo!;
+        const items: MCPItem[] = [];
 
-        for (const line of lines) {
-            const trimmed = line.trim();
+        items.push(this.createDetail(element, `Source: ${server.providerSource || 'Runtime'}`, 'source'));
+        items.push(this.createDetail(element, `Scope: ${server.scope}`, 'scope'));
+        items.push(this.createDetail(element, `Type: ${server.type}`, 'type'));
+        items.push(this.createDetail(element, `Status: ${server.status}`, 'status'));
 
-            // Parse different fields
-            if (trimmed.startsWith('Scope:')) {
-                // Save the full scope display text
-                server.scopeDisplay = trimmed;
-
-                // Also parse the simple scope value
-                const scopeMatch = trimmed.match(/Scope:\s*(\w+)/);
-                if (scopeMatch) {
-                    const scope = scopeMatch[1].toLowerCase();
-                    if (scope === 'user' || scope === 'project' || scope === 'local') {
-                        server.scope = scope as 'local' | 'project' | 'user';
-                    }
-                }
-            } else if (trimmed.startsWith('Type:')) {
-                const type = trimmed.substring(5).trim().toLowerCase();
-                if (type === 'stdio' || type === 'sse' || type === 'http') {
-                    server.type = type;
-                }
-            } else if (trimmed.startsWith('Command:')) {
-                server.command = trimmed.substring(8).trim();
-            } else if (trimmed.startsWith('Args:')) {
-                const argsStr = trimmed.substring(5).trim();
-                // Parse args more carefully, they might be on separate lines or contain spaces
-                if (argsStr && !argsStr.startsWith('-')) {
-                    server.args = argsStr.split(/\s+/);
-                } else if (argsStr) {
-                    // Args are flags like "-y @upstash/context7-mcp"
-                    server.args = argsStr.split(/\s+/);
-                }
-            } else if (trimmed.startsWith('URL:')) {
-                server.url = trimmed.substring(4).trim();
-            } else if (trimmed.startsWith('Headers:')) {
-                // Headers might be on multiple lines
-                const headerStr = trimmed.substring(8).trim();
-                if (headerStr) {
-                    server.headers = {};
-                    // Simple parsing, might need adjustment based on actual format
-                    const pairs = headerStr.split(',');
-                    for (const pair of pairs) {
-                        const [key, value] = pair.split(':').map(s => s.trim());
-                        if (key) {
-                            server.headers[key] = value || '';
-                        }
-                    }
-                }
-            } else if (trimmed.startsWith('Environment:') || trimmed.startsWith('Env:')) {
-                const envStr = trimmed.substring(trimmed.indexOf(':') + 1).trim();
-                if (envStr && envStr !== '(none)' && envStr !== 'None') {
-                    server.env = {};
-                    // Parse KEY=value pairs
-                    const pairs = envStr.split(/\s+/);
-                    for (const pair of pairs) {
-                        const [key, value] = pair.split('=');
-                        if (key) {
-                            server.env[key] = value || '';
-                        }
-                    }
-                }
-            } else if (trimmed.startsWith('To remove this server')) {
-                // Parse remove command: "To remove this server, run: claude mcp remove "playwright" -s user"
-                const match = trimmed.match(/claude mcp remove "(.+?)" -s (.+)$/);
-                if (match) {
-                    server.removeCommand = `claude mcp remove "${match[1]}" -s ${match[2]}`;
-                }
-            }
+        if (server.description) {
+            items.push(this.createDetail(element, `Description: ${server.description}`, 'description'));
         }
+
+        if (server.type === 'stdio') {
+            const command = [server.command, ...(server.args ?? [])].filter(Boolean).join(' ');
+            if (command) {
+                items.push(this.createDetail(element, `Command: ${command}`, 'command'));
+            }
+        } else if (server.url) {
+            items.push(this.createDetail(element, `URL: ${server.url}`, 'url'));
+        }
+
+        if (server.headers && Object.keys(server.headers).length > 0) {
+            items.push(this.createDetail(element, `Headers: ${Object.keys(server.headers).join(', ')}`, 'headers'));
+        }
+
+        if (server.env && Object.keys(server.env).length > 0) {
+            const envStr = Object.entries(server.env)
+                .map(([key, value]) => `${key}=${value}`)
+                .join(', ');
+            items.push(this.createDetail(element, `Environment: ${envStr}`, 'env'));
+        }
+
+        if (server.removeCommand) {
+            items.push(this.createDetail(element, `Remove: ${server.removeCommand}`, 'remove'));
+        }
+
+        return items;
+    }
+
+    private createDetail(parent: MCPItem, label: string, suffix: string): MCPItem {
+        return new MCPItem(
+            label,
+            vscode.TreeItemCollapsibleState.None,
+            'mcp-detail',
+            `${parent.id}-${suffix}`,
+            undefined,
+            this.context
+        );
     }
 }
 
@@ -384,41 +148,23 @@ class MCPItem extends vscode.TreeItem {
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly contextValue: string,
         public readonly id: string,
-        public readonly serverInfo?: MCPServerInfo,
+        public readonly serverInfo?: McpServerInfo,
         private readonly context?: vscode.ExtensionContext
     ) {
         super(label, collapsibleState);
 
-        // Set appropriate icons
         if (contextValue === 'mcp-empty') {
             this.iconPath = new vscode.ThemeIcon('info');
         } else if (contextValue === 'mcp-loading') {
             this.iconPath = new vscode.ThemeIcon('sync~spin');
         } else if (contextValue === 'mcp-server') {
-            // Use different icons based on connection status
-            if (serverInfo?.status === 'disconnected') {
+            if (serverInfo?.status === 'disconnected' || serverInfo?.status === 'unsupported') {
                 this.iconPath = new vscode.ThemeIcon('debug-disconnect');
             } else {
                 this.iconPath = new vscode.ThemeIcon('server-environment');
             }
         } else if (contextValue === 'mcp-detail') {
-            if (label.startsWith('Type:')) {
-                this.iconPath = new vscode.ThemeIcon('symbol-property');
-            } else if (label.startsWith('Command:')) {
-                this.iconPath = new vscode.ThemeIcon('terminal');
-            } else if (label.startsWith('URL:')) {
-                this.iconPath = new vscode.ThemeIcon('link');
-            } else if (label.startsWith('Environment:')) {
-                this.iconPath = new vscode.ThemeIcon('symbol-variable');
-            } else if (label.startsWith('Scope:')) {
-                this.iconPath = new vscode.ThemeIcon('globe');
-            } else if (label.startsWith('Args:')) {
-                this.iconPath = new vscode.ThemeIcon('symbol-array');
-            } else if (label.startsWith('Headers:')) {
-                this.iconPath = new vscode.ThemeIcon('symbol-key');
-            } else {
-                this.iconPath = new vscode.ThemeIcon('circle-outline');
-            }
+            this.iconPath = this.getDetailIcon(label);
         } else if (context) {
             this.iconPath = {
                 light: vscode.Uri.file(context.asAbsolutePath('icons/server.svg')),
@@ -428,20 +174,39 @@ class MCPItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('server-environment');
         }
 
-        // Set tooltips
         if (contextValue === 'mcp-server' && serverInfo) {
-            let tooltipText = `MCP Server: ${label}\nType: ${serverInfo.type}\nScope: ${serverInfo.scope}`;
-            
-            // Add status info to tooltip
-            if (serverInfo.status === 'disconnected') {
-                tooltipText += '\nStatus: ✗ Failed to connect';
-            } else if (serverInfo.status === 'connected') {
-                tooltipText += '\nStatus: ✓ Connected';
-            }
-            
-            this.tooltip = tooltipText;
+            this.description = serverInfo.providerSource;
+            this.tooltip = [
+                `MCP Server: ${label}`,
+                `Source: ${serverInfo.providerSource || 'Runtime'}`,
+                `Type: ${serverInfo.type}`,
+                `Scope: ${serverInfo.scope}`,
+                `Status: ${serverInfo.status}`
+            ].join('\n');
         } else if (contextValue === 'mcp-detail') {
             this.tooltip = label;
         }
+    }
+
+    private getDetailIcon(label: string): vscode.ThemeIcon {
+        if (label.startsWith('Type:') || label.startsWith('Status:') || label.startsWith('Source:')) {
+            return new vscode.ThemeIcon('symbol-property');
+        }
+        if (label.startsWith('Command:') || label.startsWith('Remove:')) {
+            return new vscode.ThemeIcon('terminal');
+        }
+        if (label.startsWith('URL:')) {
+            return new vscode.ThemeIcon('link');
+        }
+        if (label.startsWith('Environment:')) {
+            return new vscode.ThemeIcon('symbol-variable');
+        }
+        if (label.startsWith('Scope:')) {
+            return new vscode.ThemeIcon('globe');
+        }
+        if (label.startsWith('Headers:')) {
+            return new vscode.ThemeIcon('symbol-key');
+        }
+        return new vscode.ThemeIcon('circle-outline');
     }
 }

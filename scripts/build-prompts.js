@@ -31,14 +31,16 @@ function findMarkdownFiles(dir) {
 function convertMarkdownToTypeScript(mdPath, outputDir) {
   const content = fs.readFileSync(mdPath, 'utf8');
   const { data, content: body } = matter(content);
+  const normalizedBody = body.replace(/\r\n/g, '\n');
+  const sourcePath = path.relative(process.cwd(), mdPath).replace(/\\/g, '/');
   
   // 生成 TypeScript 代码
-  const tsContent = `// Auto-generated from ${path.relative(process.cwd(), mdPath)}
+  const tsContent = `// Auto-generated from ${sourcePath}
 // DO NOT EDIT MANUALLY
 
 export const frontmatter = ${JSON.stringify(data, null, 2)};
 
-export const content = ${JSON.stringify(body)};
+export const content = ${JSON.stringify(normalizedBody)};
 
 export default {
   frontmatter,
@@ -60,7 +62,7 @@ export default {
   
   // 写入文件
   fs.writeFileSync(tsPath, tsContent);
-  console.log(`Generated: ${path.relative(process.cwd(), tsPath)}`);
+  console.log(`Generated: ${path.relative(process.cwd(), tsPath).replace(/\\/g, '/')}`);
 }
 
 // 主函数

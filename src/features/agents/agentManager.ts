@@ -36,6 +36,22 @@ export class AgentManager {
         this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     }
 
+    private joinWorkspacePath(...segments: string[]): string {
+        if (!this.workspaceRoot) {
+            return path.join(...segments);
+        }
+
+        return this.joinPathPreservingSeparator(this.workspaceRoot, ...segments);
+    }
+
+    private joinPathPreservingSeparator(basePath: string, ...segments: string[]): string {
+        if (basePath.includes('/') && !basePath.includes('\\')) {
+            return [basePath.replace(/\/+$/, ''), ...segments.map(segment => segment.replace(/^[/\\]+|[/\\]+$/g, ''))].join('/');
+        }
+
+        return path.join(basePath, ...segments);
+    }
+
     /**
      * Initialize built-in agents (copy if not exist on startup)
      */
@@ -51,7 +67,7 @@ export class AgentManager {
             // Ensure target directory exists
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(targetDir));
             
-            // Copy each built-in agent (always overwrite to ensure latest version)
+            // Copy each built-in agent if it does not already exist
             for (const agentName of this.BUILT_IN_AGENTS) {
                 const sourcePath = path.join(this.extensionPath, 'dist/resources/agents', `${agentName}.md`);
                 const targetPath = path.join(targetDir, `${agentName}.md`);
@@ -59,8 +75,16 @@ export class AgentManager {
                 try {
                     const sourceUri = vscode.Uri.file(sourcePath);
                     const targetUri = vscode.Uri.file(targetPath);
-                    await vscode.workspace.fs.copy(sourceUri, targetUri, { overwrite: true });
-                    this.outputChannel.appendLine(`[AgentManager] Updated agent ${agentName}`);
+                    try {
+                        await vscode.workspace.fs.stat(targetUri);
+                        this.outputChannel.appendLine(`[AgentManager] Agent ${agentName} already exists, skipping`);
+                        continue;
+                    } catch {
+                        // File does not exist, copy it below.
+                    }
+
+                    await vscode.workspace.fs.copy(sourceUri, targetUri, { overwrite: false });
+                    this.outputChannel.appendLine(`[AgentManager] Copied agent ${agentName}`);
                 } catch (error) {
                     this.outputChannel.appendLine(`[AgentManager] Failed to copy agent ${agentName}: ${error}`);
                 }
@@ -90,9 +114,8 @@ export class AgentManager {
             // Ensure directory exists
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(systemPromptDir));
             
-            // Always overwrite to ensure latest version
-            await vscode.workspace.fs.copy(vscode.Uri.file(sourcePath), vscode.Uri.file(targetPath), { overwrite: true });
-            this.outputChannel.appendLine('[AgentManager] Updated system prompt');
+            await vscode.workspace.fs.copy(vscode.Uri.file(sourcePath), vscode.Uri.file(targetPath), { overwrite: false });
+            this.outputChannel.appendLine('[AgentManager] Copied system prompt');
         } catch (error) {
             this.outputChannel.appendLine(`[AgentManager] Failed to initialize system prompt: ${error}`);
         }
@@ -107,7 +130,7 @@ export class AgentManager {
         // Get project agents (excluding kfc built-in agents)
         if (type === 'project' || type === 'all') {
             if (this.workspaceRoot) {
-                const projectAgentsPath = path.join(this.workspaceRoot, '.claude/agents');
+                const projectAgentsPath = this.joinWorkspacePath('.claude', 'agents');
                 const projectAgents = await this.getAgentsFromDirectory(
                     projectAgentsPath,
                     'project',
@@ -234,14 +257,14 @@ export class AgentManager {
      */
     checkAgentExists(agentName: string, location: 'project' | 'user'): boolean {
         const basePath = location === 'project' 
-            ? (this.workspaceRoot ? path.join(this.workspaceRoot, '.claude/agents/kfc') : null)
+            ? (this.workspaceRoot ? this.joinWorkspacePath('.claude', 'agents', 'kfc') : null)
             : path.join(os.homedir(), '.claude/agents');
 
         if (!basePath) {
             return false;
         }
 
-        const agentPath = path.join(basePath, `${agentName}.md`);
+        const agentPath = this.joinPathPreservingSeparator(basePath, `${agentName}.md`);
         return fs.existsSync(agentPath);
     }
 
@@ -251,14 +274,14 @@ export class AgentManager {
     getAgentPath(agentName: string): string | null {
         // Check project agents first
         if (this.workspaceRoot) {
-            const projectPath = path.join(this.workspaceRoot, '.claude/agents/kfc', `${agentName}.md`);
+            const projectPath = this.joinWorkspacePath('.claude', 'agents', 'kfc', `${agentName}.md`);
             if (fs.existsSync(projectPath)) {
                 return projectPath;
             }
         }
 
         // Check user agents
-        const userPath = path.join(os.homedir(), '.claude/agents', `${agentName}.md`);
+        const userPath = this.joinPathPreservingSeparator(path.join(os.homedir(), '.claude/agents'), `${agentName}.md`);
         if (fs.existsSync(userPath)) {
             return userPath;
         }

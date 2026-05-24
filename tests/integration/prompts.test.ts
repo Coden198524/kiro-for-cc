@@ -45,6 +45,20 @@ describe('Prompt Integration Tests', () => {
       expect(result).toMatch(/mkdir|create.*directory/i);
       expect(result).toContain('.claude/specs');
     });
+
+    test('INT-02b: spec prompt preserves the user language', () => {
+      const result = promptLoader.renderPrompt('create-spec', {
+        description: '给 FlaxEngine 增加材质批量导入工具',
+        workspacePath: '/test',
+        specBasePath: '.claude/specs'
+      });
+
+      expect(result).toContain('Detect the user');
+      expect(result).toContain('Use that language');
+      expect(result).toContain('yong-hu-ren-zheng');
+      expect(result).toContain('用户-认证');
+      expect(result).toContain('给 FlaxEngine 增加材质批量导入工具');
+    });
   });
 
   describe('Steering Prompts', () => {
@@ -159,6 +173,15 @@ describe('Prompt Integration Tests', () => {
             description: 'test',
             workspacePath: '/test',
             specBasePath: '.claude/specs'
+          }
+        },
+        {
+          id: 'impl-task',
+          variables: {
+            taskFilePath: '/test/.claude/specs/demo/tasks.md',
+            taskDescription: '1. Implement demo',
+            taskMode: 'resume',
+            taskModeInstruction: 'Resume this in-progress task.'
           }
         },
         {

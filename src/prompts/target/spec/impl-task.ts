@@ -16,11 +16,21 @@ export const frontmatter = {
       "type": "string",
       "required": true,
       "description": "Description for task"
+    },
+    "taskMode": {
+      "type": "string",
+      "required": true,
+      "description": "Execution mode, either start or resume"
+    },
+    "taskModeInstruction": {
+      "type": "string",
+      "required": true,
+      "description": "Mode-specific instructions for the agent"
     }
   }
 };
 
-export const content = "<user_input>\nI just completed a spec workflow and now need to implement one of the specific tasks.\n\nTask File Path: {{taskFilePath}}\nTask Description: {{taskDescription}}\n\nPlease help me:\n\n1. First use the *spec-system-prompt-loader* sub agent to load the spec workflow system prompts and understand the complete context\n2. Review the requirements and design documents in the spec folder\n3. Implement this task based on existing codebase patterns and conventions\n4. Ensure code quality, including error handling, performance, and security\n5. Add comprehensive unit tests for the implemented code\n\nLet's start implementing this task!\n</user_input>\n";
+export const content = "<user_input>\nI just completed a spec workflow and now need to implement one of the specific tasks.\n\nTask File Path: {{taskFilePath}}\nTask Description: {{taskDescription}}\nTask Mode: {{taskMode}}\n\n{{taskModeInstruction}}\n\nPlease help me:\n\n1. Review the spec workflow guidance if it is available at `.claude/system-prompts/spec-workflow-starter.md`; do not require a Claude-only subagent\n2. Review the requirements and design documents in the spec folder\n3. Implement this task based on existing codebase patterns and conventions\n4. Ensure code quality, including error handling, performance, and security\n5. Add or update focused tests for the implemented code\n6. When finished, report what changed and what you verified\n\nTask status is managed by the VS Code extension. Do not mark the task as `- [x]` yourself unless the user explicitly asks you to edit task status.\n</user_input>\n";
 
 export default {
   frontmatter,

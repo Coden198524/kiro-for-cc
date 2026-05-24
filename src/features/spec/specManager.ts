@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { ClaudeCodeProvider } from '../../providers/claudeCodeProvider';
+import { AgentRuntime } from '../../runtime/agentRuntime';
 import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
+import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
@@ -12,8 +13,9 @@ export class SpecManager {
     private promptLoader: PromptLoader;
 
     constructor(
-        private claudeProvider: ClaudeCodeProvider,
-        private outputChannel: vscode.OutputChannel
+        private agentRuntime: AgentRuntime,
+        private outputChannel: vscode.OutputChannel,
+        private taskSessionManager?: TaskSessionManager
     ) {
         this.configManager = ConfigManager.getInstance();
         this.configManager.loadSettings();
@@ -38,31 +40,7 @@ export class SpecManager {
             return;
         }
 
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
-            vscode.window.showErrorMessage('No workspace folder open');
-            return;
-        }
-
-        // Show notification immediately after user input
-        NotificationUtils.showAutoDismissNotification('Claude is creating your spec. Check the terminal for progress.');
-
-        // Let Claude handle everything - directory creation, naming, and file creation
-        // Load and render the spec creation prompt
-        const specBasePath = await this.getSpecBasePath();
-        const prompt = this.promptLoader.renderPrompt('create-spec', {
-            description,
-            workspacePath: workspaceFolder.uri.fsPath,
-            specBasePath
-        });
-
-        // Send to Claude and get the terminal
-        const terminal = await this.claudeProvider.invokeClaudeSplitView(prompt, 'KFC - Creating Spec');
-
-        // Set up automatic terminal renaming when spec folder is created
-        this.setupSpecFolderWatcher(workspaceFolder, terminal).catch(error => {
-            this.outputChannel.appendLine(`[SpecManager] Failed to set up watcher: ${error}`);
-        });
+        await this.createFromDescription(description, false);
     }
 
     async createWithAgents() {
@@ -78,6 +56,20 @@ export class SpecManager {
             return;
         }
 
+        await this.agentRuntime.refreshProvider?.();
+
+        if (!this.agentRuntime.provider.capabilities.claudeAgents) {
+            vscode.window.showWarningMessage(`Specialized Claude Code agents are unavailable for ${this.agentRuntime.provider.displayName}. Creating a standard spec instead.`);
+            await this.createFromDescription(description, false);
+            return;
+        }
+
+        await this.createFromDescription(description, true);
+    }
+
+    private async createFromDescription(description: string, useAgents: boolean) {
+        await this.agentRuntime.refreshProvider?.();
+
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage('No workspace folder open');
@@ -85,18 +77,25 @@ export class SpecManager {
         }
 
         // Show notification immediately after user input
-        NotificationUtils.showAutoDismissNotification('Claude is creating your spec with specialized agents. Check the terminal for progress.');
+        const notification = useAgents
+            ? `${this.agentRuntime.provider.displayName} is creating your spec with specialized agents. Check the terminal for progress.`
+            : `${this.agentRuntime.provider.displayName} is creating your spec. Check the terminal for progress.`;
+        NotificationUtils.showAutoDismissNotification(notification);
 
-        // Use the specialized subagent prompt
+        // Let the active agent handle directory creation, naming, and file creation.
         const specBasePath = await this.getSpecBasePath();
-        const prompt = this.promptLoader.renderPrompt('create-spec-with-agents', {
+        const prompt = this.promptLoader.renderPrompt(useAgents ? 'create-spec-with-agents' : 'create-spec', {
             description,
             workspacePath: workspaceFolder.uri.fsPath,
             specBasePath
         });
 
-        // Send to Claude and get the terminal
-        const terminal = await this.claudeProvider.invokeClaudeSplitView(prompt, 'KFC - Creating Spec (Agents)');
+        // Send to the active agent and get the terminal.
+        const terminal = await this.agentRuntime.invokeInteractive({
+            prompt,
+            title: useAgents ? 'KFC - Creating Spec (Agents)' : 'KFC - Creating Spec',
+            agentType: useAgents ? 'spec_with_agents' : 'spec_orchestrator'
+        });
 
         // Set up automatic terminal renaming when spec folder is created
         this.setupSpecFolderWatcher(workspaceFolder, terminal).catch(error => {
@@ -104,7 +103,9 @@ export class SpecManager {
         });
     }
 
-    async implTask(taskFilePath: string, taskDescription: string) {
+    async implTask(taskFilePath: string, taskDescription: string, resume = false, lineNumber?: number) {
+        await this.agentRuntime.refreshProvider?.();
+
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage('No workspace folder open');
@@ -112,14 +113,35 @@ export class SpecManager {
         }
 
         // Show notification immediately after user input
-        NotificationUtils.showAutoDismissNotification('Claude is implementing your task. Check the terminal for progress.');
+        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing your task. Check the terminal for progress.`);
 
         const prompt = this.promptLoader.renderPrompt('impl-task', {
             taskFilePath,
-            taskDescription
+            taskDescription,
+            taskMode: resume ? 'resume' : 'start',
+            taskModeInstruction: resume
+                ? 'Resume this in-progress task. First inspect the current worktree, the task file, requirements.md, design.md, and any existing partial implementation. Identify what has already been completed, avoid repeating completed work, then continue from the current state.'
+                : 'Start this task from its current spec context. The extension has marked it in progress before launching this agent.'
         });
 
-        await this.claudeProvider.invokeClaudeSplitView(prompt, 'KFC - Implementing Task');
+        const terminal = await this.agentRuntime.invokeInteractive({
+            prompt,
+            title: 'KFC - Implementing Task',
+            agentType: 'task_implementer'
+        });
+
+        if (this.taskSessionManager && lineNumber !== undefined) {
+            const mode: TaskInvocationMode = resume ? 'resume' : 'start';
+            await this.taskSessionManager.recordInvocation({
+                taskFilePath,
+                lineNumber,
+                taskDescription,
+                mode,
+                provider: this.agentRuntime.provider,
+                prompt,
+                terminal
+            });
+        }
     }
 
     /**
@@ -157,7 +179,7 @@ export class SpecManager {
             const specName = path.basename(uri.fsPath);
             this.outputChannel.appendLine(`[SpecManager] New spec detected: ${specName}`);
             try {
-                await this.claudeProvider.renameTerminal(terminal, `Spec: ${specName}`);
+                await this.agentRuntime.renameTerminal(terminal, `Spec: ${specName}`);
             } catch (error) {
                 this.outputChannel.appendLine(`[SpecManager] Failed to rename terminal: ${error}`);
             }

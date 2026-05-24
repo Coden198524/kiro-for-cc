@@ -1,7 +1,6 @@
 import { ConfigReader } from '../../../../src/features/permission/configReader';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as os from 'os';
 
 // Mock fs module
@@ -23,7 +22,8 @@ describe('ConfigReader', () => {
     let configReader: ConfigReader;
     let mockOutputChannel: vscode.OutputChannel;
     const mockHomePath = '/Users/test';
-    const mockConfigPath = path.join(mockHomePath, '.claude.json');
+    const mockConfigPath = `${mockHomePath}/.claude.json`;
+    const mockConfigDir = mockHomePath;
 
     beforeEach(() => {
         // Reset all mocks
@@ -128,7 +128,7 @@ describe('ConfigReader', () => {
             await configReader.setBypassPermission(true);
 
             expect(fs.promises.mkdir).toHaveBeenCalledWith(
-                path.dirname(mockConfigPath),
+                mockConfigDir,
                 { recursive: true }
             );
             expect(fs.promises.writeFile).toHaveBeenCalledWith(
@@ -214,7 +214,7 @@ describe('ConfigReader', () => {
             await configReader.setBypassPermission(true);
 
             expect(fs.promises.mkdir).toHaveBeenCalledWith(
-                path.dirname(mockConfigPath),
+                mockConfigDir,
                 { recursive: true }
             );
         });

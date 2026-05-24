@@ -132,6 +132,7 @@ describe('Markdown Prompt Parsing', () => {
       
       // Verify content is preserved (accounting for escape characters)
       const escapedBody = mdBody
+        .replace(/\r\n/g, '\n')
         .replace(/\\/g, '\\\\')
         .replace(/"/g, '\\"')
         .replace(/\n/g, '\\n');

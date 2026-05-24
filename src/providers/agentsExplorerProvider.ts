@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { AgentManager, AgentInfo } from '../features/agents/agentManager';
+import { AgentProviderConfig } from '../runtime/agentRuntime';
+import { getProviderConfig } from '../runtime/providerRegistry';
 
 export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<AgentItem | undefined | null | void> = new vscode.EventEmitter<AgentItem | undefined | null | void>();
@@ -13,12 +15,14 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
     constructor(
         private context: vscode.ExtensionContext,
         private agentManager: AgentManager,
-        private outputChannel: vscode.OutputChannel
+        private outputChannel: vscode.OutputChannel,
+        private provider?: AgentProviderConfig
     ) {
         this.setupFileWatchers();
     }
 
     refresh(): void {
+        this.provider = getProviderConfig();
         this.isLoading = true;
         this._onDidChangeTreeData.fire(); // Show loading state immediately
         
@@ -41,6 +45,15 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
         if (!element) {
             // Root level - show loading state or agent groups
             const items: AgentItem[] = [];
+
+            if (this.provider && !this.provider.capabilities.claudeAgents) {
+                items.push(new AgentItem(
+                    `Claude Code agents are unavailable for ${this.provider.displayName}`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'agent-provider-unsupported'
+                ));
+                return items;
+            }
 
             if (this.isLoading) {
                 // Show loading state
@@ -144,6 +157,9 @@ class AgentItem extends vscode.TreeItem {
             // Loading state with spinning icon
             this.iconPath = new vscode.ThemeIcon('sync~spin');
             this.tooltip = 'Loading agents...';
+        } else if (contextValue === 'agent-provider-unsupported') {
+            this.iconPath = new vscode.ThemeIcon('info');
+            this.tooltip = 'This view reads Claude Code agent files under .claude/agents.';
         } else if (contextValue === 'agent-group') {
             // Use icons similar to Steering Explorer
             if (groupType === 'user') {

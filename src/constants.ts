@@ -6,6 +6,25 @@ export const CONFIG_FILE_NAME = 'kfc-settings.json';
 
 // Default configuration
 export const DEFAULT_CONFIG = {
+    agent: {
+        provider: 'claude',
+        model: ''
+    },
+    providers: {
+        claude: { command: 'claude' },
+        codex: { command: 'codex', args: [] },
+        deepseek: { command: 'deepseek', args: [] },
+        glm: { command: 'glm', args: [] },
+        custom: {
+            displayName: 'Custom Agent',
+            command: 'agent',
+            args: [],
+            commandTemplate: '{command} {args} "{prompt}"'
+        }
+    },
+    mcp: {
+        customServers: []
+    },
     paths: {
         specs: '.claude/specs',
         steering: '.claude/steering',
@@ -13,6 +32,7 @@ export const DEFAULT_CONFIG = {
     },
     views: {
         specs: true,
+        agents: true,
         steering: true,
         mcp: true,
         hooks: true,
