@@ -23,11 +23,11 @@ eg:
    document_type: requirements
    feature_name: test-feature
    feature_description: Test
-   spec_base_path: .claude/specs
-   documents: .claude/specs/test-feature/requirements_v5.md,
-              .claude/specs/test-feature/requirements_v6.md,
-              .claude/specs/test-feature/requirements_v7.md,
-              .claude/specs/test-feature/requirements_v8.md
+   spec_base_path: .autocode/specs
+   documents: .autocode/specs/test-feature/requirements_v5.md,
+              .autocode/specs/test-feature/requirements_v6.md,
+              .autocode/specs/test-feature/requirements_v7.md,
+              .autocode/specs/test-feature/requirements_v8.md
 ```
 
 ## PREREQUISITES
@@ -122,4 +122,4 @@ summary: Brief summary including scores, for example:
 
 - The model MUST use the user's language preference
 - Only delete the specific documents you evaluated - use explicit filenames (e.g., `rm requirements_v1.md requirements_v2.md`), never use wildcards (e.g., `rm requirements_v*.md`)
-- Generate final_document_path with a random 4-digit suffix (e.g., `.claude/specs/test-feature/requirements_v1234.md`)
+- Generate final_document_path with a random 4-digit suffix (e.g., `.autocode/specs/test-feature/requirements_v1234.md`)

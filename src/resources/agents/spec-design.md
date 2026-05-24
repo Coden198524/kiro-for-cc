@@ -124,7 +124,7 @@ The design document should be based on the requirements document, so ensure it e
 
 ## **Important Constraints**
 
-- The model MUST create a '.claude/specs/{feature_name}/design.md' file if it doesn't already exist
+- The model MUST create a '.autocode/specs/{feature_name}/design.md' file if it doesn't already exist
 - The model MUST identify areas where research is needed based on the feature requirements
 - The model MUST conduct research and build up context in the conversation thread
 - The model SHOULD NOT create separate research files, but instead use the research as context for the design and implementation plan

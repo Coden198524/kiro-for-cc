@@ -54,7 +54,7 @@ a design.
 
 **Constraints:**
 
-- The model MUST create a '.claude/specs/{feature_name}/requirements.md' file if it doesn't already exist
+- The model MUST create a '.autocode/specs/{feature_name}/requirements.md' file if it doesn't already exist
 - The model MUST generate an initial version of the requirements document based on the user's rough idea WITHOUT asking sequential questions first
 - The model MUST format the initial requirements.md document with:
 - A clear introduction section that summarizes the feature
@@ -114,7 +114,7 @@ The design document should be based on the requirements document, so ensure it e
 
 **Constraints:**
 
-- The model MUST create a '.claude/specs/{feature_name}/design.md' file if it doesn't already exist
+- The model MUST create a '.autocode/specs/{feature_name}/design.md' file if it doesn't already exist
 - The model MUST identify areas where research is needed based on the feature requirements
 - The model MUST conduct research and build up context in the conversation thread
 - The model SHOULD use available research and codebase tools when conducting research:
@@ -124,7 +124,7 @@ The design document should be based on the requirements document, so ensure it e
 - The model SHOULD NOT create separate research files, but instead use the research as context for the design and implementation plan
 - The model MUST summarize key findings that will inform the feature design
 - The model SHOULD cite sources and include relevant links in the conversation
-- The model MUST create a detailed design document at '.claude/specs/{feature_name}/design.md'
+- The model MUST create a detailed design document at '.autocode/specs/{feature_name}/design.md'
 - The model MUST incorporate research findings directly into the design process
 - The model MUST include the following sections in the design document:
 
@@ -158,10 +158,10 @@ The tasks document should be based on the design document, so ensure it exists f
 
 **Constraints:**
 
-- The model MUST create a '.claude/specs/{feature_name}/tasks.md' file if it doesn't already exist
+- The model MUST create a '.autocode/specs/{feature_name}/tasks.md' file if it doesn't already exist
 - The model MUST return to the design step if the user indicates any changes are needed to the design
 - The model MUST return to the requirement step if the user indicates that we need additional requirements
-- The model MUST create an implementation plan at '.claude/specs/{feature_name}/tasks.md'
+- The model MUST create an implementation plan at '.autocode/specs/{feature_name}/tasks.md'
 - The model MUST use the following specific instructions when creating the implementation plan:
 
 \`\`\`plain
@@ -342,13 +342,13 @@ User Request: Create a requirements document for a new feature
 Feature Description: User authentication with JWT
 
 Workspace path: /snapshot/test
-Spec base path: .claude/specs
+Spec base path: .autocode/specs
 
 Please:
 
 1. Detect the user's primary language from the feature description and use it for all replies and generated spec document prose
 2. Choose an appropriate readable kebab-case name for this spec based on the description, following the user's language instead of defaulting to English
-3. Create the directory structure: .claude/specs/{your-chosen-name}/
+3. Create the directory structure: .autocode/specs/{your-chosen-name}/
 4. Create the requirements.md file in that directory
 5. Write the requirements document following the spec workflow in EARS format
 
@@ -379,18 +379,18 @@ Write content as direct instructions to the AI agent:
 
 Create exactly these three files by analyzing the codebase:
 
-1. **/snapshot/test/.claude/steering/product.md**
+1. **/snapshot/test/.autocode/steering/product.md**
    - Product purpose and core features
    - User value proposition
    - Key business logic rules
 
-2. **/snapshot/test/.claude/steering/tech.md**
+2. **/snapshot/test/.autocode/steering/tech.md**
    - Tech stack and frameworks used
    - Build system and dependencies
    - Common commands (build, test, run, deploy)
    - Project-specific conventions
 
-3. **/snapshot/test/.claude/steering/structure.md**
+3. **/snapshot/test/.autocode/steering/structure.md**
    - Directory organization
    - File naming patterns
    - Component/module architecture
@@ -408,7 +408,7 @@ Create exactly these three files by analyzing the codebase:
 
 Analyze this repository and create basic steering rules that would help guide an AI assistant.
 
-Steering documents are markdown files that should be created in the '/snapshot/test/.claude/steering' directory.
+Steering documents are markdown files that should be created in the '/snapshot/test/.autocode/steering' directory.
 
 Focus on project conventions, code style, architecture patterns, and any specific rules that should be followed when working with this codebase.
 
@@ -422,7 +422,7 @@ The goal is to be succinct, but capture information that will be useful for an A
 
 IMPORTANT:
 
-1. Write each file directly to the filesystem at the appropriate path in /snapshot/test/.claude/steering/
+1. Write each file directly to the filesystem at the appropriate path in /snapshot/test/.autocode/steering/
 2. Check if any of these files already exist before creating them. If a file already exists, DO NOT modify or overwrite it - skip it completely
 3. Only create files that don't exist
 4. If a project CLAUDE.md exists, create or update the "## Steering Documents" section listing all steering documents with their descriptions and paths
@@ -455,7 +455,7 @@ Based on this guidance need: "API design patterns and best practices"
 Please:
 
 1. Choose an appropriate kebab-case filename for this steering document
-2. Create the document in the /snapshot/test/.claude/steering directory
+2. Create the document in the /snapshot/test/.autocode/steering directory
 3. Write comprehensive guidance that addresses the specific needs mentioned
 4. If a project CLAUDE.md exists, add or update the "## Steering Documents" section to include this new document with its description and path
 "
@@ -480,7 +480,7 @@ Review and refine the content to:
 Keep the refined content focused on actionable guidance specific to this codebase.
 </system>
 
-Please refine the steering document at /snapshot/test/.claude/steering/api-guidelines.md
+Please refine the steering document at /snapshot/test/.autocode/steering/api-guidelines.md
 
 Refine this document to:
 
@@ -496,7 +496,7 @@ After refining, overwrite the original file with the improved content.
 
 exports[`Prompt 快照测试 INT-19: delete steering prompt 快照测试 1`] = `
 "
-The steering document "deprecated-guidelines.md" has been deleted from /snapshot/test/.claude/steering.
+The steering document "deprecated-guidelines.md" has been deleted from /snapshot/test/.autocode/steering.
 
 If a project CLAUDE.md exists and contains a "## Steering Documents" section, please update it to remove the reference to this deleted document.
 "

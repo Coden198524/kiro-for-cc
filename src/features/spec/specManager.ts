@@ -8,6 +8,10 @@ import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
+export interface TaskImplementationRun {
+    terminal: vscode.Terminal;
+}
+
 export class SpecManager {
     private configManager: ConfigManager;
     private promptLoader: PromptLoader;
@@ -103,25 +107,32 @@ export class SpecManager {
         });
     }
 
-    async implTask(taskFilePath: string, taskDescription: string, resume = false, lineNumber?: number) {
+    async implTask(taskFilePath: string, taskDescription: string, resume = false, lineNumber?: number): Promise<TaskImplementationRun | undefined> {
         await this.agentRuntime.refreshProvider?.();
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             vscode.window.showErrorMessage('No workspace folder open');
-            return;
+            return undefined;
         }
 
         // Show notification immediately after user input
         NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing your task. Check the terminal for progress.`);
 
+        const languagePreference = await this.detectTaskLanguagePreference(taskFilePath, taskDescription);
+        const taskModeInstruction = this.getTaskModeInstruction(resume, languagePreference);
+        const languageInstruction = [
+            `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
+            'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
+        ].join(' ');
+
         const prompt = this.promptLoader.renderPrompt('impl-task', {
             taskFilePath,
             taskDescription,
             taskMode: resume ? 'resume' : 'start',
-            taskModeInstruction: resume
-                ? 'Resume this in-progress task. First inspect the current worktree, the task file, requirements.md, design.md, and any existing partial implementation. Identify what has already been completed, avoid repeating completed work, then continue from the current state.'
-                : 'Start this task from its current spec context. The extension has marked it in progress before launching this agent.'
+            taskModeInstruction,
+            languagePreference,
+            languageInstruction
         });
 
         const terminal = await this.agentRuntime.invokeInteractive({
@@ -142,6 +153,66 @@ export class SpecManager {
                 terminal
             });
         }
+
+        return { terminal };
+    }
+
+    private async detectTaskLanguagePreference(taskFilePath: string, taskDescription: string): Promise<string> {
+        const specDir = path.dirname(taskFilePath);
+        const candidates = [
+            taskDescription,
+            await this.readTextIfExists(path.join(specDir, 'tasks.md')),
+            await this.readTextIfExists(path.join(specDir, 'requirements.md')),
+            await this.readTextIfExists(path.join(specDir, 'design.md'))
+        ].filter((content): content is string => Boolean(content));
+
+        return this.inferLanguagePreference(candidates.join('\n'));
+    }
+
+    private async readTextIfExists(filePath: string): Promise<string | undefined> {
+        try {
+            const content = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
+            return Buffer.from(content).toString();
+        } catch {
+            return undefined;
+        }
+    }
+
+    private inferLanguagePreference(text: string): string {
+        const chineseCount = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+        const japaneseCount = (text.match(/[\u3040-\u30ff]/g) ?? []).length;
+        const koreanCount = (text.match(/[\uac00-\ud7af]/g) ?? []).length;
+        const latinWordCount = (text.match(/[A-Za-z]{3,}/g) ?? []).length;
+
+        if (chineseCount >= 2 && chineseCount >= japaneseCount && chineseCount >= koreanCount) {
+            return 'Chinese (中文)';
+        }
+
+        if (japaneseCount >= 8 && japaneseCount >= koreanCount) {
+            return 'Japanese (日本語)';
+        }
+
+        if (koreanCount >= 8) {
+            return 'Korean (한국어)';
+        }
+
+        if (latinWordCount >= 8) {
+            return 'English';
+        }
+
+        return 'the primary natural language used by the referenced spec documents and task description';
+    }
+
+    private getTaskModeInstruction(resume: boolean, languagePreference: string): string {
+        if (languagePreference.startsWith('Chinese')) {
+            return resume
+                ? '继续这个进行中的任务。先检查当前工作区变更、任务文件、requirements.md、design.md 以及已有的部分实现。识别已经完成的内容，避免重复工作，然后从当前状态继续。'
+                : '从当前 spec 上下文开始执行这个任务。扩展在启动此代理前已经把任务标记为进行中。';
+        }
+
+        return resume
+            ? 'Resume this in-progress task. First inspect the current worktree, the task file, requirements.md, design.md, and any existing partial implementation. Identify what has already been completed, avoid repeating completed work, then continue from the current state.'
+            : 'Start this task from its current spec context. The extension has marked it in progress before launching this agent.';
     }
 
     /**

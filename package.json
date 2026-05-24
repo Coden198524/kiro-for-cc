@@ -431,6 +431,18 @@
             }
           }
         },
+        "kfc.spec.autoMarkTaskDone": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically mark a spec task done after the active agent completes and a follow-up model verification confirms completion."
+        },
+        "kfc.spec.autoMarkTaskDoneMinConfidence": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum verification confidence required before automatically marking a spec task done."
+        },
         "kfc.autoRefreshSpecs": {
           "type": "boolean",
           "default": true,

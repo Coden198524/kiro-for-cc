@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { DEFAULT_PATHS, CONFIG_FILE_NAME, DEFAULT_VIEW_VISIBILITY } from '../constants';
+import { DEFAULT_PATHS, CONFIG_FILE_NAME, DEFAULT_VIEW_VISIBILITY, LEGACY_CONFIG_FILE_NAME, LEGACY_PATHS } from '../constants';
 
 export interface KfcSettings {
     agent: {
@@ -19,6 +19,10 @@ export interface KfcSettings {
     };
     mcp: {
         customServers: CustomMcpServerSettings[];
+    };
+    spec: {
+        autoMarkTaskDone: boolean;
+        autoMarkTaskDoneMinConfidence: number;
     };
     paths: {
         specs: string;
@@ -76,11 +80,8 @@ export class ConfigManager {
             return this.getDefaultSettings();
         }
 
-        const settingsPath = path.join(
-            this.workspaceFolder.uri.fsPath,
-            DEFAULT_PATHS.settings,
-            CONFIG_FILE_NAME
-        );
+        const settingsPath = this.getSettingsFilePath();
+        const legacySettingsPath = this.getLegacySettingsFilePath();
 
         try {
             const fileContent = await vscode.workspace.fs.readFile(vscode.Uri.file(settingsPath));
@@ -88,9 +89,16 @@ export class ConfigManager {
             this.settings = this.mergeSettings(settings);
             return this.settings!;
         } catch (error) {
-            // Return default settings if file doesn't exist
-            this.settings = this.getDefaultSettings();
-            return this.settings!;
+            try {
+                const fileContent = await vscode.workspace.fs.readFile(vscode.Uri.file(legacySettingsPath));
+                const settings = JSON.parse(Buffer.from(fileContent).toString()) as Partial<KfcSettings>;
+                this.settings = this.mergeSettings(this.migrateLegacySettings(settings));
+                return this.settings!;
+            } catch {
+                // Return default settings if neither settings file exists
+                this.settings = this.getDefaultSettings();
+                return this.settings!;
+            }
         }
     }
 
@@ -166,6 +174,10 @@ export class ConfigManager {
             mcp: {
                 customServers: []
             },
+            spec: {
+                autoMarkTaskDone: true,
+                autoMarkTaskDoneMinConfidence: 0.8
+            },
             paths: { ...DEFAULT_PATHS },
             views: {
                 specs: { visible: DEFAULT_VIEW_VISIBILITY.specs },
@@ -218,6 +230,10 @@ export class ConfigManager {
                 ...(settings.mcp ?? {}),
                 customServers: settings.mcp?.customServers ?? defaults.mcp.customServers
             },
+            spec: {
+                ...defaults.spec,
+                ...(settings.spec ?? {})
+            },
             paths: {
                 ...defaults.paths,
                 ...(settings.paths ?? {})
@@ -256,11 +272,8 @@ export class ConfigManager {
             throw new Error('No workspace folder found');
         }
 
-        const settingsDir = path.join(
-            this.workspaceFolder.uri.fsPath,
-            DEFAULT_PATHS.settings
-        );
-        const settingsPath = path.join(settingsDir, CONFIG_FILE_NAME);
+        const settingsDir = path.join(this.workspaceFolder.uri.fsPath, DEFAULT_PATHS.settings);
+        const settingsPath = this.getSettingsFilePath();
 
         // Ensure directory exists
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(settingsDir));
@@ -274,5 +287,38 @@ export class ConfigManager {
         );
 
         this.settings = mergedSettings;
+    }
+
+    getSettingsFilePath(): string {
+        if (!this.workspaceFolder) {
+            throw new Error('No workspace folder found');
+        }
+
+        return path.join(this.workspaceFolder.uri.fsPath, DEFAULT_PATHS.settings, CONFIG_FILE_NAME);
+    }
+
+    private getLegacySettingsFilePath(): string {
+        if (!this.workspaceFolder) {
+            throw new Error('No workspace folder found');
+        }
+
+        return path.join(this.workspaceFolder.uri.fsPath, LEGACY_PATHS.settings, LEGACY_CONFIG_FILE_NAME);
+    }
+
+    private migrateLegacySettings(settings: Partial<KfcSettings>): Partial<KfcSettings> {
+        const paths = settings.paths;
+        if (!paths) {
+            return settings;
+        }
+
+        return {
+            ...settings,
+            paths: {
+                ...paths,
+                specs: paths.specs === LEGACY_PATHS.specs ? DEFAULT_PATHS.specs : paths.specs,
+                steering: paths.steering === LEGACY_PATHS.steering ? DEFAULT_PATHS.steering : paths.steering,
+                settings: paths.settings === LEGACY_PATHS.settings ? DEFAULT_PATHS.settings : paths.settings
+            }
+        };
     }
 }

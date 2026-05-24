@@ -44,7 +44,7 @@ The extension should stop treating MCP as `claude mcp list` only. A runtime-owne
 
 - Built-ins: `context7`, `puppeteer`, `electron`.
 - Claude compatibility: existing Claude MCP servers parsed from `claude mcp list` when active provider is Claude.
-- Custom servers from `kfc-settings.json`.
+- Custom servers from `autocode-settings.json`.
 
 This keeps Claude compatibility while allowing non-Claude providers to see and use extension-level MCP configuration.
 
@@ -66,5 +66,5 @@ The first release should support spec creation, steering creation/refinement, st
 
 - Runtime calls now carry an agent type so the terminal runtime can append provider, tool, thinking level, and MCP context from `agentConfigs.ts`.
 - `Create Spec with Agents` uses Claude subagents only when the active provider supports Claude agents; other providers fall back to the standard spec workflow.
-- Project settings are merged and written back on startup/open so existing `kfc-settings.json` files receive new provider, MCP, and view defaults without losing custom values.
+- Project settings are merged and written back on startup/open so existing `autocode-settings.json` files receive new provider, MCP, and view defaults without losing custom values. Legacy `kfc-settings.json` files are still read for migration.
 - MCP support is currently configuration and prompt-context based for non-Claude CLIs. Direct MCP process mediation remains future work because Codex, DeepSeek, GLM, and custom CLIs expose MCP/tooling differently.

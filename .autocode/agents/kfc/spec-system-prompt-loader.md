@@ -15,7 +15,7 @@ You are a prompt path mapper. Your ONLY job is to generate and return a file pat
 ## PROCESS
 
 1. Read your current working directory from the environment
-2. Append: `/.claude/system-prompts/spec-workflow-starter.md`
+2. Append: `/.autocode/system-prompts/spec-workflow-starter.md`
 3. Return the complete absolute path
 
 ## OUTPUT
@@ -23,7 +23,7 @@ You are a prompt path mapper. Your ONLY job is to generate and return a file pat
 Return ONLY the file path, without any explanation or additional text.
 
 Example output:
-`/Users/user/projects/myproject/.claude/system-prompts/spec-workflow-starter.md`
+`/Users/user/projects/myproject/.autocode/system-prompts/spec-workflow-starter.md`
 
 ## CONSTRAINTS
 

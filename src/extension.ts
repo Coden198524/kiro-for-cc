@@ -9,7 +9,7 @@ import { OverviewProvider } from './providers/overviewProvider';
 import { AgentsExplorerProvider } from './providers/agentsExplorerProvider';
 import { AgentManager } from './features/agents/agentManager';
 import { ConfigManager } from './utils/configManager';
-import { CONFIG_FILE_NAME, VSC_CONFIG_NAMESPACE } from './constants';
+import { CONFIG_FILE_NAME, DEFAULT_PATHS, VSC_CONFIG_NAMESPACE } from './constants';
 import { PromptLoader } from './services/promptLoader';
 import { UpdateChecker } from './utils/updateChecker';
 import { PermissionManager } from './features/permission/permissionManager';
@@ -19,6 +19,7 @@ import { AgentRuntime } from './runtime/agentRuntime';
 import { TerminalAgentRuntime } from './runtime/terminalAgentRuntime';
 import { parseSpecTaskLine, replaceSpecTaskStatus, SpecTaskStatus } from './features/spec/taskStatus';
 import { TaskSessionManager } from './features/spec/taskSessionManager';
+import { TaskCompletionVerifier } from './features/spec/taskCompletionVerifier';
 
 let agentRuntime: AgentRuntime;
 let specManager: SpecManager;
@@ -26,6 +27,7 @@ let steeringManager: SteeringManager;
 let permissionManager: PermissionManager;
 let agentManager: AgentManager;
 let taskSessionManager: TaskSessionManager;
+let taskCompletionVerifier: TaskCompletionVerifier;
 export let outputChannel: vscode.OutputChannel;
 
 // 导出 getter 函数供其他模块使用
@@ -72,6 +74,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize feature managers with output channel
     taskSessionManager = new TaskSessionManager(outputChannel);
+    taskCompletionVerifier = new TaskCompletionVerifier(agentRuntime, taskSessionManager, outputChannel);
     specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager);
     steeringManager = new SteeringManager(agentRuntime, outputChannel);
 
@@ -118,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const specTaskCodeLensProvider = new SpecTaskCodeLensProvider();
 
-    let specDir = '.claude/specs';
+    let specDir: string = DEFAULT_PATHS.specs;
     try {
         await configManager.loadSettings();
         const configuredSpecDir = configManager.getPath('specs');
@@ -161,11 +164,11 @@ async function ensureSettingsFile(): Promise<vscode.Uri | undefined> {
         return undefined;
     }
 
-    const claudeDir = vscode.Uri.joinPath(workspaceFolder.uri, '.claude');
-    const settingsDir = vscode.Uri.joinPath(claudeDir, 'settings');
+    const autocodeDir = vscode.Uri.joinPath(workspaceFolder.uri, '.autocode');
+    const settingsDir = vscode.Uri.joinPath(workspaceFolder.uri, ...DEFAULT_PATHS.settings.split('/'));
 
     try {
-        await vscode.workspace.fs.createDirectory(claudeDir);
+        await vscode.workspace.fs.createDirectory(autocodeDir);
         await vscode.workspace.fs.createDirectory(settingsDir);
     } catch (error) {
         // Directory might already exist
@@ -350,7 +353,10 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
             const effectiveDescription = task?.description || taskDescription;
             const shouldResume = resume || task?.status === 'inProgress';
 
-            await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
+            const run = await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
+            if (run?.terminal) {
+                registerAutoTaskCompletion(context, run.terminal, documentUri.fsPath, lineNumber, effectiveDescription);
+            }
         }),
         vscode.commands.registerCommand('kfc.spec.markTaskDone', async (documentUri: vscode.Uri, lineNumber: number) => {
             outputChannel.appendLine(`[Task Complete] Line ${lineNumber + 1}`);
@@ -437,7 +443,7 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
             const filePath = document.fileName;
 
             // Check if this is an agent file
-            if (filePath.includes('.claude/agents/') && filePath.endsWith('.md')) {
+            if (filePath.includes('.autocode/agents/') && filePath.endsWith('.md')) {
                 // Show confirmation dialog
                 const result = await vscode.window.showWarningMessage(
                     'Are you sure you want to save changes to this agent file?',
@@ -570,6 +576,54 @@ async function readTaskLine(documentUri: vscode.Uri, lineNumber: number) {
     return parseSpecTaskLine(document.lineAt(lineNumber).text);
 }
 
+function registerAutoTaskCompletion(
+    context: vscode.ExtensionContext,
+    terminal: vscode.Terminal,
+    taskFilePath: string,
+    lineNumber: number,
+    taskDescription: string
+) {
+    if (!taskCompletionVerifier.isEnabled()) {
+        return;
+    }
+
+    let handled = false;
+    const runVerification = async () => {
+        if (handled) {
+            return;
+        }
+
+        handled = true;
+        closeDisposable.dispose();
+        shellEndDisposable.dispose();
+
+        await taskCompletionVerifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber,
+            taskDescription
+        });
+    };
+
+    const shellEndDisposable = vscode.window.onDidEndTerminalShellExecution(async (event) => {
+        if (event.terminal !== terminal) {
+            return;
+        }
+
+        await runVerification();
+    });
+
+    const disposable = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
+        if (closedTerminal !== terminal) {
+            return;
+        }
+
+        await runVerification();
+    });
+
+    const closeDisposable = disposable;
+    context.subscriptions.push(closeDisposable, shellEndDisposable);
+}
+
 function setupFileWatchers(
     context: vscode.ExtensionContext,
     specExplorer: SpecExplorerProvider,
@@ -578,8 +632,8 @@ function setupFileWatchers(
     mcpExplorer: MCPExplorerProvider,
     agentsExplorer: AgentsExplorerProvider
 ) {
-    // Watch for changes in .claude directory with debouncing
-    const kfcWatcher = vscode.workspace.createFileSystemWatcher('**/.claude/**/*');
+    // Watch for changes in the AutoCode project directory with debouncing
+    const kfcWatcher = vscode.workspace.createFileSystemWatcher('**/.autocode/**/*');
 
     let refreshTimeout: NodeJS.Timeout | undefined;
     const debouncedRefresh = (event: string, uri: vscode.Uri) => {

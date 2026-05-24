@@ -79,10 +79,10 @@ flowchart TD
 
 ## **Important Constraints**
 
-- The model MUST create a '.claude/specs/{feature_name}/tasks.md' file if it doesn't already exist
+- The model MUST create a '.autocode/specs/{feature_name}/tasks.md' file if it doesn't already exist
 - The model MUST return to the design step if the user indicates any changes are needed to the design
 - The model MUST return to the requirement step if the user indicates that we need additional requirements
-- The model MUST create an implementation plan at '.claude/specs/{feature_name}/tasks.md'
+- The model MUST create an implementation plan at '.autocode/specs/{feature_name}/tasks.md'
 - The model MUST use the following specific instructions when creating the implementation plan:
 
 ```plain

@@ -20,6 +20,14 @@ variables:
     type: string
     required: true
     description: Mode-specific instructions for the agent
+  languagePreference:
+    type: string
+    required: true
+    description: Language to use for responses and generated prose
+  languageInstruction:
+    type: string
+    required: true
+    description: Language-specific response instructions
 ---
 <user_input>
 I just completed a spec workflow and now need to implement one of the specific tasks.
@@ -27,17 +35,22 @@ I just completed a spec workflow and now need to implement one of the specific t
 Task File Path: {{taskFilePath}}
 Task Description: {{taskDescription}}
 Task Mode: {{taskMode}}
+Language Preference: {{languagePreference}}
 
 {{taskModeInstruction}}
 
+Language rules:
+
+{{languageInstruction}}
+
 Please help me:
 
-1. Review the spec workflow guidance if it is available at `.claude/system-prompts/spec-workflow-starter.md`; do not require a Claude-only subagent
+1. Review the spec workflow guidance if it is available at `.autocode/system-prompts/spec-workflow-starter.md`; do not require a Claude-only subagent
 2. Review the requirements and design documents in the spec folder
 3. Implement this task based on existing codebase patterns and conventions
 4. Ensure code quality, including error handling, performance, and security
 5. Add or update focused tests for the implemented code
-6. When finished, report what changed and what you verified
+6. When finished, report what changed and what you verified in the language specified above
 
 Task status is managed by the VS Code extension. Do not mark the task as `- [x]` yourself unless the user explicitly asks you to edit task status.
 </user_input>

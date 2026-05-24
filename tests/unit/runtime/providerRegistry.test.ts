@@ -67,7 +67,7 @@ describe('providerRegistry', () => {
                 }
             },
             mcp: { customServers: [] },
-            paths: { specs: '.claude/specs', steering: '.claude/steering', settings: '.claude/settings' },
+            paths: { specs: '.autocode/specs', steering: '.autocode/steering', settings: '.autocode/settings' },
             views: {
                 specs: { visible: true },
                 agents: { visible: true },

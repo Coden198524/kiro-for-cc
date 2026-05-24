@@ -3,7 +3,7 @@ import { TaskSessionManager } from '../../../../src/features/spec/taskSessionMan
 import { AgentProviderConfig } from '../../../../src/runtime/agentRuntime';
 
 describe('TaskSessionManager', () => {
-    const taskFilePath = '/mock/workspace/.claude/specs/demo/tasks.md';
+    const taskFilePath = '/mock/workspace/.autocode/specs/demo/tasks.md';
     let files: Map<string, Buffer>;
     let manager: TaskSessionManager;
 

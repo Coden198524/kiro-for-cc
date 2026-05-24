@@ -2,7 +2,8 @@
 export const VSC_CONFIG_NAMESPACE = 'kfc';
 
 // File names
-export const CONFIG_FILE_NAME = 'kfc-settings.json';
+export const CONFIG_FILE_NAME = 'autocode-settings.json';
+export const LEGACY_CONFIG_FILE_NAME = 'kfc-settings.json';
 
 // Default configuration
 export const DEFAULT_CONFIG = {
@@ -25,10 +26,14 @@ export const DEFAULT_CONFIG = {
     mcp: {
         customServers: []
     },
+    spec: {
+        autoMarkTaskDone: true,
+        autoMarkTaskDoneMinConfidence: 0.8
+    },
     paths: {
-        specs: '.claude/specs',
-        steering: '.claude/steering',
-        settings: '.claude/settings'
+        specs: '.autocode/specs',
+        steering: '.autocode/steering',
+        settings: '.autocode/settings'
     },
     views: {
         specs: true,
@@ -43,3 +48,8 @@ export const DEFAULT_CONFIG = {
 // Legacy exports for backward compatibility (can be removed after updating all references)
 export const DEFAULT_PATHS = DEFAULT_CONFIG.paths;
 export const DEFAULT_VIEW_VISIBILITY = DEFAULT_CONFIG.views;
+export const LEGACY_PATHS = {
+    specs: '.claude/specs',
+    steering: '.claude/steering',
+    settings: '.claude/settings'
+} as const;

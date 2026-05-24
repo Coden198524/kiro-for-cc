@@ -149,18 +149,18 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 
 - 点击 ✨ 图标创建自定义指导
 - 生成初始文档（产品、技术、结构）
-- 文档存储在 `.claude/steering/` 目录
+- 文档存储在 `.autocode/steering/` 目录
 
 ## 配置
 
-设置存储在 `.claude/settings/kfc-settings.json`：
+设置存储在 `.autocode/settings/autocode-settings.json`：
 
 ```json
 {
   "paths": {
-    "specs": ".claude/specs",
-    "steering": ".claude/steering",
-    "settings": ".claude/settings"
+    "specs": ".autocode/specs",
+    "steering": ".autocode/steering",
+    "settings": ".autocode/settings"
   },
   "views": {
     "specs": {
@@ -187,7 +187,7 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 扩展会在你的工作区创建以下结构：
 
 ```plain
-.claude/                      # 扩展数据目录
+.autocode/                    # 扩展数据目录
 ├── specs/                    # 功能规范
 │   └── {规范名称}/
 │       ├── requirements.md   # 构建什么
@@ -207,7 +207,7 @@ cursor --install-extension kiro-for-cc-{latest-version}.vsix
 │   ├── tech.md            # 技术标准
 │   └── structure.md       # 代码组织
 ├── settings/
-│   └── kfc-settings.json  # 扩展设置
+│   └── autocode-settings.json # 扩展设置
 ```
 
 ## 开发

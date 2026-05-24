@@ -51,7 +51,7 @@ describe('SpecTaskCodeLensProvider', () => {
         expect(provider.provideCodeLenses(document, {} as any)).toEqual([]);
     });
 
-    function createDocument(content: string, fileName = '/mock/workspace/.claude/specs/demo/tasks.md'): vscode.TextDocument {
+    function createDocument(content: string, fileName = '/mock/workspace/.autocode/specs/demo/tasks.md'): vscode.TextDocument {
         return {
             fileName,
             uri: vscode.Uri.file(fileName),

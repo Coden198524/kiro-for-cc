@@ -49,6 +49,7 @@ export const window = {
     dispose: jest.fn()
   })),
   onDidEndTerminalShellExecution: jest.fn(() => ({ dispose: jest.fn() })),
+  onDidCloseTerminal: jest.fn(() => ({ dispose: jest.fn() })),
   createOutputChannel: jest.fn(() => ({
     appendLine: jest.fn(),
     append: jest.fn(),

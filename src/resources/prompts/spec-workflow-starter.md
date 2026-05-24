@@ -43,7 +43,7 @@ When the user describes a new feature: (user_input: feature description)
    - [ ] Design Document
    - [ ] Task Planning
 3. Read language_preference from ~/.claude/CLAUDE.md (to pass to corresponding sub-agents in the process)
-4. Create directory structure: {spec_base_path:.claude/specs}/{feature_name}/
+4. Create directory structure: {spec_base_path:.autocode/specs}/{feature_name}/
 
 ### 1. Requirement Gathering
 
@@ -135,9 +135,9 @@ stateDiagram-v2
 
 | Feature                        | sub agent                           | path                                                         |
 | ------------------------------ | ----------------------------------- | ------------------------------------------------------------ |
-| Requirement Gathering          | spec-requirements(support parallel) | .claude/specs/{feature_name}/requirements.md                 |
-| Create Feature Design Document | spec-design(support parallel)       | .claude/specs/{feature_name}/design.md                       |
-| Create Task List               | spec-tasks(support parallel)        | .claude/specs/{feature_name}/tasks.md                        |
+| Requirement Gathering          | spec-requirements(support parallel) | .autocode/specs/{feature_name}/requirements.md                 |
+| Create Feature Design Document | spec-design(support parallel)       | .autocode/specs/{feature_name}/design.md                       |
+| Create Task List               | spec-tasks(support parallel)        | .autocode/specs/{feature_name}/tasks.md                        |
 | Judge(optional)                | spec-judge(support parallel)        | no doc, only call when user need to judge the spec documents |
 | Impl Task(optional)            | spec-impl(support parallel)         | no doc, only use when user requests parallel execution (>=2) |
 | Test(optional)                 | spec-test(single call)              | no need to focus on, belongs to code resources               |
@@ -235,14 +235,14 @@ When parallel agents generate multiple outputs (n >= 2), use tree-based evaluati
 
 Example with 10 documents:
 
-- Round 1: 3 judges (evaluate 4,3,3 docs) â†’ 3 outputs (e.g., requirements_v1234.md, requirements_v5678.md, requirements_v9012.md)
-- Round 2: 1 judge evaluates 3 docs â†’ 1 final selection (e.g., requirements_v3456.md)
-- Main thread: Rename final selection to standard name (e.g., requirements_v3456.md â†’ requirements.md)
+- Round 1: 3 judges (evaluate 4,3,3 docs) â†?3 outputs (e.g., requirements_v1234.md, requirements_v5678.md, requirements_v9012.md)
+- Round 2: 1 judge evaluates 3 docs â†?1 final selection (e.g., requirements_v3456.md)
+- Main thread: Rename final selection to standard name (e.g., requirements_v3456.md â†?requirements.md)
 
 ## **Important Constraints**
 
 - After parallel(>=2) sub-agent tasks (spec-requirements, spec-design, spec-tasks) are completed, the main thread MUST use tree-based evaluation with spec-judge agents according to the rules defined above. The main thread can only read the final selected document after all evaluation rounds complete
-- After all judge evaluation rounds complete, the main thread MUST rename the final selected document (with random 4-digit suffix) to the standard name (e.g., requirements_v3456.md â†’ requirements.md, design_v7890.md â†’ design.md)
+- After all judge evaluation rounds complete, the main thread MUST rename the final selected document (with random 4-digit suffix) to the standard name (e.g., requirements_v3456.md â†?requirements.md, design_v7890.md â†?design.md)
 - After renaming, the main thread MUST tell the user that the document has been finalized and is ready for review
 - The number of spec-judge agents is automatically determined by the tree-based evaluation rules - NEVER ask users how many judges to use
 - For sub-agents that can be called in parallel (spec-requirements, spec-design, spec-tasks), you MUST ask the user how many agents to use (1-128)

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { ConfigManager } from '../utils/configManager';
 import { VSC_CONFIG_NAMESPACE } from '../constants';
 import { getPermissionManager } from '../extension';
@@ -8,6 +10,8 @@ import { AgentType, getAgentConfig } from './agentConfigs';
 import { AgentInvocationRequest, AgentInvocationResult, AgentProviderConfig, AgentRuntime } from './agentRuntime';
 import { getRuntimeMcpServers, McpServerInfo } from './mcpRegistry';
 import { getProviderConfig } from './providerRegistry';
+
+const execAsync = promisify(exec);
 
 export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly INTERACTIVE_PROMPT_PASTE_DELAY = 1500;
@@ -37,8 +41,8 @@ export class TerminalAgentRuntime implements AgentRuntime {
             await this.ensureProviderReady();
             const prompt = this.decoratePrompt(request.prompt, request.agentType);
 
-            if (this.provider.id === 'codex') {
-                return this.invokeCodexInteractive(prompt, request.title);
+            if (this.provider.id === 'claude' || this.provider.id === 'codex') {
+                return this.invokePromptPastedInteractive(prompt, request.title);
             }
 
             const promptFilePath = await this.createTempFile(prompt, 'prompt');
@@ -84,50 +88,27 @@ export class TerminalAgentRuntime implements AgentRuntime {
         const promptFilePath = await this.createTempFile(prompt, 'background-prompt');
         const commandLine = this.buildCommand(promptFilePath);
 
-        const terminal = vscode.window.createTerminal({
-            name: `${this.provider.displayName} Background`,
-            cwd,
-            hideFromUser: true
-        });
-
-        return new Promise((resolve) => {
-            let shellIntegrationChecks = 0;
-            const checkShellIntegration = setInterval(() => {
-                shellIntegrationChecks++;
-
-                if (terminal.shellIntegration) {
-                    clearInterval(checkShellIntegration);
-                    const execution = terminal.shellIntegration.executeCommand(commandLine);
-
-                    const disposable = vscode.window.onDidEndTerminalShellExecution(event => {
-                        if (event.terminal === terminal && event.execution === execution) {
-                            disposable.dispose();
-
-                            if (event.exitCode !== 0) {
-                                this.outputChannel.appendLine(`[AgentRuntime] Command failed with exit code: ${event.exitCode}`);
-                                this.outputChannel.appendLine(`[AgentRuntime] Command was: ${commandLine}`);
-                            }
-
-                            resolve({ exitCode: event.exitCode, output: undefined });
-                            setTimeout(async () => {
-                                terminal.dispose();
-                                await this.cleanupPromptFile(promptFilePath);
-                            }, 1000);
-                        }
-                    });
-                } else if (shellIntegrationChecks > 20) {
-                    clearInterval(checkShellIntegration);
-                    this.outputChannel.appendLine('[AgentRuntime] Shell integration not available, using fallback mode');
-                    terminal.sendText(commandLine);
-
-                    setTimeout(async () => {
-                        resolve({ exitCode: undefined });
-                        terminal.dispose();
-                        await this.cleanupPromptFile(promptFilePath);
-                    }, 5000);
-                }
-            }, 100);
-        });
+        try {
+            const { stdout, stderr } = await execAsync(commandLine, {
+                cwd,
+                shell: process.platform === 'win32' ? 'powershell.exe' : undefined,
+                maxBuffer: 1024 * 1024 * 8
+            });
+            await this.cleanupPromptFile(promptFilePath);
+            return {
+                exitCode: 0,
+                output: stdout,
+                stderr
+            };
+        } catch (error: any) {
+            await this.cleanupPromptFile(promptFilePath);
+            this.outputChannel.appendLine(`[AgentRuntime] Headless command failed: ${error}`);
+            return {
+                exitCode: typeof error?.code === 'number' ? error.code : 1,
+                output: error?.stdout,
+                stderr: error?.stderr ?? String(error)
+            };
+        }
     }
 
     async renameTerminal(terminal: vscode.Terminal, newName: string): Promise<void> {
@@ -168,7 +149,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
         this.provider = getProviderConfig();
     }
 
-    private async invokeCodexInteractive(prompt: string, title?: string): Promise<vscode.Terminal> {
+    private async invokePromptPastedInteractive(prompt: string, title?: string): Promise<vscode.Terminal> {
         const terminal = vscode.window.createTerminal({
             name: title || `KFC - ${this.provider.displayName}`,
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
@@ -277,6 +258,11 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
 
     private buildInteractiveCommand(): string {
         const args = (this.provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
+
+        if (this.provider.id === 'claude') {
+            return `${this.quoteCommand(this.provider.command)} --permission-mode bypassPermissions`;
+        }
+
         return [this.quoteCommand(this.provider.command), args].filter(Boolean).join(' ');
     }
 

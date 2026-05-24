@@ -16,6 +16,7 @@ export class AgentManager {
     private outputChannel: vscode.OutputChannel;
     private extensionPath: string;
     private workspaceRoot: string | undefined;
+    private static readonly PROJECT_DATA_DIR = '.autocode';
     
     private readonly BUILT_IN_AGENTS = [
         'spec-requirements',
@@ -61,7 +62,7 @@ export class AgentManager {
             return;
         }
 
-        const targetDir = path.join(this.workspaceRoot, '.claude/agents/kfc');
+        const targetDir = path.join(this.workspaceRoot, AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc');
         
         try {
             // Ensure target directory exists
@@ -106,7 +107,7 @@ export class AgentManager {
             return;
         }
 
-        const systemPromptDir = path.join(this.workspaceRoot, '.claude/system-prompts');
+        const systemPromptDir = path.join(this.workspaceRoot, AgentManager.PROJECT_DATA_DIR, 'system-prompts');
         const sourcePath = path.join(this.extensionPath, 'dist/resources/prompts', 'spec-workflow-starter.md');
         const targetPath = path.join(systemPromptDir, 'spec-workflow-starter.md');
 
@@ -127,14 +128,13 @@ export class AgentManager {
     async getAgentList(type: 'project' | 'user' | 'all' = 'all'): Promise<AgentInfo[]> {
         const agents: AgentInfo[] = [];
 
-        // Get project agents (excluding kfc built-in agents)
+        // Get project agents, including built-in workflow agents under .autocode/agents/kfc.
         if (type === 'project' || type === 'all') {
             if (this.workspaceRoot) {
-                const projectAgentsPath = this.joinWorkspacePath('.claude', 'agents');
+                const projectAgentsPath = this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents');
                 const projectAgents = await this.getAgentsFromDirectory(
                     projectAgentsPath,
-                    'project',
-                    true  // exclude kfc directory
+                    'project'
                 );
                 agents.push(...projectAgents);
             }
@@ -153,12 +153,12 @@ export class AgentManager {
     /**
      * Get agents from a specific directory (including subdirectories)
      */
-    private async getAgentsFromDirectory(dirPath: string, type: 'project' | 'user', excludeKfc: boolean = false): Promise<AgentInfo[]> {
+    private async getAgentsFromDirectory(dirPath: string, type: 'project' | 'user'): Promise<AgentInfo[]> {
         const agents: AgentInfo[] = [];
 
         try {
             this.outputChannel.appendLine(`[AgentManager] Reading agents from directory: ${dirPath}`);
-            await this.readAgentsRecursively(dirPath, type, agents, excludeKfc);
+            await this.readAgentsRecursively(dirPath, type, agents);
             this.outputChannel.appendLine(`[AgentManager] Total agents found in ${dirPath}: ${agents.length}`);
         } catch (error) {
             this.outputChannel.appendLine(`[AgentManager] Failed to read agents from ${dirPath}: ${error}`);
@@ -170,19 +170,13 @@ export class AgentManager {
     /**
      * Recursively read agents from directory and subdirectories
      */
-    private async readAgentsRecursively(dirPath: string, type: 'project' | 'user', agents: AgentInfo[], excludeKfc: boolean = false): Promise<void> {
+    private async readAgentsRecursively(dirPath: string, type: 'project' | 'user', agents: AgentInfo[]): Promise<void> {
         try {
             const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(dirPath));
             
             for (const [fileName, fileType] of entries) {
                 const fullPath = path.join(dirPath, fileName);
-                
-                // Skip kfc directory if excludeKfc is true
-                if (excludeKfc && fileName === 'kfc' && fileType === vscode.FileType.Directory) {
-                    this.outputChannel.appendLine(`[AgentManager] Skipping kfc directory (built-in agents)`);
-                    continue;
-                }
-                
+
                 if (fileType === vscode.FileType.File && fileName.endsWith('.md')) {
                     this.outputChannel.appendLine(`[AgentManager] Processing agent file: ${fileName}`);
                     const agentInfo = await this.parseAgentFile(fullPath, type);
@@ -195,7 +189,7 @@ export class AgentManager {
                 } else if (fileType === vscode.FileType.Directory) {
                     // Recursively read subdirectories
                     this.outputChannel.appendLine(`[AgentManager] Entering subdirectory: ${fileName}`);
-                    await this.readAgentsRecursively(fullPath, type, agents, excludeKfc);
+                    await this.readAgentsRecursively(fullPath, type, agents);
                 }
             }
         } catch (error) {
@@ -212,7 +206,7 @@ export class AgentManager {
             const content = await fs.promises.readFile(filePath, 'utf8');
             
             // Extract YAML frontmatter
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
             if (!frontmatterMatch) {
                 this.outputChannel.appendLine(`[AgentManager] No frontmatter found in: ${filePath}`);
                 return null;
@@ -257,7 +251,7 @@ export class AgentManager {
      */
     checkAgentExists(agentName: string, location: 'project' | 'user'): boolean {
         const basePath = location === 'project' 
-            ? (this.workspaceRoot ? this.joinWorkspacePath('.claude', 'agents', 'kfc') : null)
+            ? (this.workspaceRoot ? this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc') : null)
             : path.join(os.homedir(), '.claude/agents');
 
         if (!basePath) {
@@ -274,7 +268,7 @@ export class AgentManager {
     getAgentPath(agentName: string): string | null {
         // Check project agents first
         if (this.workspaceRoot) {
-            const projectPath = this.joinWorkspacePath('.claude', 'agents', 'kfc', `${agentName}.md`);
+            const projectPath = this.joinWorkspacePath(AgentManager.PROJECT_DATA_DIR, 'agents', 'kfc', `${agentName}.md`);
             if (fs.existsSync(projectPath)) {
                 return projectPath;
             }

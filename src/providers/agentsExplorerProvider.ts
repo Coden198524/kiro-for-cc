@@ -107,7 +107,7 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
         if (workspaceFolder) {
             const projectAgentsPattern = new vscode.RelativePattern(
                 workspaceFolder,
-                '.claude/agents/**/*.md'
+                '.autocode/agents/**/*.md'
             );
 
             this.fileWatcher = vscode.workspace.createFileSystemWatcher(projectAgentsPattern);
@@ -159,7 +159,7 @@ class AgentItem extends vscode.TreeItem {
             this.tooltip = 'Loading agents...';
         } else if (contextValue === 'agent-provider-unsupported') {
             this.iconPath = new vscode.ThemeIcon('info');
-            this.tooltip = 'This view reads Claude Code agent files under .claude/agents.';
+            this.tooltip = 'This view reads project agent files under .autocode/agents.';
         } else if (contextValue === 'agent-group') {
             // Use icons similar to Steering Explorer
             if (groupType === 'user') {

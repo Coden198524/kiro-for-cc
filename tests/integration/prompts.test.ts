@@ -5,159 +5,112 @@ describe('Prompt Integration Tests', () => {
   let promptLoader: PromptLoader;
 
   beforeAll(() => {
-    // Initialize with real prompts
     promptLoader = PromptLoader.getInstance();
     promptLoader.initialize();
   });
 
   describe('Spec Creation Prompt', () => {
-    test('INT-01: 生成正确的 spec 创建 prompt', () => {
-      const variables = {
+    test('renders spec creation prompt', () => {
+      const result = promptLoader.renderPrompt('create-spec', {
         description: 'A user authentication system with OAuth support',
         workspacePath: '/Users/test/my-project',
-        specBasePath: '.claude/specs'
-      };
+        specBasePath: '.autocode/specs'
+      });
 
-      const result = promptLoader.renderPrompt('create-spec', variables);
-
-      // Verify the prompt contains key elements
       expect(result).toContain('A user authentication system with OAuth support');
       expect(result).toContain('/Users/test/my-project');
-      expect(result).toContain('.claude/specs');
-
-      // Check for system instructions
+      expect(result).toContain('.autocode/specs');
       expect(result).toContain('<system>');
       expect(result).toContain('spec workflow');
-
-      // Check for spec workflow mentions
       expect(result).toContain('Requirements');
       expect(result).toContain('Design');
       expect(result).toContain('Tasks');
     });
 
-    test('INT-02: 验证 spec prompt 包含目录创建指令', () => {
+    test('includes directory creation instruction', () => {
       const result = promptLoader.renderPrompt('create-spec', {
         description: 'test feature',
         workspacePath: '/test',
-        specBasePath: '.claude/specs'
+        specBasePath: '.autocode/specs'
       });
 
       expect(result).toMatch(/mkdir|create.*directory/i);
-      expect(result).toContain('.claude/specs');
+      expect(result).toContain('.autocode/specs');
     });
 
-    test('INT-02b: spec prompt preserves the user language', () => {
+    test('preserves the user language', () => {
       const result = promptLoader.renderPrompt('create-spec', {
-        description: '给 FlaxEngine 增加材质批量导入工具',
+        description: 'Add material batch import tool for FlaxEngine',
         workspacePath: '/test',
-        specBasePath: '.claude/specs'
+        specBasePath: '.autocode/specs'
       });
 
       expect(result).toContain('Detect the user');
       expect(result).toContain('Use that language');
       expect(result).toContain('yong-hu-ren-zheng');
-      expect(result).toContain('用户-认证');
-      expect(result).toContain('给 FlaxEngine 增加材质批量导入工具');
+      expect(result).toContain('Add material batch import tool for FlaxEngine');
     });
   });
 
   describe('Steering Prompts', () => {
-    describe('Init Steering', () => {
-      test('INT-03: 生成 steering 初始化 prompt', () => {
-        const result = promptLoader.renderPrompt('init-steering', {
-          steeringPath: '/Users/test/project/.claude/steering'
-        });
-
-        expect(result).toContain('steering documents');
-        expect(result).toContain('/Users/test/project/.claude/steering');
-        expect(result).toContain('codebase');
+    test('renders init steering prompt', () => {
+      const result = promptLoader.renderPrompt('init-steering', {
+        steeringPath: '/Users/test/project/.autocode/steering'
       });
 
-      test('INT-04: 验证 steering prompt 包含分析指令', () => {
-        const result = promptLoader.renderPrompt('init-steering', {
-          steeringPath: '/test/.claude/steering'
-        });
-
-        expect(result).toContain('analyzing');
-        expect(result).toContain('patterns');
-        expect(result).toContain('conventions');
-      });
-
-      test('INT-05: 验证 steering prompt 包含文件指令', () => {
-        const result = promptLoader.renderPrompt('init-steering', {
-          steeringPath: '/test/.claude/steering'
-        });
-
-        expect(result).toContain('file');
-        expect(result).toContain('.md');
-      });
+      expect(result).toContain('steering documents');
+      expect(result).toContain('/Users/test/project/.autocode/steering');
+      expect(result).toContain('codebase');
+      expect(result).toContain('analyzing');
+      expect(result).toContain('patterns');
+      expect(result).toContain('conventions');
+      expect(result).toContain('file');
+      expect(result).toContain('.md');
     });
 
-    describe('Create Custom Steering', () => {
-      test('INT-06: 生成自定义 steering 创建 prompt', () => {
-        const result = promptLoader.renderPrompt('create-custom-steering', {
-          description: 'Security best practices for API development',
-          steeringPath: '/test/project/.claude/steering'
-        });
-
-        expect(result).toContain('Security best practices for API development');
-        expect(result).toContain('steering document');
-        expect(result).toContain('/test/project/.claude/steering');
+    test('renders custom steering prompt', () => {
+      const result = promptLoader.renderPrompt('create-custom-steering', {
+        description: 'Security best practices for API development',
+        steeringPath: '/test/project/.autocode/steering'
       });
 
-      test('INT-07: 验证自定义 steering 文件命名指令', () => {
-        const result = promptLoader.renderPrompt('create-custom-steering', {
-          description: 'Test guidelines',
-          steeringPath: '/test/.claude/steering'
-        });
-
-        expect(result).toContain('Choose an appropriate kebab-case filename');
-        expect(result).toContain('.md');
-      });
+      expect(result).toContain('Security best practices for API development');
+      expect(result).toContain('steering document');
+      expect(result).toContain('/test/project/.autocode/steering');
+      expect(result).toContain('Choose an appropriate kebab-case filename');
+      expect(result).toContain('.md');
     });
 
-    describe('Refine Steering', () => {
-      test('INT-08: 生成 steering 精炼 prompt', () => {
-        const result = promptLoader.renderPrompt('refine-steering', {
-          filePath: '/test/project/.claude/steering/security.md'
-        });
-
-        expect(result).toContain('/test/project/.claude/steering/security.md');
-        expect(result).toContain('refine');
-        expect(result).toContain('Review and refine');
+    test('renders refine steering prompt', () => {
+      const result = promptLoader.renderPrompt('refine-steering', {
+        filePath: '/test/project/.autocode/steering/security.md'
       });
 
-      test('INT-09: 验证精炼 prompt 改进指南', () => {
-        const result = promptLoader.renderPrompt('refine-steering', {
-          filePath: '/test/.claude/steering/test.md'
-        });
-
-        expect(result).toContain('clear and direct');
-        expect(result).toContain('specific to this project');
-        expect(result).toContain('concrete examples');
-      });
+      expect(result).toContain('/test/project/.autocode/steering/security.md');
+      expect(result).toContain('refine');
+      expect(result).toContain('Review and refine');
+      expect(result).toContain('clear and direct');
+      expect(result).toContain('specific to this project');
+      expect(result).toContain('concrete examples');
     });
 
-    describe('Delete Steering', () => {
-      test('INT-10: 生成 steering 删除 prompt', () => {
-        const result = promptLoader.renderPrompt('delete-steering', {
-          documentName: 'security-practices.md',
-          steeringPath: '/test/.claude/steering'
-        });
-
-        expect(result).toContain('security-practices.md');
-        expect(result).toContain('delete');
-        expect(result).toContain('/test/.claude/steering');
+    test('renders delete steering prompt', () => {
+      const result = promptLoader.renderPrompt('delete-steering', {
+        documentName: 'security-practices.md',
+        steeringPath: '/test/.autocode/steering'
       });
+
+      expect(result).toContain('security-practices.md');
+      expect(result).toContain('delete');
+      expect(result).toContain('/test/.autocode/steering');
     });
   });
 
   describe('Prompt Structure Validation', () => {
-    test('INT-11: 验证所有 prompts 的 frontmatter', () => {
+    test('all prompts include valid frontmatter metadata', () => {
       const allPrompts = promptLoader.listPrompts();
 
       expect(allPrompts.length).toBeGreaterThan(0);
-
       allPrompts.forEach(promptMeta => {
         expect(promptMeta.id).toBeTruthy();
         expect(promptMeta.name).toBeTruthy();
@@ -165,36 +118,38 @@ describe('Prompt Integration Tests', () => {
       });
     });
 
-    test('INT-12: 验证所有 prompts 可成功渲染', () => {
+    test('all prompts render successfully', () => {
       const testCases = [
         {
           id: 'create-spec',
           variables: {
             description: 'test',
             workspacePath: '/test',
-            specBasePath: '.claude/specs'
+            specBasePath: '.autocode/specs'
           }
         },
         {
           id: 'impl-task',
           variables: {
-            taskFilePath: '/test/.claude/specs/demo/tasks.md',
+            taskFilePath: '/test/.autocode/specs/demo/tasks.md',
             taskDescription: '1. Implement demo',
             taskMode: 'resume',
-            taskModeInstruction: 'Resume this in-progress task.'
+            taskModeInstruction: 'Resume this in-progress task.',
+            languagePreference: 'Chinese (中文)',
+            languageInstruction: 'Use Chinese (中文) for all conversational responses.'
           }
         },
         {
           id: 'init-steering',
           variables: {
-            steeringPath: '/test/.claude/steering'
+            steeringPath: '/test/.autocode/steering'
           }
         },
         {
           id: 'create-custom-steering',
           variables: {
             description: 'test',
-            steeringPath: '/test/.claude/steering'
+            steeringPath: '/test/.autocode/steering'
           }
         },
         {
@@ -207,7 +162,7 @@ describe('Prompt Integration Tests', () => {
           id: 'delete-steering',
           variables: {
             documentName: 'test.md',
-            steeringPath: '/test/.claude/steering'
+            steeringPath: '/test/.autocode/steering'
           }
         }
       ];
@@ -219,20 +174,20 @@ describe('Prompt Integration Tests', () => {
   });
 
   describe('Prompt Content Quality', () => {
-    test('INT-13: 验证渲染内容不含模板错误', () => {
+    test('rendered content does not contain template artifacts', () => {
       const testCases = [
         {
           id: 'create-spec',
           variables: {
             description: 'test feature',
             workspacePath: '/project',
-            specBasePath: '.claude/specs'
+            specBasePath: '.autocode/specs'
           }
         },
         {
           id: 'init-steering',
           variables: {
-            steeringPath: '/project/.claude/steering'
+            steeringPath: '/project/.autocode/steering'
           }
         }
       ];
@@ -240,7 +195,6 @@ describe('Prompt Integration Tests', () => {
       testCases.forEach(({ id, variables }) => {
         const result = promptLoader.renderPrompt(id, variables);
 
-        // Check for common template errors
         expect(result).not.toContain('{{');
         expect(result).not.toContain('}}');
         expect(result).not.toContain('undefined');
@@ -248,20 +202,37 @@ describe('Prompt Integration Tests', () => {
       });
     });
 
-    test('INT-14: 验证 prompts 的结构一致性', () => {
+    test('main workflow prompts preserve expected structure', () => {
       const specPrompt = promptLoader.renderPrompt('create-spec', {
         description: 'test',
         workspacePath: '/test',
-        specBasePath: '.claude/specs'
+        specBasePath: '.autocode/specs'
       });
 
       const steeringPrompt = promptLoader.renderPrompt('init-steering', {
-        steeringPath: '/test/.claude/steering'
+        steeringPath: '/test/.autocode/steering'
       });
 
-      // Both should have system instructions
       expect(specPrompt).toMatch(/<system>[\s\S]*<\/system>/);
       expect(steeringPrompt).toMatch(/<system>[\s\S]*<\/system>/);
+    });
+  });
+
+  describe('Task Implementation Prompt', () => {
+    test('includes language preference instructions', () => {
+      const result = promptLoader.renderPrompt('impl-task', {
+        taskFilePath: '/test/.autocode/specs/demo/tasks.md',
+        taskDescription: '1. 实现中文任务',
+        taskMode: 'start',
+        taskModeInstruction: '从当前 spec 上下文开始执行这个任务。',
+        languagePreference: 'Chinese (中文)',
+        languageInstruction: 'Use Chinese (中文) for all conversational responses.'
+      });
+
+      expect(result).toContain('Language Preference: Chinese (中文)');
+      expect(result).toContain('Language rules:');
+      expect(result).toContain('Use Chinese (中文) for all conversational responses.');
+      expect(result).toContain('1. 实现中文任务');
     });
   });
 });

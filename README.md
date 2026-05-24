@@ -152,18 +152,18 @@ Create project-specific guidance:
 
 - Click ✨ icon to create custom steering
 - Generate initial docs (product, tech, structure)
-- Documents are stored in `.claude/steering/`
+- Documents are stored in `.autocode/steering/`
 
 ## Configuration
 
-Settings are stored in `.claude/settings/kfc-settings.json`:
+Settings are stored in `.autocode/settings/autocode-settings.json`:
 
 ```json
 {
   "paths": {
-    "specs": ".claude/specs",
-    "steering": ".claude/steering",
-    "settings": ".claude/settings"
+    "specs": ".autocode/specs",
+    "steering": ".autocode/steering",
+    "settings": ".autocode/settings"
   },
   "views": {
     "specs": {
@@ -190,7 +190,7 @@ Settings are stored in `.claude/settings/kfc-settings.json`:
 The extension creates the following structure in your workspace:
 
 ```plain
-.claude/                      # Extension data directory
+.autocode/                    # Extension data directory
 ├── specs/                    # Feature specifications
 │   └── {spec-name}/
 │       ├── requirements.md   # What to build
@@ -210,7 +210,7 @@ The extension creates the following structure in your workspace:
 │   ├── tech.md             # Technical standards
 │   └── structure.md        # Code organization
 ├── settings/
-│   └── kfc-settings.json   # Extension settings
+│   └── autocode-settings.json # Extension settings
 ```
 
 ## Development

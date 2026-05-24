@@ -35,6 +35,7 @@ export interface AgentInvocationRequest {
 export interface AgentInvocationResult {
     exitCode: number | undefined;
     output?: string;
+    stderr?: string;
 }
 
 export interface AgentRuntime {

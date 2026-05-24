@@ -29,10 +29,14 @@
   "mcp": {
     "customServers": []
   },
+  "spec": {
+    "autoMarkTaskDone": true,
+    "autoMarkTaskDoneMinConfidence": 0.8
+  },
   "paths": {
-    "specs": ".claude/specs",
-    "steering": ".claude/steering",
-    "settings": ".claude/settings"
+    "specs": ".autocode/specs",
+    "steering": ".autocode/steering",
+    "settings": ".autocode/settings"
   },
   "views": {
     "specs": {

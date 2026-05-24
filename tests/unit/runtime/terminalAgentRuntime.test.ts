@@ -130,6 +130,45 @@ describe('TerminalAgentRuntime', () => {
         expect((runtime as any).buildInteractiveCommand()).toBe('codex --model gpt-5.5');
     });
 
+    test('builds Claude interactive launch command with permission bypass', () => {
+        const runtime = createRuntime({
+            id: 'claude',
+            displayName: 'Claude Code',
+            command: 'claude',
+            capabilities: claudeCapabilities()
+        });
+
+        expect((runtime as any).buildInteractiveCommand()).toBe('claude --permission-mode bypassPermissions');
+    });
+
+    test('pastes prompt into Claude interactive terminal', async () => {
+        jest.useFakeTimers();
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'claude',
+            displayName: 'Claude Code',
+            command: 'claude',
+            capabilities: claudeCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'Feature Description: 支持中文 Spec',
+            title: 'KFC - Creating Spec'
+        });
+
+        jest.advanceTimersByTime(800);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
+
+        jest.advanceTimersByTime(1500);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
+    });
+
     test('submits interactive prompt with an explicit carriage return', () => {
         jest.useFakeTimers();
         (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);

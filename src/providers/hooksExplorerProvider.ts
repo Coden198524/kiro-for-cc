@@ -169,11 +169,11 @@ export class HooksExplorerProvider implements vscode.TreeDataProvider<HookItem> 
     private async getClaudeCodeHooks(): Promise<{name: string, enabled: boolean, config: any, configPath: string}[]> {
         const hooks: {name: string, enabled: boolean, config: any, configPath: string}[] = [];
         
-        // Check workspace .claude/settings.json first
+        // Check workspace .autocode/settings.json first
         if (vscode.workspace.workspaceFolders) {
             const workspaceConfigPath = path.join(
                 vscode.workspace.workspaceFolders[0].uri.fsPath,
-                '.claude',
+                '.autocode',
                 'settings.json'
             );
             if (fs.existsSync(workspaceConfigPath)) {
@@ -269,7 +269,7 @@ class HookItem extends vscode.TreeItem {
         
         // Set tooltips
         if (contextValue === 'provider-unsupported') {
-            this.tooltip = 'This view reads Claude Code hooks from .claude/settings.json.';
+            this.tooltip = 'This view reads project hooks from .autocode/settings.json and global Claude Code hooks.';
         } else if (contextValue === 'no-hooks') {
             this.tooltip = 'Configure hooks in Claude Code CLI';
         } else if (contextValue === 'hook-detail' && label.startsWith('Command:')) {

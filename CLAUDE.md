@@ -67,16 +67,16 @@ src/
 
 ### Data Structure
 
-User data is stored in workspace `.claude/` directory:
+User data is stored in workspace `.autocode/` directory:
 
 ```plain
-.claude/
+.autocode/
 ├── specs/{spec-name}/
 │   ├── requirements.md
 │   ├── design.md
 │   └── tasks.md
 ├── steering/*.md
-└── settings/kfc-settings.json
+└── settings/autocode-settings.json
 ```
 
 ## Spec Workflow Implementation

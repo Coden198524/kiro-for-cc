@@ -69,8 +69,8 @@ If the requirements clarification process seems to be going in circles or not ma
 
 ## **Important Constraints**
 
-- The directory '.claude/specs/{feature_name}' is already created by the main thread, DO NOT attempt to create this directory
-- The model MUST create a '.claude/specs/{feature_name}/requirements_{output_suffix}.md' file if it doesn't already exist
+- The directory '.autocode/specs/{feature_name}' is already created by the main thread, DO NOT attempt to create this directory
+- The model MUST create a '.autocode/specs/{feature_name}/requirements_{output_suffix}.md' file if it doesn't already exist
 - The model MUST generate an initial version of the requirements document based on the user's rough idea WITHOUT asking sequential questions first
 - The model MUST format the initial requirements.md document with:
 - A clear introduction section that summarizes the feature
