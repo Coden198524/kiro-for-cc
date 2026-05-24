@@ -5,7 +5,7 @@ import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
 import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
-import { parseSpecTaskLine } from './taskStatus';
+import { hasChildSpecTasks, parseSpecTaskLine } from './taskStatus';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
@@ -281,6 +281,10 @@ export class SpecManager {
                 continue;
             }
 
+            if (hasChildSpecTasks(this.getDocumentLines(document), lineNumber)) {
+                continue;
+            }
+
             tasks.push({
                 lineNumber,
                 description: task.description,
@@ -290,6 +294,14 @@ export class SpecManager {
         }
 
         return tasks;
+    }
+
+    private getDocumentLines(document: vscode.TextDocument): string[] {
+        const lines: string[] = [];
+        for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
+            lines.push(document.lineAt(lineNumber).text);
+        }
+        return lines;
     }
 
     private buildAllTasksPrompt(

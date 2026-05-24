@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { parseSpecTaskLine } from '../features/spec/taskStatus';
+import { hasChildSpecTasks, parseSpecTaskLine } from '../features/spec/taskStatus';
 import { ConfigManager } from '../utils/configManager';
 
 export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
@@ -28,8 +28,8 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
         const codeLenses: vscode.CodeLens[] = [];
         const lines = document.getText().split(/\r?\n/);
         const runnableTasks = lines
-            .map(line => parseSpecTaskLine(line))
-            .filter(task => task && task.status !== 'completed');
+            .map((line, lineNumber) => ({ lineNumber, task: parseSpecTaskLine(line) }))
+            .filter(item => item.task && item.task.status !== 'completed' && !hasChildSpecTasks(lines, item.lineNumber));
 
         if (runnableTasks.length > 0) {
             codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {

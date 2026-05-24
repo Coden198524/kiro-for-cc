@@ -53,6 +53,24 @@ describe('SpecTaskCodeLensProvider', () => {
         expect(provider.provideCodeLenses(document, {} as any)).toEqual([]);
     });
 
+    test('start all count excludes parent tasks with child tasks', async () => {
+        const provider = new SpecTaskCodeLensProvider();
+        await Promise.resolve();
+
+        const document = createDocument([
+            '# Implementation Plan',
+            '- [ ] 1. Parent task',
+            '- [ ] 1.1 First child',
+            '- [ ] 1.2 Second child',
+            '- [ ] 2. Standalone task'
+        ].join('\n'));
+
+        const lenses = provider.provideCodeLenses(document, {} as any) as vscode.CodeLens[];
+        const commands = lenses.map(lens => (lens as any).command);
+
+        expect(commands[0]?.title).toBe('Start All Tasks (3)');
+    });
+
     function createDocument(content: string, fileName = '/mock/workspace/.autocode/specs/demo/tasks.md'): vscode.TextDocument {
         return {
             fileName,

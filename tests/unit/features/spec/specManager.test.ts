@@ -122,6 +122,43 @@ describe('SpecManager', () => {
         ]);
     });
 
+    test('start all tasks skips parent tasks when numbered child tasks exist', async () => {
+        let capturedPrompt = '';
+        const runtime: AgentRuntime = {
+            provider,
+            refreshProvider: jest.fn(),
+            invokeInteractive: jest.fn(async (request) => {
+                capturedPrompt = request.prompt;
+                return vscode.window.createTerminal('mock');
+            }),
+            invokeHeadless: jest.fn(),
+            renameTerminal: jest.fn()
+        };
+        const document = createTaskDocument([
+            '# Implementation Plan',
+            '- [ ] 1. Parent task',
+            '- [ ] 1.1 First child',
+            '- [ ] 1.2 Second child',
+            '- [ ] 2. Standalone task'
+        ]);
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(document);
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
+
+        expect(capturedPrompt).not.toContain('Line 2: 1. Parent task');
+        expect(capturedPrompt).toContain('Line 3: 1.1 First child');
+        expect(capturedPrompt).toContain('Line 4: 1.2 Second child');
+        expect(capturedPrompt).toContain('Line 5: 2. Standalone task');
+        expect(run?.completionSignalPaths?.map(item => item.replace(/\\/g, '/'))).toEqual([
+            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-3.json',
+            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-4.json',
+            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-5.json'
+        ]);
+    });
+
     function createTaskDocument(lines: string[]): vscode.TextDocument {
         return {
             lineCount: lines.length,

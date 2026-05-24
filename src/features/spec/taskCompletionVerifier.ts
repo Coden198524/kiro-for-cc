@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { AgentRuntime } from '../../runtime/agentRuntime';
 import { getRuntimeValue } from '../../runtime/runtimeSettings';
-import { parseSpecTaskLine, replaceSpecTaskStatus } from './taskStatus';
+import { buildSpecTaskStatusUpdates, parseSpecTaskLine } from './taskStatus';
 import { TaskSessionManager } from './taskSessionManager';
 
 interface TaskCompletionVerification {
@@ -62,13 +62,16 @@ export class TaskCompletionVerifier {
             return false;
         }
 
-        const marked = await this.markTaskDone(request.taskFilePath, request.lineNumber);
-        if (!marked) {
+        const markedTasks = await this.markTaskDone(request.taskFilePath, request.lineNumber);
+        if (markedTasks.length === 0) {
             this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
             return false;
         }
 
         await this.taskSessionManager.markCompleted(request.taskFilePath, request.lineNumber, request.taskDescription);
+        for (const parentTask of markedTasks.filter(task => task.lineNumber !== request.lineNumber)) {
+            await this.taskSessionManager.markCompleted(request.taskFilePath, parentTask.lineNumber, parentTask.description);
+        }
         this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${request.taskDescription}`);
         vscode.window.showInformationMessage(`Task verified and marked done: ${request.taskDescription}`);
         return true;
@@ -148,26 +151,41 @@ export class TaskCompletionVerifier {
         return document.lineAt(lineNumber).text;
     }
 
-    private async markTaskDone(taskFilePath: string, lineNumber: number): Promise<boolean> {
+    private async markTaskDone(taskFilePath: string, lineNumber: number): Promise<Array<{ lineNumber: number; description: string }>> {
         const uri = vscode.Uri.file(taskFilePath);
         const document = await vscode.workspace.openTextDocument(uri);
         if (lineNumber < 0 || lineNumber >= document.lineCount) {
-            return false;
+            return [];
         }
 
-        const line = document.lineAt(lineNumber);
-        const newLine = replaceSpecTaskStatus(line.text, 'completed');
-        if (!newLine || newLine === line.text) {
-            return false;
+        const lines = this.getDocumentLines(document);
+        const updates = buildSpecTaskStatusUpdates(lines, lineNumber, 'completed');
+        if (updates.length === 0) {
+            return [];
         }
 
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(uri, new vscode.Range(lineNumber, 0, lineNumber, line.text.length), newLine);
+        for (const update of updates) {
+            edit.replace(uri, new vscode.Range(update.lineNumber, 0, update.lineNumber, update.oldText.length), update.newText);
+        }
         const applied = await vscode.workspace.applyEdit(edit);
         if (applied) {
             await document.save();
         }
 
-        return applied;
+        return applied
+            ? updates.map(update => ({
+                lineNumber: update.lineNumber,
+                description: update.task.description
+            }))
+            : [];
+    }
+
+    private getDocumentLines(document: vscode.TextDocument): string[] {
+        const lines: string[] = [];
+        for (let i = 0; i < document.lineCount; i++) {
+            lines.push(document.lineAt(i).text);
+        }
+        return lines;
     }
 }

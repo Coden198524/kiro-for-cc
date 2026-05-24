@@ -18,7 +18,7 @@ import { NotificationUtils } from './utils/notificationUtils';
 import { SpecTaskCodeLensProvider } from './providers/specTaskCodeLensProvider';
 import { AgentRuntime } from './runtime/agentRuntime';
 import { TerminalAgentRuntime } from './runtime/terminalAgentRuntime';
-import { parseSpecTaskLine, replaceSpecTaskStatus, SpecTaskStatus } from './features/spec/taskStatus';
+import { buildSpecTaskStatusUpdates, hasChildSpecTasks, parseSpecTaskLine, replaceSpecTaskStatus, SpecTaskStatus } from './features/spec/taskStatus';
 import { TaskSessionManager } from './features/spec/taskSessionManager';
 import { TaskCompletionVerifier } from './features/spec/taskCompletionVerifier';
 
@@ -345,7 +345,8 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         vscode.commands.registerCommand('kfc.spec.implTask', async (documentUri: vscode.Uri, lineNumber: number, taskDescription: string, resume = false) => {
             outputChannel.appendLine(`[Task Execute] Line ${lineNumber + 1}: ${taskDescription}`);
 
-            const task = await updateTaskLineStatus(documentUri, lineNumber, 'inProgress');
+            const result = await updateTaskLineStatus(documentUri, lineNumber, 'inProgress');
+            const task = result?.task;
             if (task?.status === 'completed') {
                 vscode.window.showInformationMessage(`Task is already completed: ${task.description}`);
                 return;
@@ -371,13 +372,17 @@ function registerCommands(context: vscode.ExtensionContext, specExplorer: SpecEx
         vscode.commands.registerCommand('kfc.spec.markTaskDone', async (documentUri: vscode.Uri, lineNumber: number) => {
             outputChannel.appendLine(`[Task Complete] Line ${lineNumber + 1}`);
 
-            const task = await updateTaskLineStatus(documentUri, lineNumber, 'completed');
+            const result = await updateTaskLineStatus(documentUri, lineNumber, 'completed');
+            const task = result?.task;
             if (!task) {
                 vscode.window.showWarningMessage('Could not find a task checkbox on the selected line.');
                 return;
             }
 
             await taskSessionManager.markCompleted(documentUri.fsPath, lineNumber, task.description);
+            for (const parent of result.parentTasks) {
+                await taskSessionManager.markCompleted(documentUri.fsPath, parent.lineNumber, parent.description);
+            }
             vscode.window.showInformationMessage(`Task marked done: ${task.description}`);
         }),
         vscode.commands.registerCommand('kfc.spec.viewTaskSession', async (documentUri: vscode.Uri, lineNumber: number, taskDescription?: string) => {
@@ -562,27 +567,39 @@ async function updateTaskLineStatus(documentUri: vscode.Uri, lineNumber: number,
     }
 
     if (task.status === 'completed' && status !== 'completed') {
-        return task;
+        return { task, parentTasks: [] };
     }
 
-    const newLine = replaceSpecTaskStatus(line.text, status);
-    if (!newLine || newLine === line.text) {
-        return task;
+    const updates = status === 'completed'
+        ? buildSpecTaskStatusUpdates(getDocumentLines(document), lineNumber, status)
+        : buildSingleTaskStatusUpdate(line.text, lineNumber, status);
+    if (updates.length === 0) {
+        return { task, parentTasks: [] };
     }
 
     const edit = new vscode.WorkspaceEdit();
-    const range = new vscode.Range(lineNumber, 0, lineNumber, line.text.length);
-    edit.replace(documentUri, range, newLine);
+    for (const update of updates) {
+        edit.replace(documentUri, new vscode.Range(update.lineNumber, 0, update.lineNumber, update.oldText.length), update.newText);
+    }
     const applied = await vscode.workspace.applyEdit(edit);
     if (applied) {
         await document.save();
     }
 
-    return task;
+    return {
+        task,
+        parentTasks: updates
+            .filter(update => update.lineNumber !== lineNumber)
+            .map(update => ({
+                lineNumber: update.lineNumber,
+                description: update.task.description
+            }))
+    };
 }
 
 async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<void> {
     const document = await vscode.workspace.openTextDocument(documentUri);
+    const lines = getDocumentLines(document);
     const edit = new vscode.WorkspaceEdit();
     let changed = false;
 
@@ -590,6 +607,10 @@ async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<voi
         const line = document.lineAt(lineNumber);
         const task = parseSpecTaskLine(line.text);
         if (!task || task.status !== 'pending') {
+            continue;
+        }
+
+        if (hasChildSpecTasks(lines, lineNumber)) {
             continue;
         }
 
@@ -615,6 +636,29 @@ async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<voi
 async function readTaskLine(documentUri: vscode.Uri, lineNumber: number) {
     const document = await vscode.workspace.openTextDocument(documentUri);
     return parseSpecTaskLine(document.lineAt(lineNumber).text);
+}
+
+function getDocumentLines(document: vscode.TextDocument): string[] {
+    const lines: string[] = [];
+    for (let i = 0; i < document.lineCount; i++) {
+        lines.push(document.lineAt(i).text);
+    }
+    return lines;
+}
+
+function buildSingleTaskStatusUpdate(lineText: string, lineNumber: number, status: SpecTaskStatus) {
+    const task = parseSpecTaskLine(lineText);
+    const newText = replaceSpecTaskStatus(lineText, status);
+    if (!task || !newText || newText === lineText) {
+        return [];
+    }
+
+    return [{
+        lineNumber,
+        oldText: lineText,
+        newText,
+        task
+    }];
 }
 
 function registerAutoTaskCompletion(

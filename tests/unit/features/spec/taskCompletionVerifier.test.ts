@@ -8,24 +8,26 @@ describe('TaskCompletionVerifier', () => {
     let runtime: AgentRuntime;
     let taskSessionManager: TaskSessionManager;
     let verifier: TaskCompletionVerifier;
-    let documentLine = '- [-] 1. Implement feature';
+    let documentLines: string[];
     let saved = false;
 
     beforeEach(() => {
         jest.clearAllMocks();
-        documentLine = '- [-] 1. Implement feature';
+        documentLines = ['- [-] 1. Implement feature'];
         saved = false;
 
         (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(async () => ({
-            lineCount: 1,
-            lineAt: jest.fn(() => ({ text: documentLine })),
+            lineCount: documentLines.length,
+            lineAt: jest.fn((lineNumber: number) => ({ text: documentLines[lineNumber] })),
             save: jest.fn(async () => {
                 saved = true;
                 return true;
             })
         }));
         (vscode.workspace.applyEdit as jest.Mock).mockImplementation(async (edit: any) => {
-            documentLine = edit.entries[0].newText;
+            for (const entry of edit.entries) {
+                documentLines[entry.range.start.line] = entry.newText;
+            }
             return true;
         });
         (vscode.workspace as any).getConfiguration = jest.fn(() => ({
@@ -80,7 +82,7 @@ describe('TaskCompletionVerifier', () => {
         });
 
         expect(result).toBe(true);
-        expect(documentLine).toBe('- [x] 1. Implement feature');
+        expect(documentLines[0]).toBe('- [x] 1. Implement feature');
         expect(saved).toBe(true);
         expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
     });
@@ -98,7 +100,34 @@ describe('TaskCompletionVerifier', () => {
         });
 
         expect(result).toBe(false);
-        expect(documentLine).toBe('- [-] 1. Implement feature');
+        expect(documentLines[0]).toBe('- [-] 1. Implement feature');
         expect(taskSessionManager.markCompleted).not.toHaveBeenCalled();
+    });
+
+    test('marks parent task done when the verified child completes all siblings', async () => {
+        documentLines = [
+            '- [-] 1. Parent task',
+            '- [x] 1.1 First child',
+            '- [-] 1.2 Second child'
+        ];
+        (runtime.invokeHeadless as jest.Mock).mockResolvedValue({
+            exitCode: 0,
+            output: '{"completed":true,"confidence":0.91,"summary":"done","evidence":["tests pass"],"missing":[]}'
+        });
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1.2 Second child'
+        });
+
+        expect(result).toBe(true);
+        expect(documentLines).toEqual([
+            '- [x] 1. Parent task',
+            '- [x] 1.1 First child',
+            '- [x] 1.2 Second child'
+        ]);
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 2, '1.2 Second child');
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Parent task');
     });
 });
