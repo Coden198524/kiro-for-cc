@@ -31,6 +31,13 @@ let taskSessionManager: TaskSessionManager;
 let taskCompletionVerifier: TaskCompletionVerifier;
 export let outputChannel: vscode.OutputChannel;
 
+interface TaskCompletionSignalPayload {
+    status?: string;
+    taskFilePath?: string;
+    lineNumber?: number;
+    taskDescription?: string;
+}
+
 // 导出 getter 函数供其他模块使用
 export function getPermissionManager(): PermissionManager {
     return permissionManager;
@@ -732,23 +739,33 @@ function registerAutoTaskCompletionSignals(
             return;
         }
 
-        completedSignals.add(completionSignalPath);
-        const lineNumber = parseCompletionSignalLineNumber(completionSignalPath);
+        const signalPayload = await readTaskCompletionSignal(completionSignalPath);
+        if (signalPayload.status && signalPayload.status !== 'ready_for_verification') {
+            outputChannel.appendLine(`[Task Complete] Ignoring completion signal with status ${signalPayload.status}: ${completionSignalPath}`);
+            return;
+        }
+
+        const lineNumber = typeof signalPayload.lineNumber === 'number'
+            ? signalPayload.lineNumber
+            : parseCompletionSignalLineNumber(completionSignalPath);
         if (lineNumber === undefined) {
             outputChannel.appendLine(`[Task Complete] Could not infer task line from signal path: ${completionSignalPath}`);
             return;
         }
 
-        const task = await readTaskLine(vscode.Uri.file(taskFilePath), lineNumber);
-        if (!task) {
-            outputChannel.appendLine(`[Task Complete] Could not read task line ${lineNumber + 1} for signal: ${completionSignalPath}`);
+        const effectiveTaskFilePath = signalPayload.taskFilePath || taskFilePath;
+        const task = await readTaskLine(vscode.Uri.file(effectiveTaskFilePath), lineNumber);
+        const taskDescription = signalPayload.taskDescription || task?.description;
+        if (!taskDescription) {
+            outputChannel.appendLine(`[Task Complete] Could not resolve task description for signal: ${completionSignalPath}`);
             return;
         }
 
+        completedSignals.add(completionSignalPath);
         await taskCompletionVerifier.verifyAndMarkDone({
-            taskFilePath,
+            taskFilePath: effectiveTaskFilePath,
             lineNumber,
-            taskDescription: task.description
+            taskDescription
         });
     };
 
@@ -775,6 +792,48 @@ function parseCompletionSignalLineNumber(completionSignalPath: string): number |
     }
 
     return Number(match[1]) - 1;
+}
+
+async function readTaskCompletionSignal(completionSignalPath: string): Promise<TaskCompletionSignalPayload> {
+    try {
+        const content = await vscode.workspace.fs.readFile(vscode.Uri.file(completionSignalPath));
+        const text = Buffer.from(content).toString();
+        return parseTaskCompletionSignal(text);
+    } catch (error) {
+        outputChannel.appendLine(`[Task Complete] Failed to read completion signal ${completionSignalPath}: ${error}`);
+        return {};
+    }
+}
+
+function parseTaskCompletionSignal(text: string): TaskCompletionSignalPayload {
+    try {
+        const parsed = JSON.parse(text) as Partial<TaskCompletionSignalPayload>;
+        return {
+            status: typeof parsed.status === 'string' ? parsed.status : undefined,
+            taskFilePath: typeof parsed.taskFilePath === 'string' ? parsed.taskFilePath : undefined,
+            lineNumber: typeof parsed.lineNumber === 'number' ? parsed.lineNumber : undefined,
+            taskDescription: typeof parsed.taskDescription === 'string' ? parsed.taskDescription : undefined
+        };
+    } catch (error) {
+        outputChannel.appendLine(`[Task Complete] Failed to parse completion signal JSON, using best-effort fields: ${error}`);
+        return parseLooseTaskCompletionSignal(text);
+    }
+}
+
+function parseLooseTaskCompletionSignal(text: string): TaskCompletionSignalPayload {
+    const lineNumberMatch = text.match(/"lineNumber"\s*:\s*(\d+)/);
+    return {
+        status: matchJsonStringField(text, 'status'),
+        taskFilePath: matchJsonStringField(text, 'taskFilePath'),
+        lineNumber: lineNumberMatch ? Number(lineNumberMatch[1]) : undefined,
+        taskDescription: matchJsonStringField(text, 'taskDescription')
+    };
+}
+
+function matchJsonStringField(text: string, fieldName: string): string | undefined {
+    const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = text.match(new RegExp(`"${escapedFieldName}"\\s*:\\s*"([^"\\r\\n]*)`));
+    return match?.[1];
 }
 
 function registerTaskCompletionSignalWatcher(completionSignalPath: string, onSignal: () => Promise<void>): vscode.Disposable {
@@ -804,6 +863,12 @@ function registerTaskCompletionSignalWatcher(completionSignalPath: string, onSig
 
     watcher.onDidCreate(trigger);
     watcher.onDidChange(trigger);
+    setTimeout(() => {
+        vscode.workspace.fs.stat(signalUri).then(
+            () => trigger(signalUri),
+            () => undefined
+        );
+    }, 0);
 
     return {
         dispose: () => {

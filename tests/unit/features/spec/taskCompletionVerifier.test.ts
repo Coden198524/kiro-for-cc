@@ -87,6 +87,32 @@ describe('TaskCompletionVerifier', () => {
         expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
     });
 
+    test('resolves moved task line by description before marking done', async () => {
+        documentLines = [
+            '- [-] 1. First task',
+            '  - Details for first task',
+            '- [-] 2. Second task'
+        ];
+        (runtime.invokeHeadless as jest.Mock).mockResolvedValue({
+            exitCode: 0,
+            output: '{"completed":true,"confidence":0.92,"summary":"done","evidence":["tests pass"],"missing":[]}'
+        });
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 0,
+            taskDescription: '2. Second task'
+        });
+
+        expect(result).toBe(true);
+        expect(documentLines).toEqual([
+            '- [-] 1. First task',
+            '  - Details for first task',
+            '- [x] 2. Second task'
+        ]);
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 2, '2. Second task');
+    });
+
     test('does not mark done when model confidence is too low', async () => {
         (runtime.invokeHeadless as jest.Mock).mockResolvedValue({
             exitCode: 0,

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { AgentRuntime } from '../../runtime/agentRuntime';
 import { getRuntimeValue } from '../../runtime/runtimeSettings';
-import { buildSpecTaskStatusUpdates, parseSpecTaskLine } from './taskStatus';
+import { buildSpecTaskStatusUpdates, ParsedSpecTaskLine, parseSpecTaskLine } from './taskStatus';
 import { TaskSessionManager } from './taskSessionManager';
 
 interface TaskCompletionVerification {
@@ -36,14 +36,18 @@ export class TaskCompletionVerifier {
             return false;
         }
 
-        const currentTask = await this.readTaskLine(request.taskFilePath, request.lineNumber);
-        const parsedTask = currentTask ? parseSpecTaskLine(currentTask) : undefined;
-        if (!parsedTask || parsedTask.status !== 'inProgress') {
+        const resolvedTask = await this.resolveTaskLine(request);
+        if (!resolvedTask || resolvedTask.task.status !== 'inProgress') {
             this.outputChannel.appendLine('[TaskVerifier] Task is no longer in progress; skipping verification.');
             return false;
         }
 
-        const prompt = this.buildVerificationPrompt(request);
+        const resolvedRequest = {
+            ...request,
+            lineNumber: resolvedTask.lineNumber,
+            taskDescription: resolvedTask.task.description
+        };
+        const prompt = this.buildVerificationPrompt(resolvedRequest);
         const result = await this.agentRuntime.invokeHeadless({
             prompt,
             title: 'AutoCode - Verify Task Completion',
@@ -62,18 +66,18 @@ export class TaskCompletionVerifier {
             return false;
         }
 
-        const markedTasks = await this.markTaskDone(request.taskFilePath, request.lineNumber);
+        const markedTasks = await this.markTaskDone(resolvedRequest.taskFilePath, resolvedRequest.lineNumber);
         if (markedTasks.length === 0) {
             this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
             return false;
         }
 
-        await this.taskSessionManager.markCompleted(request.taskFilePath, request.lineNumber, request.taskDescription);
-        for (const parentTask of markedTasks.filter(task => task.lineNumber !== request.lineNumber)) {
-            await this.taskSessionManager.markCompleted(request.taskFilePath, parentTask.lineNumber, parentTask.description);
+        await this.taskSessionManager.markCompleted(resolvedRequest.taskFilePath, resolvedRequest.lineNumber, resolvedRequest.taskDescription);
+        for (const parentTask of markedTasks.filter(task => task.lineNumber !== resolvedRequest.lineNumber)) {
+            await this.taskSessionManager.markCompleted(resolvedRequest.taskFilePath, parentTask.lineNumber, parentTask.description);
         }
-        this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${request.taskDescription}`);
-        vscode.window.showInformationMessage(`Task verified and marked done: ${request.taskDescription}`);
+        this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${resolvedRequest.taskDescription}`);
+        vscode.window.showInformationMessage(`Task verified and marked done: ${resolvedRequest.taskDescription}`);
         return true;
     }
 
@@ -142,13 +146,34 @@ export class TaskCompletionVerifier {
         return match?.[0];
     }
 
-    private async readTaskLine(taskFilePath: string, lineNumber: number): Promise<string | undefined> {
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(taskFilePath));
-        if (lineNumber < 0 || lineNumber >= document.lineCount) {
-            return undefined;
+    private async resolveTaskLine(request: VerifyAndMarkTaskDoneRequest): Promise<{ lineNumber: number; task: ParsedSpecTaskLine } | undefined> {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(request.taskFilePath));
+        if (request.lineNumber >= 0 && request.lineNumber < document.lineCount) {
+            const task = parseSpecTaskLine(document.lineAt(request.lineNumber).text);
+            if (task && this.isSameTask(task.description, request.taskDescription)) {
+                return {
+                    lineNumber: request.lineNumber,
+                    task
+                };
+            }
         }
 
-        return document.lineAt(lineNumber).text;
+        for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
+            const task = parseSpecTaskLine(document.lineAt(lineNumber).text);
+            if (task && this.isSameTask(task.description, request.taskDescription)) {
+                this.outputChannel.appendLine(`[TaskVerifier] Resolved moved task line ${request.lineNumber + 1} -> ${lineNumber + 1}: ${request.taskDescription}`);
+                return {
+                    lineNumber,
+                    task
+                };
+            }
+        }
+
+        return undefined;
+    }
+
+    private isSameTask(actual: string, expected: string): boolean {
+        return actual.trim() === expected.trim();
     }
 
     private async markTaskDone(taskFilePath: string, lineNumber: number): Promise<Array<{ lineNumber: number; description: string }>> {
