@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { AgentsExplorerProvider } from '../../../src/providers/agentsExplorerProvider';
 import { AgentManager, AgentInfo } from '../../../src/features/agents/agentManager';
+import { AgentProviderConfig } from '../../../src/runtime/agentRuntime';
 
 // Mock vscode
 jest.mock('vscode');
@@ -124,7 +125,7 @@ describe('AgentsExplorerProvider', () => {
         test('TC-AEP-001: 构造函数初始化', () => {
             // Assert
             expect(provider).toBeDefined();
-            expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(2);
+            expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(4);
         });
     });
 
@@ -168,6 +169,43 @@ describe('AgentsExplorerProvider', () => {
             // Assert normal state
             expect(normalChildren).toHaveLength(2);
             expect(normalChildren[0].label).toBe('User Agents');
+        });
+
+        test('TC-AEP-003b: Codex provider reads Codex agent directories', async () => {
+            // Arrange
+            provider = new AgentsExplorerProvider(
+                mockContext,
+                mockAgentManager,
+                mockOutputChannel,
+                providerConfig('codex', true)
+            );
+            mockAgentManager.getAgentList.mockResolvedValue([]);
+
+            // Act
+            const children = await provider.getChildren();
+            const projectGroup = children[1];
+            await provider.getChildren(projectGroup);
+
+            // Assert
+            expect(mockAgentManager.getAgentList).toHaveBeenCalledWith('project', 'codex');
+        });
+
+        test('TC-AEP-003c: shows unsupported message for providers without expert agents', async () => {
+            // Arrange
+            provider = new AgentsExplorerProvider(
+                mockContext,
+                mockAgentManager,
+                mockOutputChannel,
+                providerConfig('deepseek', false)
+            );
+
+            // Act
+            const children = await provider.getChildren();
+
+            // Assert
+            expect(children).toHaveLength(1);
+            expect(children[0].label).toBe('Expert agents are unavailable for DeepSeek');
+            expect(children[0].contextValue).toBe('agent-provider-unsupported');
         });
 
         test('TC-AEP-004: 获取组内的 agents', async () => {
@@ -273,7 +311,7 @@ describe('AgentsExplorerProvider', () => {
 
         test('TC-AEP-009: 设置用户 agents 文件监视', () => {
             // Assert
-            expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(2);
+            expect(vscode.workspace.createFileSystemWatcher).toHaveBeenCalledTimes(4);
         });
 
         test('TC-AEP-010: 文件变化触发刷新', () => {
@@ -388,7 +426,8 @@ describe('AgentsExplorerProvider', () => {
         test('TC-AEP-014: 处理文件监视器创建失败', () => {
             // Arrange
             (vscode.workspace.createFileSystemWatcher as jest.Mock)
-                .mockImplementationOnce(() => mockFileWatcher) // First call succeeds
+                .mockImplementationOnce(() => mockFileWatcher)
+                .mockImplementationOnce(() => mockFileWatcher)
                 .mockImplementationOnce(() => {
                     throw new Error('Watcher creation failed');
                 });
@@ -410,7 +449,25 @@ describe('AgentsExplorerProvider', () => {
             provider.dispose();
 
             // Assert
-            expect(mockFileWatcher.dispose).toHaveBeenCalledTimes(2); // Both watchers
+            expect(mockFileWatcher.dispose).toHaveBeenCalledTimes(4);
         });
     });
+
+    function providerConfig(id: 'codex' | 'deepseek', expertAgents: boolean): AgentProviderConfig {
+        return {
+            id,
+            displayName: id === 'codex' ? 'Codex' : 'DeepSeek',
+            command: id,
+            capabilities: {
+                permissions: false,
+                expertAgents,
+                claudeAgents: false,
+                claudeHooks: false,
+                claudeMcp: false,
+                extensionMcp: true,
+                headless: true,
+                interactiveSpecWorkflow: true
+            }
+        };
+    }
 });

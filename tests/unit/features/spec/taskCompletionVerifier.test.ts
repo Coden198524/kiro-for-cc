@@ -48,6 +48,7 @@ describe('TaskCompletionVerifier', () => {
                 command: 'codex',
                 capabilities: {
                     permissions: false,
+                    expertAgents: true,
                     claudeAgents: false,
                     claudeHooks: false,
                     claudeMcp: false,

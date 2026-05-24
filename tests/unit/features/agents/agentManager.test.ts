@@ -45,7 +45,8 @@ describe('AgentManager', () => {
             stat: jest.fn(),
             copy: jest.fn().mockResolvedValue(undefined),
             readDirectory: jest.fn(),
-            readFile: jest.fn()
+            readFile: jest.fn(),
+            writeFile: jest.fn().mockResolvedValue(undefined)
         };
         (vscode.Uri as any).file = jest.fn((filePath: string) => ({ fsPath: filePath }));
         (os.homedir as jest.Mock).mockReturnValue('/home/test');
@@ -63,6 +64,13 @@ describe('AgentManager', () => {
 
     test('initializes built-in project agents under .autocode', async () => {
         const targetPath = path.join(mockWorkspaceRoot, '.autocode', 'agents', 'kfc');
+        const codexTargetPath = path.join(mockWorkspaceRoot, '.codex', 'agents');
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(`---
+name: spec-requirements
+description: Requirements agent
+---
+
+Use requirements instructions.`);
         (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('File not found'));
 
         await agentManager.initializeBuiltInAgents();
@@ -70,7 +78,17 @@ describe('AgentManager', () => {
         expect(vscode.workspace.fs.createDirectory).toHaveBeenCalledWith(
             expect.objectContaining({ fsPath: targetPath })
         );
+        expect(vscode.workspace.fs.createDirectory).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: codexTargetPath })
+        );
         expect(vscode.workspace.fs.copy).toHaveBeenCalledTimes(8);
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: path.join(codexTargetPath, 'spec-requirements.toml') }),
+            expect.any(Buffer)
+        );
+        const codexAgentWrite = (vscode.workspace.fs.writeFile as jest.Mock).mock.calls
+            .find(([uri]) => uri.fsPath.endsWith('spec-requirements.toml'));
+        expect(codexAgentWrite[1].toString()).toContain('developer_instructions = """');
         expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
             expect.stringContaining('[AgentManager] Copied agent')
         );
@@ -78,11 +96,17 @@ describe('AgentManager', () => {
 
     test('skips existing built-in agents', async () => {
         (vscode.workspace.fs.stat as jest.Mock).mockImplementation((uri) => {
-            if (uri.fsPath.includes('spec-requirements') || uri.fsPath.includes('spec-design')) {
+            if (uri.fsPath.includes('spec-requirements') || uri.fsPath.includes('spec-design') || uri.fsPath.endsWith('.codex/config.toml')) {
                 return Promise.resolve({ type: vscode.FileType.File });
             }
             return Promise.reject(new Error('Not found'));
         });
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(`---
+name: Test Agent
+description: Test
+---
+
+Instructions`);
 
         await agentManager.initializeBuiltInAgents();
 
@@ -105,7 +129,7 @@ Agent content here`;
         ]);
         (fs.promises.readFile as jest.Mock).mockResolvedValue(mockAgentContent);
 
-        const agents = await agentManager.getAgentList('project');
+        const agents = await agentManager.getAgentList('project', 'claude');
 
         expect(agents).toHaveLength(1);
         expect(agents[0]).toMatchObject({
@@ -143,7 +167,7 @@ Agent content here`;
         });
         (fs.promises.readFile as jest.Mock).mockResolvedValue(mockAgentContent);
 
-        const agents = await agentManager.getAgentList('project');
+        const agents = await agentManager.getAgentList('project', 'claude');
 
         expect(agents).toHaveLength(1);
         expect(agents[0]).toMatchObject({
@@ -164,12 +188,55 @@ tools: Read, Write, Task
         ]);
         (fs.promises.readFile as jest.Mock).mockResolvedValue(mockAgentContent);
 
-        const agents = await agentManager.getAgentList('user');
+        const agents = await agentManager.getAgentList('user', 'claude');
 
         expect(agents[0]).toMatchObject({
             name: 'User Agent',
             tools: ['Read', 'Write', 'Task'],
             type: 'user'
+        });
+    });
+
+    test('returns project Codex agents parsed from TOML', async () => {
+        const mockAgentContent = [
+            'name = "spec-requirements"',
+            'description = "Requirements expert"',
+            'developer_instructions = """Use requirements instructions."""'
+        ].join('\n');
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['spec-requirements.toml', vscode.FileType.File]
+        ]);
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(mockAgentContent);
+
+        const agents = await agentManager.getAgentList('project', 'codex');
+
+        expect((vscode.workspace.fs.readDirectory as jest.Mock).mock.calls[0][0].fsPath.replace(/\\/g, '/'))
+            .toBe('/test/workspace/.codex/agents');
+        expect(agents).toHaveLength(1);
+        expect(agents[0]).toMatchObject({
+            name: 'spec-requirements',
+            description: 'Requirements expert',
+            type: 'project',
+            provider: 'codex'
+        });
+    });
+
+    test('returns user Codex agents from the Codex user agents directory', async () => {
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['reviewer.toml', vscode.FileType.File]
+        ]);
+        (fs.promises.readFile as jest.Mock).mockResolvedValue('name = "reviewer"\ndescription = "Review expert"');
+
+        const agents = await agentManager.getAgentList('user', 'codex');
+
+        expect(vscode.workspace.fs.readDirectory).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: path.join('/home/test', '.codex', 'agents') })
+        );
+        expect(agents[0]).toMatchObject({
+            name: 'reviewer',
+            description: 'Review expert',
+            type: 'user',
+            provider: 'codex'
         });
     });
 

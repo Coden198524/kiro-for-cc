@@ -5,6 +5,7 @@ const PROVIDER_IDS: AgentProviderId[] = ['claude', 'codex', 'deepseek', 'glm', '
 
 const CLAUDE_CAPABILITIES = {
     permissions: true,
+    expertAgents: true,
     claudeAgents: true,
     claudeHooks: true,
     claudeMcp: true,
@@ -15,6 +16,7 @@ const CLAUDE_CAPABILITIES = {
 
 const CLI_CAPABILITIES = {
     permissions: false,
+    expertAgents: false,
     claudeAgents: false,
     claudeHooks: false,
     claudeMcp: false,
@@ -25,6 +27,7 @@ const CLI_CAPABILITIES = {
 
 const CODEX_CAPABILITIES = {
     ...CLI_CAPABILITIES,
+    expertAgents: true,
     interactiveSpecWorkflow: true
 };
 

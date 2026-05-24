@@ -13,6 +13,7 @@ describe('SpecManager', () => {
         command: 'claude',
         capabilities: {
             permissions: true,
+            expertAgents: true,
             claudeAgents: true,
             claudeHooks: true,
             claudeMcp: true,

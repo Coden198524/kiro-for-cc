@@ -386,6 +386,7 @@ describe('TerminalAgentRuntime', () => {
     function claudeCapabilities() {
         return {
             permissions: true,
+            expertAgents: true,
             claudeAgents: true,
             claudeHooks: true,
             claudeMcp: true,
@@ -398,6 +399,7 @@ describe('TerminalAgentRuntime', () => {
     function cliCapabilities() {
         return {
             permissions: false,
+            expertAgents: false,
             claudeAgents: false,
             claudeHooks: false,
             claudeMcp: false,

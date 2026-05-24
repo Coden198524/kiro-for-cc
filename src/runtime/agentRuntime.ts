@@ -7,6 +7,7 @@ export type AgentRuntimeMode = 'interactive' | 'headless';
 
 export interface AgentProviderCapabilities {
     permissions: boolean;
+    expertAgents: boolean;
     claudeAgents: boolean;
     claudeHooks: boolean;
     claudeMcp: boolean;

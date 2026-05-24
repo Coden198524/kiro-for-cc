@@ -137,6 +137,7 @@ describe('TaskSessionManager', () => {
             model: 'gpt-5.5',
             capabilities: {
                 permissions: false,
+                expertAgents: true,
                 claudeAgents: false,
                 claudeHooks: false,
                 claudeMcp: false,

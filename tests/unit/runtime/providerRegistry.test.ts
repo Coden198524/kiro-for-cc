@@ -39,6 +39,8 @@ describe('providerRegistry', () => {
         expect(provider.displayName).toBe('Claude Code');
         expect(provider.command).toBe('claude');
         expect(provider.capabilities.permissions).toBe(true);
+        expect(provider.capabilities.expertAgents).toBe(true);
+        expect(provider.capabilities.claudeAgents).toBe(true);
         expect(provider.capabilities.claudeMcp).toBe(true);
     });
 
@@ -53,7 +55,16 @@ describe('providerRegistry', () => {
         expect(provider.command).toBe('codex-cli');
         expect(provider.args).toEqual(['--model', 'gpt-5.5']);
         expect(provider.capabilities.permissions).toBe(false);
+        expect(provider.capabilities.expertAgents).toBe(true);
+        expect(provider.capabilities.claudeAgents).toBe(false);
         expect(provider.capabilities.extensionMcp).toBe(true);
+    });
+
+    test('keeps generic CLI providers without expert agents', () => {
+        const provider = getProviderConfig('deepseek');
+
+        expect(provider.capabilities.expertAgents).toBe(false);
+        expect(provider.capabilities.claudeAgents).toBe(false);
     });
 
     test('reads provider settings from project settings when VS Code setting is absent', () => {

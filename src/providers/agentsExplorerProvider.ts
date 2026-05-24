@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { AgentManager, AgentInfo } from '../features/agents/agentManager';
+import { AgentManager, AgentInfo, AgentTargetProvider } from '../features/agents/agentManager';
 import { AgentProviderConfig } from '../runtime/agentRuntime';
 import { getProviderConfig } from '../runtime/providerRegistry';
 
@@ -8,8 +8,7 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
     private _onDidChangeTreeData: vscode.EventEmitter<AgentItem | undefined | null | void> = new vscode.EventEmitter<AgentItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<AgentItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-    private fileWatcher: vscode.FileSystemWatcher | undefined;
-    private userFileWatcher: vscode.FileSystemWatcher | undefined;
+    private fileWatchers: vscode.FileSystemWatcher[] = [];
     private isLoading: boolean = false;
 
     constructor(
@@ -46,9 +45,9 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
             // Root level - show loading state or agent groups
             const items: AgentItem[] = [];
 
-            if (this.provider && !this.provider.capabilities.claudeAgents) {
+            if (this.provider && !this.provider.capabilities.expertAgents) {
                 items.push(new AgentItem(
-                    `Claude Code agents are unavailable for ${this.provider.displayName}`,
+                    `Expert agents are unavailable for ${this.provider.displayName}`,
                     vscode.TreeItemCollapsibleState.None,
                     'agent-provider-unsupported'
                 ));
@@ -74,7 +73,7 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
             ));
 
             // Project agents group
-            const projectAgents = await this.agentManager.getAgentList('project');
+            const projectAgents = await this.agentManager.getAgentList('project', this.getAgentTargetProvider());
             if (projectAgents.length > 0 || vscode.workspace.workspaceFolders) {
                 items.push(new AgentItem(
                     'Project Agents',
@@ -87,7 +86,10 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
             return items;
         } else if (element.contextValue === 'agent-group') {
             // Show agents under the group
-            const agents = await this.agentManager.getAgentList(element.groupType as 'project' | 'user');
+            const agents = await this.agentManager.getAgentList(
+                element.groupType as 'project' | 'user',
+                this.getAgentTargetProvider()
+            );
             return agents.map(agent => new AgentItem(
                 agent.name,
                 vscode.TreeItemCollapsibleState.None,
@@ -105,41 +107,47 @@ export class AgentsExplorerProvider implements vscode.TreeDataProvider<AgentItem
 
         // Watch project agents directory
         if (workspaceFolder) {
-            const projectAgentsPattern = new vscode.RelativePattern(
-                workspaceFolder,
-                '.autocode/agents/**/*.md'
-            );
-
-            this.fileWatcher = vscode.workspace.createFileSystemWatcher(projectAgentsPattern);
-
-            // File watcher changes should refresh without loading animation
-            this.fileWatcher.onDidCreate(() => this._onDidChangeTreeData.fire());
-            this.fileWatcher.onDidChange(() => this._onDidChangeTreeData.fire());
-            this.fileWatcher.onDidDelete(() => this._onDidChangeTreeData.fire());
+            this.watchPattern(new vscode.RelativePattern(workspaceFolder, '.autocode/agents/**/*.md'));
+            this.watchPattern(new vscode.RelativePattern(workspaceFolder, '.codex/agents/**/*.toml'));
         }
 
-        // Watch user agents directory (including subdirectories)
-        const userAgentsPath = path.join(require('os').homedir(), '.claude/agents');
-        const userAgentsPattern = new vscode.RelativePattern(
-            userAgentsPath,
-            '**/*.md'
-        );
+        this.watchUserPattern(path.join(require('os').homedir(), '.claude/agents'), '**/*.md');
+        this.watchUserPattern(path.join(require('os').homedir(), '.codex/agents'), '**/*.toml');
+    }
 
+    dispose(): void {
+        for (const watcher of this.fileWatchers) {
+            watcher.dispose();
+        }
+        this.fileWatchers = [];
+    }
+
+    private getAgentTargetProvider(): AgentTargetProvider {
+        if (this.provider?.id === 'codex') {
+            return 'codex';
+        }
+
+        if (this.provider?.id === 'claude') {
+            return 'claude';
+        }
+
+        return 'all';
+    }
+
+    private watchUserPattern(rootPath: string, pattern: string): void {
         try {
-            this.userFileWatcher = vscode.workspace.createFileSystemWatcher(userAgentsPattern);
-
-            // File watcher changes should refresh without loading animation
-            this.userFileWatcher.onDidCreate(() => this._onDidChangeTreeData.fire());
-            this.userFileWatcher.onDidChange(() => this._onDidChangeTreeData.fire());
-            this.userFileWatcher.onDidDelete(() => this._onDidChangeTreeData.fire());
+            this.watchPattern(new vscode.RelativePattern(rootPath, pattern));
         } catch (error) {
             this.outputChannel.appendLine(`[AgentsExplorer] Failed to watch user agents directory: ${error}`);
         }
     }
 
-    dispose(): void {
-        this.fileWatcher?.dispose();
-        this.userFileWatcher?.dispose();
+    private watchPattern(pattern: vscode.RelativePattern): void {
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        watcher.onDidCreate(() => this._onDidChangeTreeData.fire());
+        watcher.onDidChange(() => this._onDidChangeTreeData.fire());
+        watcher.onDidDelete(() => this._onDidChangeTreeData.fire());
+        this.fileWatchers.push(watcher);
     }
 }
 
@@ -159,7 +167,7 @@ class AgentItem extends vscode.TreeItem {
             this.tooltip = 'Loading agents...';
         } else if (contextValue === 'agent-provider-unsupported') {
             this.iconPath = new vscode.ThemeIcon('info');
-            this.tooltip = 'This view reads project agent files under .autocode/agents.';
+            this.tooltip = 'This provider does not expose specialized agent files.';
         } else if (contextValue === 'agent-group') {
             // Use icons similar to Steering Explorer
             if (groupType === 'user') {
