@@ -962,7 +962,7 @@ export class SpecManager {
                 '- Keep progress updates concise so more time is spent on code and verification.',
                 '- Run the narrowest useful verification command after the implementation, then broaden only when the change risk justifies it.',
                 '- Write the completion signal only after implementation and verification are complete.',
-                '- If verification fails, fix the cause or report the blocker; do not signal completion for failed work.'
+                '- If the task is blocked or verification cannot run, write the blocked signal instead of signaling completion.'
             ].join('\n');
         }
 
@@ -982,7 +982,7 @@ export class SpecManager {
             '- This task was launched alongside other spec tasks after static file-scope analysis.',
             `- Treat these paths as the allowed write scope for this task: ${fileScopes.join(', ')}.`,
             '- Do not edit files outside that scope. If the task requires another file, stop and report the conflict instead of continuing.',
-            '- Do not write the completion signal until the task is complete within that scope and verification has passed.'
+            '- Do not write the ready-for-verification signal until the task is complete within that scope and verification has passed. If blocked, write the blocked signal instead.'
         ].join('\n');
     }
 
@@ -1015,6 +1015,13 @@ export class SpecManager {
             lineNumber,
             taskDescription
         }, null, 2);
+        const blockedPayload = JSON.stringify({
+            status: 'blocked',
+            taskFilePath,
+            lineNumber,
+            taskDescription,
+            reason: 'Describe the blocker, failed command, or missing capability.'
+        }, null, 2);
 
         return [
             'When you believe this task is fully implemented, create or overwrite the completion signal file with the JSON object below.',
@@ -1025,7 +1032,11 @@ export class SpecManager {
             '',
             `Completion signal path: ${completionSignalPath}`,
             '',
-            payload
+            payload,
+            '',
+            'If you are blocked and cannot complete or verify the task, create or overwrite the same signal file with this JSON object instead. Do not use blocked for completed work.',
+            '',
+            blockedPayload
         ].join('\n');
     }
 

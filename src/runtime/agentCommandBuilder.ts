@@ -1,4 +1,4 @@
-import { AgentApprovalPolicy, AgentProviderConfig } from './agentRuntime';
+import { AgentApprovalPolicy, AgentProviderConfig, AgentSandboxMode } from './agentRuntime';
 
 interface PromptCommandOptions {
     platform?: NodeJS.Platform;
@@ -7,6 +7,8 @@ interface PromptCommandOptions {
 
 export interface AgentCommandOptions {
     approvalPolicy?: AgentApprovalPolicy;
+    sandboxMode?: AgentSandboxMode;
+    bypassApprovalsAndSandbox?: boolean;
 }
 
 interface BuildAgentCommandOptions extends PromptCommandOptions, AgentCommandOptions {
@@ -104,32 +106,51 @@ export function quoteShellArg(value: string): string {
 }
 
 function buildArgs(provider: AgentProviderConfig, options: AgentCommandOptions = {}): string {
-    const args = provider.id === 'codex' && options.approvalPolicy
-        ? removeCodexApprovalArgs(provider.args ?? [])
+    const args = provider.id === 'codex' && hasCodexGlobalOptions(options)
+        ? removeCodexGlobalArgs(provider.args ?? [])
         : provider.args ?? [];
 
     return args.map(arg => quoteShellArg(arg)).join(' ');
 }
 
 function buildCodexGlobalArgs(options: AgentCommandOptions): string {
-    if (!options.approvalPolicy) {
-        return '';
+    if (options.bypassApprovalsAndSandbox) {
+        return '--dangerously-bypass-approvals-and-sandbox';
     }
 
-    return `--ask-for-approval ${quoteShellArg(options.approvalPolicy)}`;
+    const args: string[] = [];
+    if (options.approvalPolicy) {
+        args.push('--ask-for-approval', quoteShellArg(options.approvalPolicy));
+    }
+
+    if (options.sandboxMode) {
+        args.push('--sandbox', quoteShellArg(options.sandboxMode));
+    }
+
+    return args.join(' ');
 }
 
-function removeCodexApprovalArgs(args: readonly string[]): string[] {
+function hasCodexGlobalOptions(options: AgentCommandOptions): boolean {
+    return Boolean(options.approvalPolicy || options.sandboxMode || options.bypassApprovalsAndSandbox);
+}
+
+function removeCodexGlobalArgs(args: readonly string[]): string[] {
     const filtered: string[] = [];
 
     for (let index = 0; index < args.length; index++) {
         const arg = args[index];
-        if (arg === '--ask-for-approval' || arg === '-a') {
+        if (arg === '--ask-for-approval' || arg === '-a' || arg === '--sandbox' || arg === '-s') {
             index += 1;
             continue;
         }
 
-        if (arg.startsWith('--ask-for-approval=') || arg.startsWith('-a=')) {
+        if (
+            arg === '--dangerously-bypass-approvals-and-sandbox' ||
+            arg.startsWith('--ask-for-approval=') ||
+            arg.startsWith('-a=') ||
+            arg.startsWith('--sandbox=') ||
+            arg.startsWith('-s=')
+        ) {
             continue;
         }
 

@@ -40,14 +40,39 @@ describe('agentCommandBuilder', () => {
             promptFilePath: 'C:\\Users\\LS\\prompt.md',
             platform: 'win32',
             useWslPaths: false,
-            approvalPolicy: 'never'
+            approvalPolicy: 'never',
+            sandboxMode: 'danger-full-access'
         });
         const interactiveCommand = buildAgentInteractiveCommand(provider, {
-            approvalPolicy: 'never'
+            approvalPolicy: 'never',
+            sandboxMode: 'danger-full-access'
         });
 
-        expect(headlessCommand).toBe("Get-Content -Raw -LiteralPath 'C:\\Users\\LS\\prompt.md' | codex --ask-for-approval never exec --model gpt-5.5 -");
-        expect(interactiveCommand).toBe('codex --ask-for-approval never --model gpt-5.5');
+        expect(headlessCommand).toBe("Get-Content -Raw -LiteralPath 'C:\\Users\\LS\\prompt.md' | codex --ask-for-approval never --sandbox danger-full-access exec --model gpt-5.5 -");
+        expect(interactiveCommand).toBe('codex --ask-for-approval never --sandbox danger-full-access --model gpt-5.5');
+    });
+
+    test('builds Codex commands with dangerous sandbox bypass before the subcommand', () => {
+        const provider = createProvider({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--ask-for-approval', 'on-request', '--sandbox', 'workspace-write', '--model', 'gpt-5.5']
+        });
+
+        const headlessCommand = buildAgentCommand({
+            provider,
+            promptFilePath: 'C:\\Users\\LS\\prompt.md',
+            platform: 'win32',
+            useWslPaths: false,
+            bypassApprovalsAndSandbox: true
+        });
+        const interactiveCommand = buildAgentInteractiveCommand(provider, {
+            bypassApprovalsAndSandbox: true
+        });
+
+        expect(headlessCommand).toBe("Get-Content -Raw -LiteralPath 'C:\\Users\\LS\\prompt.md' | codex --dangerously-bypass-approvals-and-sandbox exec --model gpt-5.5 -");
+        expect(interactiveCommand).toBe('codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.5');
     });
 
     test('builds Claude permission command with POSIX prompt substitution', () => {

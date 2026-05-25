@@ -42,6 +42,8 @@ export interface AutoCodeSettings {
 export interface ProviderSettings {
     command?: string;
     args?: string[];
+    sandboxMode?: string;
+    autoTaskSandboxMode?: string;
     interactiveSubmitDelayMinMs?: number;
     interactiveSubmitDelayMaxMs?: number;
     interactiveSubmitDelayCharsPerMs?: number;
@@ -167,6 +169,8 @@ export class ConfigManager {
                 codex: {
                     command: 'codex',
                     args: [],
+                    sandboxMode: '',
+                    autoTaskSandboxMode: 'danger-full-access',
                     interactiveSubmitDelayMinMs: 1200,
                     interactiveSubmitDelayMaxMs: 6000,
                     interactiveSubmitDelayCharsPerMs: 12

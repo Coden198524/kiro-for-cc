@@ -7,8 +7,8 @@ import { ConfigManager } from '../utils/configManager';
 import { VSC_CONFIG_NAMESPACE } from '../constants';
 import { getPermissionManager } from '../extension';
 import { AgentType, getAgentConfig } from './agentConfigs';
-import { buildAgentCommand, buildAgentInteractiveCommand, convertPathForWsl } from './agentCommandBuilder';
-import { AgentApprovalPolicy, AgentInvocationRequest, AgentInvocationResult, AgentProviderConfig, AgentRuntime } from './agentRuntime';
+import { AgentCommandOptions, buildAgentCommand, buildAgentInteractiveCommand, convertPathForWsl } from './agentCommandBuilder';
+import { AgentApprovalPolicy, AgentInvocationRequest, AgentInvocationResult, AgentProviderConfig, AgentRuntime, AgentSandboxMode } from './agentRuntime';
 import { getRuntimeMcpServers, McpServerInfo } from './mcpRegistry';
 import { getProviderConfig } from './providerRegistry';
 import { getRuntimeValue } from './runtimeSettings';
@@ -70,12 +70,17 @@ export class TerminalAgentRuntime implements AgentRuntime {
             const prompt = this.decoratePrompt(request.prompt, request.agentType);
 
             if (provider.id === 'claude' || provider.id === 'codex') {
-                return this.invokePromptPastedInteractive(prompt, request.title, request.reuseTerminal, request.approvalPolicy);
+                return this.invokePromptPastedInteractive(prompt, request.title, request.reuseTerminal, request.approvalPolicy, {
+                    sandboxMode: request.sandboxMode,
+                    bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
+                });
             }
 
             const promptFilePath = await this.createTempFile(prompt, 'prompt');
             const command = this.buildCommand(promptFilePath, provider, {
-                approvalPolicy: request.approvalPolicy
+                approvalPolicy: request.approvalPolicy,
+                sandboxMode: request.sandboxMode,
+                bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
             });
             const title = request.title || `AutoCode - ${provider.displayName}`;
             const terminal = request.reuseTerminal
@@ -112,7 +117,9 @@ export class TerminalAgentRuntime implements AgentRuntime {
         const cwd = workspaceFolder?.uri.fsPath;
         const promptFilePath = await this.createTempFile(prompt, 'background-prompt');
         const commandLine = this.buildCommand(promptFilePath, this.provider, {
-            approvalPolicy: request.approvalPolicy
+            approvalPolicy: request.approvalPolicy,
+            sandboxMode: request.sandboxMode,
+            bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
         });
 
         try {
@@ -180,7 +187,8 @@ export class TerminalAgentRuntime implements AgentRuntime {
         prompt: string,
         title?: string,
         reuseTerminal = false,
-        approvalPolicy?: AgentApprovalPolicy
+        approvalPolicy?: AgentApprovalPolicy,
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
     ): Promise<vscode.Terminal> {
         const provider = this.provider;
         const terminalApprovalPolicy = provider.id === 'codex' ? approvalPolicy : undefined;
@@ -191,13 +199,13 @@ export class TerminalAgentRuntime implements AgentRuntime {
         terminal.show();
 
         if (reuseTerminal) {
-            this.enqueueInteractivePrompt(terminal, provider, prompt, terminalApprovalPolicy);
+            this.enqueueInteractivePrompt(terminal, provider, prompt, terminalApprovalPolicy, commandOptions);
             return terminal;
         }
 
         const delay = this.configManager.getTerminalDelay();
         setTimeout(() => {
-            terminal.sendText(this.buildInteractiveCommand(provider, terminalApprovalPolicy), true);
+            terminal.sendText(this.buildInteractiveCommand(provider, terminalApprovalPolicy, commandOptions), true);
             setTimeout(() => this.sendPromptToInteractiveTerminal(terminal, provider, prompt), TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
         }, delay);
 
@@ -208,9 +216,10 @@ export class TerminalAgentRuntime implements AgentRuntime {
         terminal: vscode.Terminal,
         provider: AgentProviderConfig,
         prompt: string,
-        approvalPolicy?: AgentApprovalPolicy
+        approvalPolicy?: AgentApprovalPolicy,
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
     ): void {
-        const run = this.interactivePromptQueue.then(() => this.runQueuedInteractivePrompt(terminal, provider, prompt, approvalPolicy));
+        const run = this.interactivePromptQueue.then(() => this.runQueuedInteractivePrompt(terminal, provider, prompt, approvalPolicy, commandOptions));
         this.interactivePromptQueue = run.catch(error => {
             this.outputChannel.appendLine(`[AgentRuntime] Failed to send queued prompt: ${error}`);
         });
@@ -220,7 +229,8 @@ export class TerminalAgentRuntime implements AgentRuntime {
         terminal: vscode.Terminal,
         provider: AgentProviderConfig,
         prompt: string,
-        approvalPolicy?: AgentApprovalPolicy
+        approvalPolicy?: AgentApprovalPolicy,
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
     ): Promise<void> {
         if (
             terminal === this.interactiveTerminal &&
@@ -234,7 +244,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
         }
 
         await this.wait(this.configManager.getTerminalDelay());
-        terminal.sendText(this.buildInteractiveCommand(provider, approvalPolicy), true);
+        terminal.sendText(this.buildInteractiveCommand(provider, approvalPolicy, commandOptions), true);
         this.interactiveTerminal = terminal;
         this.interactiveTerminalProviderId = provider.id;
         this.interactiveTerminalApprovalPolicy = approvalPolicy;
@@ -348,19 +358,70 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
     private buildCommand(
         promptFilePath: string,
         provider: AgentProviderConfig = this.provider,
-        options: { approvalPolicy?: AgentApprovalPolicy } = {}
+        options: AgentCommandOptions = {}
     ): string {
+        const commandOptions = this.getEffectiveCommandOptions(provider, options);
         return buildAgentCommand({
             provider,
             promptFilePath,
             platform: process.platform,
             useWslPaths: this.shouldUseWslPaths(provider),
-            approvalPolicy: options.approvalPolicy
+            ...commandOptions
         });
     }
 
-    private buildInteractiveCommand(provider: AgentProviderConfig = this.provider, approvalPolicy?: AgentApprovalPolicy): string {
-        return buildAgentInteractiveCommand(provider, { approvalPolicy });
+    private buildInteractiveCommand(
+        provider: AgentProviderConfig = this.provider,
+        approvalPolicy?: AgentApprovalPolicy,
+        options: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
+    ): string {
+        return buildAgentInteractiveCommand(provider, this.getEffectiveCommandOptions(provider, {
+            approvalPolicy,
+            ...options
+        }));
+    }
+
+    private getEffectiveCommandOptions(provider: AgentProviderConfig, options: AgentCommandOptions = {}): AgentCommandOptions {
+        if (provider.id !== 'codex') {
+            return {
+                approvalPolicy: options.approvalPolicy
+            };
+        }
+
+        if (options.bypassApprovalsAndSandbox) {
+            return {
+                bypassApprovalsAndSandbox: true
+            };
+        }
+
+        const configuredSandbox = options.sandboxMode ?? this.getConfiguredCodexSandboxMode(options.approvalPolicy);
+        if (configuredSandbox === 'bypass') {
+            return {
+                bypassApprovalsAndSandbox: true
+            };
+        }
+
+        return {
+            approvalPolicy: options.approvalPolicy,
+            sandboxMode: configuredSandbox
+        };
+    }
+
+    private getConfiguredCodexSandboxMode(approvalPolicy?: AgentApprovalPolicy): AgentSandboxMode | 'bypass' | undefined {
+        const section = approvalPolicy === 'never'
+            ? 'providers.codex.autoTaskSandboxMode'
+            : 'providers.codex.sandboxMode';
+        const defaultValue = approvalPolicy === 'never' ? 'danger-full-access' : '';
+        const value = getRuntimeValue<string>(section, defaultValue);
+        return this.normalizeCodexSandboxMode(value);
+    }
+
+    private normalizeCodexSandboxMode(value: string | undefined): AgentSandboxMode | 'bypass' | undefined {
+        if (value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access' || value === 'bypass') {
+            return value;
+        }
+
+        return undefined;
     }
 
     private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): number {

@@ -17,6 +17,8 @@ export const DEFAULT_CONFIG = {
         codex: {
             command: 'codex',
             args: [],
+            sandboxMode: '',
+            autoTaskSandboxMode: 'danger-full-access',
             interactiveSubmitDelayMinMs: 1200,
             interactiveSubmitDelayMaxMs: 6000,
             interactiveSubmitDelayCharsPerMs: 12

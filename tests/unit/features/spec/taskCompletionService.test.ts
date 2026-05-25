@@ -283,4 +283,146 @@ describe('TaskCompletionService', () => {
             taskDescription: '1. First task'
         });
     });
+
+    test('falls back after shell end when no completion signal arrives', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+        let shellEndHandler: ((event: { terminal: vscode.Terminal }) => Promise<void>) | undefined;
+
+        (vscode.window.onDidEndTerminalShellExecution as jest.Mock).mockImplementation(handler => {
+            shellEndHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('not written yet'));
+        (vscode.workspace.fs.readFile as jest.Mock).mockRejectedValue(new Error('not written yet'));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. Fallback task'
+            },
+            signalPath
+        );
+
+        await shellEndHandler?.({ terminal });
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(10000);
+
+        await expect(completion).resolves.toBe(true);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. Fallback task'
+        });
+    });
+
+    test('waits for a completion signal after terminal close before fallback verification', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+        let closeHandler: ((terminal: vscode.Terminal) => Promise<void>) | undefined;
+        let createHandler: ((uri: vscode.Uri) => void) | undefined;
+
+        (vscode.window.onDidCloseTerminal as jest.Mock).mockImplementation(handler => {
+            closeHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn((handler) => {
+                createHandler = handler;
+            }),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('not written yet'));
+        (vscode.workspace.fs.readFile as jest.Mock)
+            .mockRejectedValueOnce(new Error('not written yet'))
+            .mockResolvedValue(Buffer.from(JSON.stringify({
+                status: 'ready_for_verification',
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. Signal task'
+            })));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. Fallback task'
+            },
+            signalPath
+        );
+
+        await closeHandler?.(terminal);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+
+        createHandler?.(vscode.Uri.file(signalPath));
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(true);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledTimes(1);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. Signal task'
+        });
+
+        await jest.advanceTimersByTimeAsync(10000);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledTimes(1);
+    });
+
+    test('resolves false when a task writes a blocked completion signal', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+        let createHandler: ((uri: vscode.Uri) => void) | undefined;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn((handler) => {
+                createHandler = handler;
+            }),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('not written yet'));
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'blocked',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. Blocked task',
+            reason: 'windows sandbox: spawn setup refresh'
+        })));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. Blocked task'
+            },
+            signalPath
+        );
+
+        createHandler?.(vscode.Uri.file(signalPath));
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+    });
 });

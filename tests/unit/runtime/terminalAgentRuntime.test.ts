@@ -94,7 +94,24 @@ describe('TerminalAgentRuntime', () => {
             approvalPolicy: 'never'
         });
 
-        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex --ask-for-approval never exec --model gpt-5.5 -`);
+        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex --ask-for-approval never --sandbox danger-full-access exec --model gpt-5.5 -`);
+    });
+
+    test('uses configured Codex automation sandbox bypass before exec', () => {
+        configValues['providers.codex.autoTaskSandboxMode'] = 'bypass';
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--model', 'gpt-5.5'],
+            capabilities: cliCapabilities()
+        });
+
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md', undefined, {
+            approvalPolicy: 'never'
+        });
+
+        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex --dangerously-bypass-approvals-and-sandbox exec --model gpt-5.5 -`);
     });
 
     test('builds custom provider command template', () => {
@@ -166,7 +183,7 @@ describe('TerminalAgentRuntime', () => {
             capabilities: cliCapabilities()
         });
 
-        expect((runtime as any).buildInteractiveCommand(undefined, 'never')).toBe('codex --ask-for-approval never --model gpt-5.5');
+        expect((runtime as any).buildInteractiveCommand(undefined, 'never')).toBe('codex --ask-for-approval never --sandbox danger-full-access --model gpt-5.5');
     });
 
     test('builds Claude interactive launch command with permission bypass', () => {
@@ -270,7 +287,7 @@ describe('TerminalAgentRuntime', () => {
         });
 
         await jest.advanceTimersByTimeAsync(800);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never', true);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never --sandbox danger-full-access', true);
     });
 
     test('does not reuse a normal Codex terminal for approval-disabled automation', async () => {
@@ -315,7 +332,7 @@ describe('TerminalAgentRuntime', () => {
 
         expect(vscode.window.createTerminal).toHaveBeenCalledTimes(2);
         expect(normalTerminal.sendText).toHaveBeenNthCalledWith(1, 'codex', true);
-        expect(autoTerminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never', true);
+        expect(autoTerminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never --sandbox danger-full-access', true);
     });
 
     test('reuses interactive terminal when requested', async () => {

@@ -52,7 +52,11 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         completion.then(async verified => {
             if (verified) {
                 await vscode.commands.executeCommand(commandId, documentUri);
+                return;
             }
+
+            await markTaskLinesPending(documentUri, [run.lineNumber!]);
+            vscode.window.showWarningMessage('Auto task queue paused because the current task was not verified as complete. The task was returned to pending.');
         }).catch(error => {
             outputChannel.appendLine(`[Task Execute] Failed to continue auto task queue: ${error}`);
         });
@@ -112,7 +116,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                     return;
                 }
 
-                taskCompletionService.registerTaskCompletion(
+                const completion = taskCompletionService.registerTaskCompletion(
                     context,
                     run.terminal,
                     {
@@ -122,6 +126,13 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                     },
                     run.completionSignalPath
                 );
+                completion?.then(async verified => {
+                    if (!verified) {
+                        await markTaskLinesPending(documentUri, changedLineNumbers.length > 0 ? changedLineNumbers : [lineNumber]);
+                    }
+                }).catch(error => {
+                    outputChannel.appendLine(`[Task Execute] Failed to process task completion result on line ${lineNumber + 1}: ${error}`);
+                });
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 outputChannel.appendLine(`[Task Execute] Failed to start task on line ${lineNumber + 1}: ${error}`);
@@ -171,20 +182,32 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
                 if (run?.parallelRuns?.length) {
                     const completionResults = run.parallelRuns
-                        .map(parallelRun => taskCompletionService.registerTaskCompletion(
-                        context,
-                        parallelRun.terminal,
-                        {
-                            taskFilePath: parallelRun.taskFilePath,
+                        .map(parallelRun => ({
                             lineNumber: parallelRun.lineNumber,
-                            taskDescription: parallelRun.taskDescription
-                        },
-                        parallelRun.completionSignalPath
-                        ))
-                        .filter((result): result is Promise<boolean> => Boolean(result));
+                            completion: taskCompletionService.registerTaskCompletion(
+                                context,
+                                parallelRun.terminal,
+                                {
+                                    taskFilePath: parallelRun.taskFilePath,
+                                    lineNumber: parallelRun.lineNumber,
+                                    taskDescription: parallelRun.taskDescription
+                                },
+                                parallelRun.completionSignalPath
+                            )
+                        }))
+                        .filter((result): result is { lineNumber: number; completion: Promise<boolean> } => Boolean(result.completion));
 
                     if (completionResults.length > 0 && !run.failedLineNumbers?.length) {
-                        Promise.all(completionResults).then(async results => {
+                        Promise.all(completionResults.map(result => result.completion)).then(async results => {
+                            const failedLineNumbers = completionResults
+                                .filter((_result, index) => !results[index])
+                                .map(result => result.lineNumber);
+                            if (failedLineNumbers.length > 0) {
+                                await markTaskLinesPending(documentUri, failedLineNumbers);
+                                vscode.window.showWarningMessage(`${failedLineNumbers.length} parallel task(s) were not verified as complete and were returned to pending.`);
+                                return;
+                            }
+
                             if (results.every(Boolean)) {
                                 await vscode.commands.executeCommand('autocode.spec.implAllTasksParallel', documentUri);
                             }

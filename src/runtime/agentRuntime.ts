@@ -6,6 +6,7 @@ export type AgentProviderId = 'claude' | 'codex' | 'deepseek' | 'glm' | 'custom'
 export type AgentRuntimeMode = 'interactive' | 'headless';
 
 export type AgentApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+export type AgentSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 export interface AgentProviderCapabilities {
     permissions: boolean;
@@ -35,6 +36,8 @@ export interface AgentInvocationRequest {
     agentType?: AgentType;
     reuseTerminal?: boolean;
     approvalPolicy?: AgentApprovalPolicy;
+    sandboxMode?: AgentSandboxMode;
+    bypassApprovalsAndSandbox?: boolean;
 }
 
 export interface AgentInvocationResult {

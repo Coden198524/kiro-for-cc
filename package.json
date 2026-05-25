@@ -366,6 +366,27 @@
           },
           "description": "Additional arguments passed before the prompt for the Codex/OpenAI CLI."
         },
+        "autocode.providers.codex.sandboxMode": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "description": "Optional Codex CLI sandbox mode for normal Codex sessions. Empty uses the Codex CLI default."
+        },
+        "autocode.providers.codex.autoTaskSandboxMode": {
+          "type": "string",
+          "default": "danger-full-access",
+          "enum": [
+            "workspace-write",
+            "danger-full-access",
+            "bypass"
+          ],
+          "description": "Codex CLI sandbox mode used when AutoCode runs automated tasks with approvals disabled. Use danger-full-access to avoid Windows sandbox startup failures; bypass also adds Codex's dangerous full bypass flag."
+        },
         "autocode.providers.codex.interactiveSubmitDelayMinMs": {
           "type": "number",
           "default": 1200,

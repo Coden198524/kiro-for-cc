@@ -8,6 +8,7 @@ interface TaskCompletionSignalPayload {
     taskFilePath?: string;
     lineNumber?: number;
     taskDescription?: string;
+    reason?: string;
 }
 
 export interface TaskCompletionReconcileResult {
@@ -18,6 +19,7 @@ export interface TaskCompletionReconcileResult {
 export class TaskCompletionService {
     private static readonly SIGNAL_POLL_INTERVAL_MS = 2000;
     private static readonly SIGNAL_POLL_TIMEOUT_MS = 30 * 60 * 1000;
+    private static readonly TERMINAL_CLOSE_SIGNAL_GRACE_MS = 10000;
 
     constructor(
         private verifier: TaskCompletionVerifier,
@@ -38,9 +40,16 @@ export class TaskCompletionService {
         let handled = false;
         let resolveCompletion: (verified: boolean) => void = () => undefined;
         let completionResolved = false;
+        let closeGraceTimer: NodeJS.Timeout | undefined;
         const completionPromise = new Promise<boolean>(resolve => {
             resolveCompletion = resolve;
         });
+        const clearCloseGraceTimer = () => {
+            if (closeGraceTimer) {
+                clearTimeout(closeGraceTimer);
+                closeGraceTimer = undefined;
+            }
+        };
         const finishCompletion = (verified: boolean) => {
             if (completionResolved) {
                 return;
@@ -55,6 +64,7 @@ export class TaskCompletionService {
             }
 
             handled = true;
+            clearCloseGraceTimer();
             closeDisposable.dispose();
             shellEndDisposable.dispose();
             signalDisposable?.dispose();
@@ -70,16 +80,51 @@ export class TaskCompletionService {
         };
 
         const runSignalVerification = async () => {
-            const signalRequest = completionSignalPath
-                ? await this.resolveSignalRequest(completionSignalPath, request.taskFilePath)
+            const signalResult = completionSignalPath
+                ? await this.resolveSignalResult(completionSignalPath, request.taskFilePath)
                 : undefined;
-            if (!signalRequest) {
+            if (!signalResult) {
                 this.outputChannel.appendLine(`[Task Complete] Completion signal is not ready yet: ${completionSignalPath ?? '(not available)'}`);
                 return false;
             }
 
-            await runVerification(signalRequest);
-            return true;
+            if (signalResult.status === 'blocked') {
+                this.outputChannel.appendLine(`[Task Complete] Task reported blocked: ${signalResult.reason || completionSignalPath}`);
+                handled = true;
+                clearCloseGraceTimer();
+                finishCompletion(false);
+                closeDisposable.dispose();
+                shellEndDisposable.dispose();
+                signalDisposable?.dispose();
+                return false;
+            }
+
+            return runVerification(signalResult.request);
+        };
+
+        const scheduleMissingSignalFallback = (source: 'shell-end' | 'terminal-close') => {
+            if (handled || closeGraceTimer) {
+                return;
+            }
+
+            this.outputChannel.appendLine(`[Task Complete] ${source} occurred before completion signal was ready; waiting ${TaskCompletionService.TERMINAL_CLOSE_SIGNAL_GRACE_MS}ms for ${completionSignalPath}.`);
+            closeGraceTimer = setTimeout(() => {
+                closeGraceTimer = undefined;
+                if (handled) {
+                    return;
+                }
+
+                runSignalVerification().then(signalVerified => {
+                    if (!signalVerified && !handled) {
+                        this.outputChannel.appendLine('[Task Complete] Completion signal did not arrive after terminal close grace period; running fallback verification.');
+                        return runVerification(request);
+                    }
+
+                    return undefined;
+                }).catch(error => {
+                    this.outputChannel.appendLine(`[Task Complete] Failed to run terminal close fallback verification: ${error}`);
+                });
+            }, TaskCompletionService.TERMINAL_CLOSE_SIGNAL_GRACE_MS);
         };
 
         const shellEndDisposable = vscode.window.onDidEndTerminalShellExecution(async (event) => {
@@ -87,7 +132,11 @@ export class TaskCompletionService {
                 return;
             }
 
-            if (completionSignalPath && !await runSignalVerification()) {
+            if (completionSignalPath) {
+                const signalVerified = await runSignalVerification();
+                if (!signalVerified && !handled) {
+                    scheduleMissingSignalFallback('shell-end');
+                }
                 return;
             }
 
@@ -99,8 +148,11 @@ export class TaskCompletionService {
                 return;
             }
 
-            if (completionSignalPath && !await runSignalVerification()) {
-                await runVerification(request);
+            if (completionSignalPath) {
+                const signalVerified = await runSignalVerification();
+                if (!signalVerified && !handled) {
+                    scheduleMissingSignalFallback('terminal-close');
+                }
                 return;
             }
 
@@ -140,13 +192,18 @@ export class TaskCompletionService {
                 return;
             }
 
-            const request = await this.resolveSignalRequest(completionSignalPath, taskFilePath);
-            if (!request) {
+            const signalResult = await this.resolveSignalResult(completionSignalPath, taskFilePath);
+            if (!signalResult) {
                 return;
             }
 
             handledSignals.add(completionSignalPath);
-            await this.verifier.verifyAndMarkDone(request);
+            if (signalResult.status === 'blocked') {
+                this.outputChannel.appendLine(`[Task Complete] Task reported blocked: ${signalResult.reason || completionSignalPath}`);
+                return;
+            }
+
+            await this.verifier.verifyAndMarkDone(signalResult.request);
         };
 
         for (const signalPath of completionSignalPaths) {
@@ -180,12 +237,12 @@ export class TaskCompletionService {
         let verified = 0;
 
         for (const signalPath of signalPaths) {
-            const request = await this.resolveSignalRequest(signalPath, taskFilePath);
-            if (!request) {
+            const signalResult = await this.resolveSignalResult(signalPath, taskFilePath);
+            if (!signalResult || signalResult.status === 'blocked') {
                 continue;
             }
 
-            if (await this.verifier.verifyAndMarkDone(request)) {
+            if (await this.verifier.verifyAndMarkDone(signalResult.request)) {
                 verified += 1;
             }
         }
@@ -211,10 +268,20 @@ export class TaskCompletionService {
         }
     }
 
-    private async resolveSignalRequest(completionSignalPath: string, fallbackTaskFilePath: string): Promise<VerifyAndMarkTaskDoneRequest | undefined> {
+    private async resolveSignalResult(
+        completionSignalPath: string,
+        fallbackTaskFilePath: string
+    ): Promise<{ status: 'ready_for_verification'; request: VerifyAndMarkTaskDoneRequest } | { status: 'blocked'; reason?: string } | undefined> {
         const signalPayload = await this.readCompletionSignal(completionSignalPath);
         if (!signalPayload) {
             return undefined;
+        }
+
+        if (signalPayload.status === 'blocked') {
+            return {
+                status: 'blocked',
+                reason: signalPayload.reason
+            };
         }
 
         if (signalPayload.status && signalPayload.status !== 'ready_for_verification') {
@@ -238,9 +305,12 @@ export class TaskCompletionService {
         }
 
         return {
-            taskFilePath,
-            lineNumber,
-            taskDescription
+            status: 'ready_for_verification',
+            request: {
+                taskFilePath,
+                lineNumber,
+                taskDescription
+            }
         };
     }
 
@@ -290,7 +360,8 @@ export class TaskCompletionService {
                 status: typeof parsed.status === 'string' ? parsed.status : undefined,
                 taskFilePath: typeof parsed.taskFilePath === 'string' ? parsed.taskFilePath : undefined,
                 lineNumber: typeof parsed.lineNumber === 'number' ? parsed.lineNumber : undefined,
-                taskDescription: typeof parsed.taskDescription === 'string' ? parsed.taskDescription : undefined
+                taskDescription: typeof parsed.taskDescription === 'string' ? parsed.taskDescription : undefined,
+                reason: typeof parsed.reason === 'string' ? parsed.reason : undefined
             };
         } catch (error) {
             this.outputChannel.appendLine(`[Task Complete] Failed to parse completion signal JSON, using best-effort fields: ${error}`);
@@ -304,7 +375,8 @@ export class TaskCompletionService {
             status: this.matchJsonStringField(text, 'status'),
             taskFilePath: this.matchJsonStringField(text, 'taskFilePath'),
             lineNumber: lineNumberMatch ? Number(lineNumberMatch[1]) : undefined,
-            taskDescription: this.matchJsonStringField(text, 'taskDescription')
+            taskDescription: this.matchJsonStringField(text, 'taskDescription'),
+            reason: this.matchJsonStringField(text, 'reason')
         };
     }
 
