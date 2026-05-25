@@ -113,6 +113,65 @@ describe('SpecManager', () => {
         expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
     });
 
+    test('verifies Codex project agents before creating a spec with agents', async () => {
+        let capturedPrompt = '';
+        const runtime = createRuntime(codexProvider, prompt => {
+            capturedPrompt = prompt;
+        });
+        const agentManager = {
+            ensureCodexAgentsReady: jest.fn().mockResolvedValue({
+                ready: true,
+                agentsPath: '/mock/workspace/.codex/agents',
+                configPath: '/mock/workspace/.codex/config.toml',
+                existingAgents: ['spec-requirements'],
+                createdAgents: ['spec-design'],
+                missingAgents: [],
+                errors: []
+            })
+        };
+        (vscode.window.showInputBox as jest.Mock).mockResolvedValue('Build a reporting dashboard');
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel, undefined, agentManager as any);
+
+        await specManager.createWithAgents();
+
+        expect(agentManager.ensureCodexAgentsReady).toHaveBeenCalledTimes(1);
+        expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'AutoCode - Creating Spec (Agents)',
+            agentType: 'spec_with_agents'
+        }));
+        expect(capturedPrompt).toContain('Agent directory: /mock/workspace/.codex/agents');
+        expect(capturedPrompt).toContain('Agent readiness: Codex project expert agents were verified before launch.');
+        expect(capturedPrompt).toContain('Created agents this run: spec-design.');
+        expect(capturedPrompt).toContain('native delegation or TOML instruction emulation');
+    });
+
+    test('does not create a Codex spec with agents when project agents are not ready', async () => {
+        const runtime = createRuntime(codexProvider, () => undefined);
+        const agentManager = {
+            ensureCodexAgentsReady: jest.fn().mockResolvedValue({
+                ready: false,
+                agentsPath: '/mock/workspace/.codex/agents',
+                configPath: '/mock/workspace/.codex/config.toml',
+                existingAgents: [],
+                createdAgents: [],
+                missingAgents: ['spec-requirements'],
+                errors: ['missing source']
+            })
+        };
+        (vscode.window.showInputBox as jest.Mock).mockResolvedValue('Build a reporting dashboard');
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel, undefined, agentManager as any);
+
+        await specManager.createWithAgents();
+
+        expect(agentManager.ensureCodexAgentsReady).toHaveBeenCalledTimes(1);
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Codex expert agents are not ready'));
+        expect(runtime.invokeInteractive).not.toHaveBeenCalled();
+    });
+
     test('builds one prompt and completion signals for all remaining tasks', async () => {
         let capturedPrompt = '';
         const runtime: AgentRuntime = {

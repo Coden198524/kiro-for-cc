@@ -28,6 +28,10 @@ variables:
     type: string
     required: true
     description: Provider-specific expert agent configuration path
+  agentReadiness:
+    type: string
+    required: true
+    description: Expert agent readiness status verified before launch
   agentInvocationInstruction:
     type: string
     required: true
@@ -48,6 +52,7 @@ Expert agent context:
 
 - Agent directory: {{agentDirectory}}
 - Agent config path: {{agentConfigPath}}
+- Agent readiness: {{agentReadiness}}
 
 Provider-specific agent instructions:
 
@@ -60,6 +65,8 @@ Workflow agent mapping:
 - Use `spec-tasks` for tasks.md creation after design approval.
 - Use `spec-judge` to review whether each document is complete and consistent before asking the user to approve it.
 - Use `spec-impl` and `spec-test` only when the user later requests implementation or verification work.
+- Before each phase, explicitly choose native subagent delegation when the runtime exposes it. If native delegation is not exposed, load that agent's file from the configured agent directory and apply its role instructions for the phase.
+- Do not silently fall back to a generic assistant role. Briefly report in terminal progress whether the phase used native delegation or file-based instruction emulation.
 
 Language and naming rules:
 

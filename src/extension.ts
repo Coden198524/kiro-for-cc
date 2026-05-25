@@ -83,11 +83,10 @@ export async function activate(context: vscode.ExtensionContext) {
     taskSessionManager = new TaskSessionManager(outputChannel);
     taskCompletionVerifier = new TaskCompletionVerifier(agentRuntime, taskSessionManager, outputChannel);
     taskCompletionService = new TaskCompletionService(taskCompletionVerifier, outputChannel);
-    specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager);
-    steeringManager = new SteeringManager(agentRuntime, outputChannel);
-
     // Initialize Agent Manager and agents
     agentManager = new AgentManager(context, outputChannel);
+    specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager, agentManager);
+    steeringManager = new SteeringManager(agentRuntime, outputChannel);
     await agentManager.initializeBuiltInAgents();
 
     // Register tree data providers

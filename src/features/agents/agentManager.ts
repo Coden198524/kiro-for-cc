@@ -16,6 +16,16 @@ export interface AgentInfo {
 export type AgentLocation = 'project' | 'user';
 export type AgentTargetProvider = 'claude' | 'codex' | 'all';
 
+export interface CodexAgentsReadyResult {
+    ready: boolean;
+    agentsPath?: string;
+    configPath?: string;
+    existingAgents: string[];
+    createdAgents: string[];
+    missingAgents: string[];
+    errors: string[];
+}
+
 export class AgentManager {
     private outputChannel: vscode.OutputChannel;
     private extensionPath: string;
@@ -76,24 +86,13 @@ export class AgentManager {
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(codexTargetDir));
             
             for (const agentName of this.BUILT_IN_AGENTS) {
-                const sourcePath = path.join(this.extensionPath, 'dist/resources/agents', `${agentName}.md`);
-                const targetPath = path.join(targetDir, `${agentName}.md`);
-                
                 try {
-                    const sourceUri = vscode.Uri.file(sourcePath);
-                    const targetUri = vscode.Uri.file(targetPath);
-                    try {
-                        await vscode.workspace.fs.stat(targetUri);
-                        this.outputChannel.appendLine(`[AgentManager] Agent ${agentName} already exists, skipping`);
-                    } catch {
-                        await vscode.workspace.fs.copy(sourceUri, targetUri, { overwrite: false });
-                        this.outputChannel.appendLine(`[AgentManager] Copied agent ${agentName}`);
-                    }
+                    const source = await this.readBuiltInAgentSource(agentName);
+                    await this.initializeAutocodeAgent(agentName, source, targetDir);
+                    await this.initializeCodexAgent(agentName, source, codexTargetDir);
                 } catch (error) {
-                    this.outputChannel.appendLine(`[AgentManager] Failed to copy agent ${agentName}: ${error}`);
+                    this.outputChannel.appendLine(`[AgentManager] Failed to initialize agent ${agentName}: ${error}`);
                 }
-
-                await this.initializeCodexAgent(agentName, sourcePath, codexTargetDir);
             }
             
             await this.initializeCodexConfig();
@@ -106,6 +105,83 @@ export class AgentManager {
         }
     }
 
+    async ensureCodexAgentsReady(): Promise<CodexAgentsReadyResult> {
+        const result: CodexAgentsReadyResult = {
+            ready: false,
+            agentsPath: this.getCodexProjectAgentsPath(),
+            configPath: this.getCodexProjectConfigPath(),
+            existingAgents: [],
+            createdAgents: [],
+            missingAgents: [],
+            errors: []
+        };
+
+        if (!this.workspaceRoot || !result.agentsPath || !result.configPath) {
+            result.errors.push('No workspace root found for Codex agent initialization.');
+            this.outputChannel.appendLine('[AgentManager] No workspace root found, cannot prepare Codex agents');
+            return result;
+        }
+
+        try {
+            await vscode.workspace.fs.createDirectory(vscode.Uri.file(result.agentsPath));
+        } catch (error) {
+            result.errors.push(`Failed to create Codex agent directory ${result.agentsPath}: ${error}`);
+            this.outputChannel.appendLine(`[AgentManager] Failed to create Codex agent directory: ${error}`);
+            return result;
+        }
+
+        for (const agentName of this.BUILT_IN_AGENTS) {
+            const targetPath = this.joinPathPreservingSeparator(result.agentsPath, `${agentName}.toml`);
+
+            if (await this.pathExists(targetPath)) {
+                result.existingAgents.push(agentName);
+                continue;
+            }
+
+            try {
+                const source = await this.readBuiltInAgentSource(agentName);
+                const codexAgent = this.convertMarkdownAgentToCodexToml(agentName, source);
+                await vscode.workspace.fs.writeFile(vscode.Uri.file(targetPath), Buffer.from(codexAgent, 'utf8'));
+                result.createdAgents.push(agentName);
+                this.outputChannel.appendLine(`[AgentManager] Created Codex agent ${agentName}`);
+            } catch (error) {
+                result.missingAgents.push(agentName);
+                result.errors.push(`Failed to create Codex agent ${agentName}: ${error}`);
+                this.outputChannel.appendLine(`[AgentManager] Failed to create Codex agent ${agentName}: ${error}`);
+            }
+        }
+
+        try {
+            await this.initializeCodexConfig();
+        } catch (error) {
+            result.errors.push(`Failed to create Codex config ${result.configPath}: ${error}`);
+            this.outputChannel.appendLine(`[AgentManager] Failed to create Codex config: ${error}`);
+        }
+
+        if (!await this.pathExists(result.configPath)) {
+            result.errors.push(`Codex config is missing after initialization: ${result.configPath}`);
+        }
+
+        const missingAgentSet = new Set(result.missingAgents);
+        for (const agentName of this.BUILT_IN_AGENTS) {
+            const targetPath = this.joinPathPreservingSeparator(result.agentsPath, `${agentName}.toml`);
+            if (!await this.pathExists(targetPath)) {
+                missingAgentSet.add(agentName);
+            }
+        }
+
+        result.missingAgents = Array.from(missingAgentSet);
+        result.ready = result.errors.length === 0 && result.missingAgents.length === 0;
+
+        if (result.ready) {
+            this.outputChannel.appendLine(`[AgentManager] Codex agents ready: ${result.agentsPath}`);
+        } else {
+            this.outputChannel.appendLine(`[AgentManager] Codex agents not ready. Missing: ${result.missingAgents.join(', ') || 'none'}`);
+        }
+
+        return result;
+    }
+
     /**
      * Initialize system prompt (copy if not exist)
      */
@@ -115,14 +191,23 @@ export class AgentManager {
         }
 
         const systemPromptDir = path.join(this.workspaceRoot, AgentManager.PROJECT_DATA_DIR, 'system-prompts');
-        const sourcePath = path.join(this.extensionPath, 'dist/resources/prompts', 'spec-workflow-starter.md');
         const targetPath = path.join(systemPromptDir, 'spec-workflow-starter.md');
+        const targetUri = vscode.Uri.file(targetPath);
 
         try {
             // Ensure directory exists
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(systemPromptDir));
-            
-            await vscode.workspace.fs.copy(vscode.Uri.file(sourcePath), vscode.Uri.file(targetPath), { overwrite: false });
+
+            try {
+                await vscode.workspace.fs.stat(targetUri);
+                this.outputChannel.appendLine('[AgentManager] System prompt already exists, skipping');
+                return;
+            } catch {
+                // File does not exist, create it below.
+            }
+
+            const source = await this.readBuiltInPromptSource('spec-workflow-starter.md');
+            await vscode.workspace.fs.writeFile(targetUri, Buffer.from(source, 'utf8'));
             this.outputChannel.appendLine('[AgentManager] Copied system prompt');
         } catch (error) {
             this.outputChannel.appendLine(`[AgentManager] Failed to initialize system prompt: ${error}`);
@@ -350,26 +435,37 @@ export class AgentManager {
         return filePath.replace(/\\/g, '/');
     }
 
-    private async initializeCodexAgent(agentName: string, sourcePath: string, codexTargetDir: string): Promise<void> {
-        const targetPath = path.join(codexTargetDir, `${agentName}.toml`);
+    private async initializeAutocodeAgent(agentName: string, source: string, targetDir: string): Promise<void> {
+        const targetPath = path.join(targetDir, `${agentName}.md`);
+        const targetUri = vscode.Uri.file(targetPath);
 
         try {
-            const targetUri = vscode.Uri.file(targetPath);
-            try {
-                await vscode.workspace.fs.stat(targetUri);
-                this.outputChannel.appendLine(`[AgentManager] Codex agent ${agentName} already exists, skipping`);
-                return;
-            } catch {
-                // File does not exist, create it below.
-            }
-
-            const source = await fs.promises.readFile(sourcePath, 'utf8');
-            const codexAgent = this.convertMarkdownAgentToCodexToml(agentName, source);
-            await vscode.workspace.fs.writeFile(targetUri, Buffer.from(codexAgent));
-            this.outputChannel.appendLine(`[AgentManager] Created Codex agent ${agentName}`);
-        } catch (error) {
-            this.outputChannel.appendLine(`[AgentManager] Failed to create Codex agent ${agentName}: ${error}`);
+            await vscode.workspace.fs.stat(targetUri);
+            this.outputChannel.appendLine(`[AgentManager] Agent ${agentName} already exists, skipping`);
+            return;
+        } catch {
+            // File does not exist, create it below.
         }
+
+        await vscode.workspace.fs.writeFile(targetUri, Buffer.from(source, 'utf8'));
+        this.outputChannel.appendLine(`[AgentManager] Copied agent ${agentName}`);
+    }
+
+    private async initializeCodexAgent(agentName: string, source: string, codexTargetDir: string): Promise<void> {
+        const targetPath = path.join(codexTargetDir, `${agentName}.toml`);
+        const targetUri = vscode.Uri.file(targetPath);
+
+        try {
+            await vscode.workspace.fs.stat(targetUri);
+            this.outputChannel.appendLine(`[AgentManager] Codex agent ${agentName} already exists, skipping`);
+            return;
+        } catch {
+            // File does not exist, create it below.
+        }
+
+        const codexAgent = this.convertMarkdownAgentToCodexToml(agentName, source);
+        await vscode.workspace.fs.writeFile(targetUri, Buffer.from(codexAgent, 'utf8'));
+        this.outputChannel.appendLine(`[AgentManager] Created Codex agent ${agentName}`);
     }
 
     private async initializeCodexConfig(): Promise<void> {
@@ -394,6 +490,45 @@ export class AgentManager {
         ].join('\n');
         await vscode.workspace.fs.writeFile(configUri, Buffer.from(content));
         this.outputChannel.appendLine('[AgentManager] Created Codex config');
+    }
+
+    private async readBuiltInAgentSource(agentName: string): Promise<string> {
+        return this.readFirstTextFile([
+            path.join(this.extensionPath, 'dist/resources/agents', `${agentName}.md`),
+            path.join(this.extensionPath, 'src/resources/agents', `${agentName}.md`),
+            path.join(this.extensionPath, 'resources/agents', `${agentName}.md`)
+        ], `built-in agent source for ${agentName}`);
+    }
+
+    private async readBuiltInPromptSource(fileName: string): Promise<string> {
+        return this.readFirstTextFile([
+            path.join(this.extensionPath, 'dist/resources/prompts', fileName),
+            path.join(this.extensionPath, 'src/resources/prompts', fileName),
+            path.join(this.extensionPath, 'resources/prompts', fileName)
+        ], `built-in prompt source for ${fileName}`);
+    }
+
+    private async readFirstTextFile(candidates: string[], description: string): Promise<string> {
+        let lastError: unknown;
+
+        for (const sourcePath of candidates) {
+            try {
+                return await fs.promises.readFile(sourcePath, 'utf8');
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        throw new Error(`${description} not found. Tried: ${candidates.join(', ')}. Last error: ${lastError}`);
+    }
+
+    private async pathExists(filePath: string): Promise<boolean> {
+        try {
+            await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     private convertMarkdownAgentToCodexToml(agentName: string, source: string): string {

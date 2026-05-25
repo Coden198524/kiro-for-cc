@@ -81,7 +81,11 @@ Use requirements instructions.`);
         expect(vscode.workspace.fs.createDirectory).toHaveBeenCalledWith(
             expect.objectContaining({ fsPath: codexTargetPath })
         );
-        expect(vscode.workspace.fs.copy).toHaveBeenCalledTimes(8);
+        expect(vscode.workspace.fs.copy).not.toHaveBeenCalled();
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: path.join(targetPath, 'spec-requirements.md') }),
+            expect.any(Buffer)
+        );
         expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
             expect.objectContaining({ fsPath: path.join(codexTargetPath, 'spec-requirements.toml') }),
             expect.any(Buffer)
@@ -96,7 +100,8 @@ Use requirements instructions.`);
 
     test('skips existing built-in agents', async () => {
         (vscode.workspace.fs.stat as jest.Mock).mockImplementation((uri) => {
-            if (uri.fsPath.includes('spec-requirements') || uri.fsPath.includes('spec-design') || uri.fsPath.endsWith('.codex/config.toml')) {
+            const normalizedPath = uri.fsPath.replace(/\\/g, '/');
+            if (normalizedPath.includes('spec-requirements') || normalizedPath.includes('spec-design') || normalizedPath.endsWith('.codex/config.toml')) {
                 return Promise.resolve({ type: vscode.FileType.File });
             }
             return Promise.reject(new Error('Not found'));
@@ -110,10 +115,112 @@ Instructions`);
 
         await agentManager.initializeBuiltInAgents();
 
-        expect(vscode.workspace.fs.copy).toHaveBeenCalledTimes(6);
+        expect(vscode.workspace.fs.copy).not.toHaveBeenCalled();
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledTimes(11);
         expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
             expect.stringContaining('already exists, skipping')
         );
+    });
+
+    test('falls back to source resources when dist system prompt resource is missing', async () => {
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('File not found'));
+        (fs.promises.readFile as jest.Mock).mockImplementation(async (sourcePath: string) => {
+            const normalizedPath = sourcePath.replace(/\\/g, '/');
+            if (normalizedPath.includes('/dist/resources/prompts/')) {
+                throw new Error('missing dist prompt');
+            }
+
+            if (normalizedPath.includes('/src/resources/prompts/spec-workflow-starter.md')) {
+                return 'Spec workflow starter prompt';
+            }
+
+            return `---
+name: spec-requirements
+description: Requirements agent
+---
+
+Use requirements instructions.`;
+        });
+
+        await agentManager.initializeBuiltInAgents();
+
+        const readPaths = (fs.promises.readFile as jest.Mock).mock.calls
+            .map(([sourcePath]) => String(sourcePath).replace(/\\/g, '/'));
+        expect(readPaths.some(sourcePath => sourcePath.includes('/src/resources/prompts/spec-workflow-starter.md'))).toBe(true);
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: path.join(mockWorkspaceRoot, '.autocode', 'system-prompts', 'spec-workflow-starter.md') }),
+            expect.any(Buffer)
+        );
+    });
+
+    test('ensures missing Codex agents and config are ready before launch', async () => {
+        mockWorkspaceFileState();
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(`---
+name: spec-requirements
+description: Requirements agent
+---
+
+Use requirements instructions.`);
+
+        const result = await agentManager.ensureCodexAgentsReady();
+
+        expect(result.ready).toBe(true);
+        expect(result.agentsPath?.replace(/\\/g, '/')).toBe('/test/workspace/.codex/agents');
+        expect(result.configPath?.replace(/\\/g, '/')).toBe('/test/workspace/.codex/config.toml');
+        expect(result.createdAgents).toContain('spec-requirements');
+        expect(result.missingAgents).toEqual([]);
+        expect(result.errors).toEqual([]);
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: expect.stringContaining('spec-requirements.toml') }),
+            expect.any(Buffer)
+        );
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: expect.stringContaining('config.toml') }),
+            expect.any(Buffer)
+        );
+    });
+
+    test('falls back to source resources when dist agent resources are missing', async () => {
+        mockWorkspaceFileState();
+        (fs.promises.readFile as jest.Mock).mockImplementation(async (sourcePath: string) => {
+            const normalizedPath = sourcePath.replace(/\\/g, '/');
+            if (normalizedPath.includes('/dist/resources/agents/')) {
+                throw new Error('missing dist resource');
+            }
+
+            return `---
+name: spec-requirements
+description: Requirements agent
+---
+
+Use requirements instructions.`;
+        });
+
+        const result = await agentManager.ensureCodexAgentsReady();
+
+        const readPaths = (fs.promises.readFile as jest.Mock).mock.calls
+            .map(([sourcePath]) => String(sourcePath).replace(/\\/g, '/'));
+        expect(result.ready).toBe(true);
+        expect(readPaths.some(sourcePath => sourcePath.includes('/src/resources/agents/spec-requirements.md'))).toBe(true);
+    });
+
+    test('reports Codex agents not ready when built-in sources are unavailable', async () => {
+        mockWorkspaceFileState();
+        (fs.promises.readFile as jest.Mock).mockRejectedValue(new Error('missing source'));
+
+        const result = await agentManager.ensureCodexAgentsReady();
+
+        expect(result.ready).toBe(false);
+        expect(result.missingAgents).toEqual(expect.arrayContaining([
+            'spec-requirements',
+            'spec-design',
+            'spec-tasks',
+            'spec-system-prompt-loader',
+            'spec-judge',
+            'spec-impl',
+            'spec-test'
+        ]));
+        expect(result.errors.join('\n')).toContain('built-in agent source for spec-requirements not found');
     });
 
     test('returns project agents parsed from frontmatter', async () => {
@@ -273,4 +380,28 @@ tools: Read, Write, Task
         expect(projectAgents).toEqual([]);
         expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(expect.stringContaining('No workspace'));
     });
+
+    function mockWorkspaceFileState(existingPaths: string[] = []): Set<string> {
+        const files = new Set(existingPaths.map(normalizePath));
+
+        (vscode.workspace.fs.stat as jest.Mock).mockImplementation(async (uri) => {
+            if (files.has(normalizePath(uri.fsPath))) {
+                return { type: vscode.FileType.File };
+            }
+
+            throw new Error('File not found');
+        });
+        (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async (uri) => {
+            files.add(normalizePath(uri.fsPath));
+        });
+        (vscode.workspace.fs.createDirectory as jest.Mock).mockImplementation(async (uri) => {
+            files.add(normalizePath(uri.fsPath));
+        });
+
+        return files;
+    }
+
+    function normalizePath(filePath: string): string {
+        return filePath.replace(/\\/g, '/');
+    }
 });

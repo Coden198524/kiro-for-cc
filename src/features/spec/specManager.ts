@@ -6,6 +6,7 @@ import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
 import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
 import { hasChildSpecTasks, parseSpecTaskLine, SpecTaskStatus } from './taskStatus';
+import { AgentManager, CodexAgentsReadyResult } from '../agents/agentManager';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
@@ -79,7 +80,8 @@ export class SpecManager {
     constructor(
         private agentRuntime: AgentRuntime,
         private outputChannel: vscode.OutputChannel,
-        private taskSessionManager?: TaskSessionManager
+        private taskSessionManager?: TaskSessionManager,
+        private agentManager?: AgentManager
     ) {
         this.configManager = ConfigManager.getInstance();
         this.configManager.loadSettings();
@@ -128,10 +130,19 @@ export class SpecManager {
             return;
         }
 
-        await this.createFromDescription(description, true);
+        const agentReadiness = await this.ensureExpertAgentsReady();
+        if (agentReadiness === null) {
+            return;
+        }
+
+        await this.createFromDescription(description, true, agentReadiness);
     }
 
-    private async createFromDescription(description: string, useAgents: boolean) {
+    private async createFromDescription(
+        description: string,
+        useAgents: boolean,
+        codexAgentReadiness?: CodexAgentsReadyResult
+    ) {
         await this.agentRuntime.refreshProvider?.();
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -148,7 +159,7 @@ export class SpecManager {
 
         // Let the active agent handle directory creation, naming, and file creation.
         const specBasePath = await this.getSpecBasePath();
-        const agentContext = useAgents ? this.getExpertAgentPromptContext(workspaceFolder.uri.fsPath) : {};
+        const agentContext = useAgents ? this.getExpertAgentPromptContext(workspaceFolder.uri.fsPath, codexAgentReadiness) : {};
         const prompt = this.promptLoader.renderPrompt(useAgents ? 'create-spec-with-agents' : 'create-spec', {
             description,
             workspacePath: workspaceFolder.uri.fsPath,
@@ -248,20 +259,60 @@ export class SpecManager {
         return { terminal, completionSignalPath };
     }
 
-    private getExpertAgentPromptContext(workspacePath: string): Record<string, string> {
+    private async ensureExpertAgentsReady(): Promise<CodexAgentsReadyResult | undefined | null> {
+        const provider = this.agentRuntime.provider;
+
+        if (provider.id !== 'codex') {
+            return undefined;
+        }
+
+        if (!this.agentManager) {
+            const message = 'Codex expert agents are unavailable because the agent manager is not initialized.';
+            this.outputChannel.appendLine(`[SpecManager] ${message}`);
+            vscode.window.showErrorMessage(message);
+            return null;
+        }
+
+        const readiness = await this.agentManager.ensureCodexAgentsReady();
+        if (!readiness.ready) {
+            const missing = readiness.missingAgents.length > 0
+                ? readiness.missingAgents.join(', ')
+                : 'none';
+            const message = `Codex expert agents are not ready. Missing agents: ${missing}.`;
+            this.outputChannel.appendLine(`[SpecManager] ${message}`);
+            for (const error of readiness.errors) {
+                this.outputChannel.appendLine(`[SpecManager] Codex agent readiness error: ${error}`);
+            }
+            vscode.window.showErrorMessage(message);
+            return null;
+        }
+
+        return readiness;
+    }
+
+    private getExpertAgentPromptContext(workspacePath: string, codexAgentReadiness?: CodexAgentsReadyResult): Record<string, string> {
         const provider = this.agentRuntime.provider;
 
         if (provider.id === 'codex') {
-            const codexAgentsPath = path.join(workspacePath, '.codex', 'agents');
-            const codexConfigPath = path.join(workspacePath, '.codex', 'config.toml');
+            const codexAgentsPath = codexAgentReadiness?.agentsPath ?? path.join(workspacePath, '.codex', 'agents');
+            const codexConfigPath = codexAgentReadiness?.configPath ?? path.join(workspacePath, '.codex', 'config.toml');
             return {
                 providerName: provider.displayName,
                 agentDirectory: codexAgentsPath,
                 agentConfigPath: codexConfigPath,
+                agentReadiness: codexAgentReadiness
+                    ? [
+                        'Codex project expert agents were verified before launch.',
+                        `Existing agents: ${codexAgentReadiness.existingAgents.join(', ') || 'none'}.`,
+                        `Created agents this run: ${codexAgentReadiness.createdAgents.join(', ') || 'none'}.`,
+                        'Missing agents: none.'
+                    ].join(' ')
+                    : 'Codex project expert agents were not verified by this AutoCode session.',
                 agentInvocationInstruction: [
-                    'Use the Codex expert agents configured under the project `.codex/agents` directory when your runtime exposes subagents.',
+                    'Use the Codex expert agents configured under the project `.codex/agents` directory when your runtime exposes subagents or multi-agent tools.',
                     'Match each workflow phase to these agent names: spec-requirements, spec-design, spec-tasks, spec-judge, spec-impl, and spec-test.',
-                    'If the current Codex runtime cannot spawn a subagent directly, read the matching `.toml` file and apply its `developer_instructions` as the role instructions for that phase.'
+                    'If the current Codex runtime cannot spawn a subagent directly, read the matching `.toml` file and apply its `developer_instructions` as the role instructions for that phase.',
+                    'Do not continue with an unscoped generic role. Report whether each phase used native delegation or TOML instruction emulation in terminal progress.'
                 ].join('\n')
             };
         }
@@ -270,6 +321,7 @@ export class SpecManager {
             providerName: provider.displayName,
             agentDirectory: path.join(workspacePath, '.autocode', 'agents', 'autocode'),
             agentConfigPath: '(not required)',
+            agentReadiness: 'Claude/AutoCode project agent directory is initialized on extension activation when a workspace is open.',
             agentInvocationInstruction: [
                 'Use the Claude/AutoCode project agents under `.autocode/agents/autocode` when your runtime exposes subagents.',
                 'Match each workflow phase to these agent names: spec-requirements, spec-design, spec-tasks, spec-judge, spec-impl, and spec-test.',

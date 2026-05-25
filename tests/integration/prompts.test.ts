@@ -62,6 +62,7 @@ describe('Prompt Integration Tests', () => {
         providerName: 'Codex',
         agentDirectory: '/test/.codex/agents',
         agentConfigPath: '/test/.codex/config.toml',
+        agentReadiness: 'Codex project expert agents were verified before launch.',
         agentInvocationInstruction: 'Use configured agents.'
       });
 
