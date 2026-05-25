@@ -8,17 +8,17 @@
 [中文版](./README.zh-CN.md)
 
 > [!IMPORTANT]
-> **🎉 New: Sub Agent Support Now Available!**  
-> Enhanced Claude Code workflow capabilities through Sub Agent feature. Create specs with parallel processing using specialized agents for requirements, design, and tasks.
+> **🎉 New: Multi-Provider Agent Runtime and Sub Agent Support**
+> Run spec workflows with Claude Code, Codex/OpenAI, DeepSeek, GLM/Z.AI, or a custom CLI. Claude Code can also use Sub Agents for specialized requirements, design, and task phases.
 
-A VSCode extension that brings spec-driven development to Claude Code. Manage your specs and steering documents visually while leveraging Claude Code's powerful AI capabilities.
+A VSCode extension that brings spec-driven development to AI coding agents. Manage specs, steering documents, agents, MCP context, and task execution from the sidebar while using your configured provider.
 
 **NEW: Create SPEC with Sub Agents:**
 
 1. Click the AutoCode icon in the activity bar
 2. In the SPEC view header, click the "New Spec with Agents" button (with sparkle icon ✨)
 3. Enter a feature description
-4. Claude will automatically:
+4. Claude Code will automatically:
    - Load the spec workflow system prompt
    - Delegate work to specialized agents (requirements, design, tasks)
    - Process each phase in parallel with dedicated context windows
@@ -34,14 +34,14 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 
 ### 📝 SPEC Management
 
-- **Create Specs**: Generate requirements, design, and task documents with Claude's help
+- **Create Specs**: Generate requirements, design, and task documents with the active agent provider
 - **Visual Explorer**: Browse and manage specs in the sidebar
 - **Spec Workflow**: Requirements → Design → Tasks with review at each step
 - **NEW: Sub Agent Support**: Create specs using specialized agents for parallel processing
 
 ### 🤖 AGENT Management
 
-- **User & Project Agents**: View and manage Claude Code agents at user and project levels
+- **User & Project Agents**: View and manage Claude Code and Codex agent configurations at user and project levels
 - **Built-in Agents**: Pre-configured spec workflow agents (requirements, design, tasks, judge, etc.)
 - **Agent Explorer**: Browse and edit agent configurations with syntax highlighting
 
@@ -66,13 +66,13 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 
 ![AutoCode Extension](./screenshots/image.png)
 
-*The extension provides a comprehensive sidebar interface with organized views for specs, steering documents, MCP servers, and hooks management. All your Claude Code enhancement tools in one place.*
+*The extension provides a comprehensive sidebar interface with organized views for specs, steering documents, agents, MCP servers, hooks, and provider settings.*
 
 ## Installation
 
 ### Prerequisites
 
-1. **Claude Code Installation**: Ensure Claude Code is installed and configured
+1. **Agent CLI Installation**: Install and configure at least one supported agent CLI, such as Claude Code, Codex/OpenAI, DeepSeek, GLM/Z.AI, or your custom command.
 
 2. **Compatibility**:
 
@@ -82,7 +82,7 @@ A VSCode extension that brings spec-driven development to Claude Code. Manage yo
 | Linux                     | ✅       | Fully supported                          | released |
 | Windows (WSL)             | ✅       | Supported with automatic path conversion | released |
 | Windows (CMD)             | ❌       | Not supported                            | TBD      |
-| Windows (PowerShell)      | ❌       | Not supported                            | TBD      |
+| Windows (PowerShell)      | ✅       | Supported for native CLI providers       | released |
 | Windows (MinTTY Git Bash) | ❌       | Not supported                            | TBD      |
 
 ### From Extension Marketplace
@@ -196,7 +196,7 @@ The extension creates the following structure in your workspace:
 │       ├── requirements.md   # What to build
 │       ├── design.md        # How to build
 │       └── tasks.md         # Implementation steps
-├── agents/                  # Claude Code agents
+├── agents/                  # AutoCode agent resources
 │   └── autocode/            # Built-in agents (auto-initialized)
 │       ├── spec-requirements.md
 │       ├── spec-design.md
@@ -257,7 +257,8 @@ npm run package
 
 ```plain
 src/
-├── extension.ts              # Extension entry point, command registration
+├── extension.ts              # Extension activation entry point
+├── commands/                 # VS Code command registration
 ├── constants.ts              # Configuration constants
 ├── features/                 # Business logic
 │   ├── spec/
@@ -267,13 +268,14 @@ src/
 │   └── agents/
 │       └── agentManager.ts   # Agent initialization and management
 ├── providers/                # VSCode TreeDataProviders
-│   ├── claudeCodeProvider.ts # Claude CLI integration
+│   ├── claudeCodeProvider.ts # Backward-compatible Claude runtime wrapper
 │   ├── specExplorerProvider.ts
 │   ├── steeringExplorerProvider.ts
 │   ├── agentsExplorerProvider.ts    # NEW: Agent explorer
 │   ├── hooksExplorerProvider.ts
 │   ├── mcpExplorerProvider.ts
 │   └── overviewProvider.ts
+├── runtime/                  # Agent provider registry and terminal runtime
 ├── prompts/                  # AI prompt templates
 │   ├── specPrompts.ts        # Spec generation prompts
 │   ├── steeringPrompts.ts    # Steering doc prompts

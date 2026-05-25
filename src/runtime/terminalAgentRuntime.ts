@@ -7,6 +7,7 @@ import { ConfigManager } from '../utils/configManager';
 import { VSC_CONFIG_NAMESPACE } from '../constants';
 import { getPermissionManager } from '../extension';
 import { AgentType, getAgentConfig } from './agentConfigs';
+import { buildAgentCommand, buildAgentInteractiveCommand, convertPathForWsl } from './agentCommandBuilder';
 import { AgentInvocationRequest, AgentInvocationResult, AgentProviderConfig, AgentRuntime } from './agentRuntime';
 import { getRuntimeMcpServers, McpServerInfo } from './mcpRegistry';
 import { getProviderConfig } from './providerRegistry';
@@ -307,40 +308,16 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
     }
 
     private buildCommand(promptFilePath: string, provider: AgentProviderConfig = this.provider): string {
-        const promptSubstitution = this.buildPromptSubstitution(promptFilePath);
-        const args = (provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
-        const command = this.quoteCommand(provider.command);
-
-        if (provider.id === 'claude') {
-            return `${command} --permission-mode bypassPermissions "${promptSubstitution}"`;
-        }
-
-        if (provider.id === 'codex') {
-            return `${this.buildPromptReadCommand(promptFilePath)} | ${command} exec ${args} -`.replace(/\s+/g, ' ').trim();
-        }
-
-        if (provider.commandTemplate) {
-            const model = provider.model ? this.quoteShellArg(provider.model) : '';
-            return provider.commandTemplate
-                .replaceAll('{command}', command)
-                .replaceAll('{args}', args)
-                .replaceAll('{model}', model)
-                .replaceAll('{prompt}', promptSubstitution)
-                .replace(/\s+/g, ' ')
-                .trim();
-        }
-
-        return [command, args, `"${promptSubstitution}"`].filter(Boolean).join(' ');
+        return buildAgentCommand({
+            provider,
+            promptFilePath,
+            platform: process.platform,
+            useWslPaths: this.shouldUseWslPaths(provider)
+        });
     }
 
     private buildInteractiveCommand(provider: AgentProviderConfig = this.provider): string {
-        const args = (provider.args ?? []).map(arg => this.quoteShellArg(arg)).join(' ');
-
-        if (provider.id === 'claude') {
-            return `${this.quoteCommand(provider.command)} --permission-mode bypassPermissions`;
-        }
-
-        return [this.quoteCommand(provider.command), args].filter(Boolean).join(' ');
+        return buildAgentInteractiveCommand(provider);
     }
 
     private sendPromptToInteractiveTerminal(terminal: vscode.Terminal, provider: AgentProviderConfig, prompt: string): number {
@@ -395,50 +372,6 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         );
     }
 
-    private buildPromptSubstitution(promptFilePath: string): string {
-        if (process.platform === 'win32' && !this.shouldUseWslPaths()) {
-            return `$(Get-Content -Raw -LiteralPath '${this.escapePowerShellSingleQuoted(promptFilePath)}')`;
-        }
-
-        return `$(cat "${this.escapeDoubleQuoted(promptFilePath)}")`;
-    }
-
-    private buildPromptReadCommand(promptFilePath: string): string {
-        if (process.platform === 'win32' && !this.shouldUseWslPaths()) {
-            return `Get-Content -Raw -LiteralPath '${this.escapePowerShellSingleQuoted(promptFilePath)}'`;
-        }
-
-        return `cat "${this.escapeDoubleQuoted(promptFilePath)}"`;
-    }
-
-    private quoteCommand(command: string): string {
-        if (!command.trim()) {
-            throw new Error(`No command configured for ${this.provider.displayName}`);
-        }
-
-        if (/^[A-Za-z0-9_.:/\\-]+$/.test(command)) {
-            return command;
-        }
-
-        return this.quoteShellArg(command);
-    }
-
-    private quoteShellArg(value: string): string {
-        if (/^[A-Za-z0-9_./:@=+\-]+$/.test(value)) {
-            return value;
-        }
-
-        return `"${this.escapeDoubleQuoted(value)}"`;
-    }
-
-    private escapeDoubleQuoted(value: string): string {
-        return value.replace(/(["`$\\])/g, '\\$1');
-    }
-
-    private escapePowerShellSingleQuoted(value: string): string {
-        return value.replace(/'/g, "''");
-    }
-
     private schedulePromptCleanup(promptFilePath: string, delayMs: number): void {
         setTimeout(async () => {
             await this.cleanupPromptFile(promptFilePath);
@@ -455,17 +388,14 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
     }
 
     private convertPathIfWSL(filePath: string): string {
-        if (process.platform === 'win32' && this.shouldUseWslPaths() && filePath.match(/^[A-Za-z]:\\/)) {
-            let wslPath = filePath.replace(/\\/g, '/');
-            wslPath = wslPath.replace(/^([A-Za-z]):/, (_match, drive) => `/mnt/${drive.toLowerCase()}`);
-            return wslPath;
-        }
-
-        return filePath;
+        return convertPathForWsl(filePath, {
+            platform: process.platform,
+            useWslPaths: this.shouldUseWslPaths()
+        });
     }
 
-    private shouldUseWslPaths(): boolean {
-        if (/^wsl(?:\.exe)?$/i.test(path.basename(this.provider.command))) {
+    private shouldUseWslPaths(provider: AgentProviderConfig = this.provider): boolean {
+        if (/^wsl(?:\.exe)?$/i.test(path.basename(provider.command))) {
             return true;
         }
 

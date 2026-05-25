@@ -4,17 +4,17 @@
 [![Downloads](https://img.shields.io/vscode-marketplace/d/heisebaiyun.autocode.svg)](https://marketplace.visualstudio.com/items?itemName=heisebaiyun.autocode)
 
 > [!IMPORTANT]
-> **🎉 重要更新：Sub Agent 版本已上线！**  
-> 现在支持通过 Sub Agent 功能增强 Claude Code 的工作流程能力。使用专门的 agent 进行需求、设计和任务的并行处理来创建规范。
+> **🎉 重要更新：多 Provider 运行时与 Sub Agent 支持**
+> 现在可以使用 Claude Code、Codex/OpenAI、DeepSeek、GLM/Z.AI 或自定义 CLI 执行规范工作流。Claude Code 还可以通过 Sub Agent 分阶段处理需求、设计和任务。
 
-为 Claude Code 带来规范驱动开发的 VSCode 扩展。在充分利用 Claude Code 强大 AI 能力的同时，可视化管理你的规范文档和指导文档。
+为 AI 编码 Agent 带来规范驱动开发的 VSCode 扩展。你可以在侧边栏中管理规范、指导文档、Agent、MCP 上下文和任务执行，并使用当前配置的 Provider。
 
 **新功能：使用 Sub Agent 创建 SPEC ：**
 
 1. 点击活动栏中的 AutoCode 图标
 2. 在 SPEC 视图右上角，点击 "New Spec with Agents" 按钮（带闪光图标 ✨）
 3. 输入功能描述
-4. Claude 将自动：
+4. Claude Code 将自动：
    - 加载规范工作流系统提示
    - 将工作委派给专门的 agent（需求、设计、任务）
    - 使用独立的上下文窗口并行处理每个阶段
@@ -30,14 +30,14 @@
 
 ### 📝 SPEC 管理
 
-- **创建规范**：在 Claude 的帮助下生成需求、设计和任务文档
+- **创建规范**：使用当前 Agent Provider 生成需求、设计和任务文档
 - **可视化浏览器**：在侧边栏中浏览和管理规范
 - **规范工作流**：需求 → 设计 → 任务，每步都需审查确认
 - **新功能：Sub Agent 支持**：使用专门的 agent 进行并行处理来创建规范
 
 ### 🤖 AGENT 管理
 
-- **用户和项目 Agent**：查看和管理用户级和项目级的 Claude Code agent
+- **用户和项目 Agent**：查看和管理用户级和项目级的 Claude Code 与 Codex agent 配置
 - **内置 Agent**：预配置的规范工作流 agent（需求、设计、任务、评审等）
 - **Agent 浏览器**：使用语法高亮浏览和编辑 agent 配置
 
@@ -62,13 +62,13 @@
 
 ![AutoCode 扩展界面](./screenshots/image.png)
 
-*该扩展提供了一个综合性的侧边栏界面，包含规范、引导文档、MCP 服务器和钩子管理等有序组织的视图。所有 Claude Code 增强工具都集中在一个地方。*
+*该扩展提供了一个综合性的侧边栏界面，包含规范、指导文档、Agent、MCP 服务器、钩子和 Provider 设置等视图。*
 
 ## 安装
 
 ### 前置条件
 
-1. **Claude Code 安装**：确保 Claude Code 已安装并配置
+1. **Agent CLI 安装**：至少安装并配置一个支持的 Agent CLI，例如 Claude Code、Codex/OpenAI、DeepSeek、GLM/Z.AI 或自定义命令。
 
 2. **兼容性**：
 
@@ -78,7 +78,7 @@
 | Linux                     | ✅        | 完全支持           | released |
 | Windows (WSL)             | ✅        | 支持，自动路径转换 | released |
 | Windows (CMD)             | ❌        | 不支持             | TBD      |
-| Windows (PowerShell)      | ❌        | 不支持             | TBD      |
+| Windows (PowerShell)      | ✅        | 支持原生 CLI       | released |
 | Windows (MinTTY Git Bash) | ❌        | 不支持             | TBD      |
 
 ### 从扩展商店安装
@@ -193,7 +193,7 @@ cursor --install-extension autocode-{latest-version}.vsix
 │       ├── requirements.md   # 构建什么
 │       ├── design.md        # 如何构建
 │       └── tasks.md         # 实施步骤
-├── agents/                  # Claude Code agents
+├── agents/                  # AutoCode agent 资源
 │   └── autocode/            # 内置 agents（自动初始化）
 │       ├── spec-requirements.md
 │       ├── spec-design.md
@@ -254,7 +254,8 @@ npm run package
 
 ```plain
 src/
-├── extension.ts              # 扩展入口，命令注册
+├── extension.ts              # 扩展激活入口
+├── commands/                 # VS Code 命令注册
 ├── constants.ts              # 配置常量
 ├── features/                 # 业务逻辑
 │   ├── spec/
@@ -264,13 +265,14 @@ src/
 │   └── agents/
 │       └── agentManager.ts   # Agent 初始化和管理
 ├── providers/                # VSCode 树形视图提供者
-│   ├── claudeCodeProvider.ts # Claude CLI 集成
+│   ├── claudeCodeProvider.ts # 兼容旧接口的 Claude 运行时包装
 │   ├── specExplorerProvider.ts
 │   ├── steeringExplorerProvider.ts
 │   ├── agentsExplorerProvider.ts    # 新增：Agent 浏览器
 │   ├── hooksExplorerProvider.ts
 │   ├── mcpExplorerProvider.ts
 │   └── overviewProvider.ts
+├── runtime/                  # Agent Provider 注册和终端运行时
 ├── prompts/                  # AI 提示词模板
 │   ├── specPrompts.ts        # 规范生成提示词
 │   ├── steeringPrompts.ts    # 指导文档提示词
