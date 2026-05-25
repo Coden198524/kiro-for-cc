@@ -2,12 +2,14 @@ import * as vscode from 'vscode';
 import { SettingsManager } from '../features/settings/settingsManager';
 import { HooksExplorerProvider } from '../providers/hooksExplorerProvider';
 import { MCPExplorerProvider } from '../providers/mcpExplorerProvider';
+import { OverviewProvider } from '../providers/overviewProvider';
 import { UpdateChecker } from '../utils/updateChecker';
 
 export interface RegisterGeneralCommandsOptions {
     context: vscode.ExtensionContext;
     hooksExplorer: HooksExplorerProvider;
     mcpExplorer: MCPExplorerProvider;
+    overviewProvider: OverviewProvider;
     updateChecker: UpdateChecker;
     settingsManager: SettingsManager;
     outputChannel: vscode.OutputChannel;
@@ -18,6 +20,7 @@ export function registerGeneralCommands(options: RegisterGeneralCommandsOptions)
         context,
         hooksExplorer,
         mcpExplorer,
+        overviewProvider,
         updateChecker,
         settingsManager,
         outputChannel
@@ -32,6 +35,26 @@ export function registerGeneralCommands(options: RegisterGeneralCommandsOptions)
         }),
         vscode.commands.registerCommand('autocode.mcp.refresh', () => {
             mcpExplorer.refresh();
+        }),
+        vscode.commands.registerCommand('autocode.model.selectProvider', async () => {
+            if (await settingsManager.selectAgentProvider()) {
+                overviewProvider.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.model.useProvider', async (providerId: string) => {
+            if (await settingsManager.setAgentProvider(providerId)) {
+                overviewProvider.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.model.setModel', async () => {
+            if (await settingsManager.setAgentModel()) {
+                overviewProvider.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.model.clearModel', async () => {
+            if (await settingsManager.clearAgentModel()) {
+                overviewProvider.refresh();
+            }
         }),
         vscode.commands.registerCommand('autocode.checkForUpdates', async () => {
             outputChannel.appendLine('Manual update check requested');

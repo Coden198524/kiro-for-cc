@@ -193,6 +193,10 @@ export class TreeItem {
   description?: string;
 }
 
+export class ThemeIcon {
+  constructor(public id: string) {}
+}
+
 // Mock TreeItemCollapsibleState
 export enum TreeItemCollapsibleState {
   None = 0,

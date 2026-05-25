@@ -50,7 +50,7 @@ export const DEFAULT_CONFIG = {
         steering: true,
         mcp: true,
         hooks: true,
-        settings: false
+        settings: true
     }
 } as const;
 

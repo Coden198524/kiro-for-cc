@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { CONFIG_FILE_NAME, DEFAULT_PATHS, VSC_CONFIG_NAMESPACE } from '../../constants';
+import { AgentProviderId } from '../../runtime/agentRuntime';
+import { getProviderDisplayName, isAgentProviderId, listProviderIds } from '../../runtime/providerRegistry';
 import { ConfigManager } from '../../utils/configManager';
 
 export class SettingsManager {
@@ -124,5 +126,102 @@ export class SettingsManager {
         });
 
         vscode.window.showInformationMessage('View visibility updated!');
+    }
+
+    async selectAgentProvider(): Promise<boolean> {
+        const activeProvider = await this.getActiveProvider();
+        const items = listProviderIds().map(providerId => ({
+            label: getProviderDisplayName(providerId),
+            description: providerId === activeProvider ? 'Active' : providerId,
+            providerId
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select active model provider'
+        });
+        if (!selected) {
+            return false;
+        }
+
+        return this.setAgentProvider(selected.providerId);
+    }
+
+    async setAgentProvider(providerId: AgentProviderId | string): Promise<boolean> {
+        if (!isAgentProviderId(providerId)) {
+            vscode.window.showErrorMessage(`Unsupported model provider: ${providerId}`);
+            return false;
+        }
+
+        await this.updateAgentSettings({ provider: providerId });
+        vscode.window.showInformationMessage(`Active model provider: ${getProviderDisplayName(providerId)}`);
+        return true;
+    }
+
+    async setAgentModel(): Promise<boolean> {
+        const currentModel = await this.getActiveModel();
+        const model = await vscode.window.showInputBox({
+            title: 'Set Active Model',
+            prompt: 'Enter a model ID, or leave empty to use the provider default',
+            placeHolder: 'Provider default',
+            value: currentModel
+        });
+
+        if (model === undefined) {
+            return false;
+        }
+
+        await this.updateAgentSettings({ model: model.trim() });
+        vscode.window.showInformationMessage(model.trim() ? `Active model: ${model.trim()}` : 'Active model cleared; using provider default.');
+        return true;
+    }
+
+    async clearAgentModel(): Promise<boolean> {
+        await this.updateAgentSettings({ model: '' });
+        vscode.window.showInformationMessage('Active model cleared; using provider default.');
+        return true;
+    }
+
+    private async getActiveProvider(): Promise<AgentProviderId> {
+        const config = vscode.workspace.getConfiguration(VSC_CONFIG_NAMESPACE);
+        const configured = config.get<string>('agent.provider', '');
+        if (isAgentProviderId(configured)) {
+            return configured;
+        }
+
+        await ConfigManager.getInstance().loadSettings();
+        const projectProvider = ConfigManager.getInstance().getSettings().agent.provider;
+        return isAgentProviderId(projectProvider) ? projectProvider : 'claude';
+    }
+
+    private async getActiveModel(): Promise<string> {
+        const config = vscode.workspace.getConfiguration(VSC_CONFIG_NAMESPACE);
+        const configured = config.get<string>('agent.model', '');
+        if (configured) {
+            return configured;
+        }
+
+        await ConfigManager.getInstance().loadSettings();
+        return ConfigManager.getInstance().getSettings().agent.model ?? '';
+    }
+
+    private async updateAgentSettings(agentSettings: { provider?: AgentProviderId; model?: string }): Promise<void> {
+        const config = vscode.workspace.getConfiguration(VSC_CONFIG_NAMESPACE);
+        if (agentSettings.provider !== undefined) {
+            await config.update('agent.provider', agentSettings.provider, vscode.ConfigurationTarget.Workspace);
+        }
+        if (agentSettings.model !== undefined) {
+            await config.update('agent.model', agentSettings.model, vscode.ConfigurationTarget.Workspace);
+        }
+
+        const configManager = ConfigManager.getInstance();
+        await configManager.loadSettings();
+        const settings = configManager.getSettings();
+        await configManager.saveSettings({
+            ...settings,
+            agent: {
+                ...settings.agent,
+                ...agentSettings
+            }
+        });
     }
 }

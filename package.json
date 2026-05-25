@@ -60,8 +60,8 @@
         },
         {
           "id": "autocode.views.overview",
-          "name": "Settings",
-          "visibility": "collapsed",
+          "name": "Model",
+          "visibility": "visible",
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.settings.visible"
         }
       ]
@@ -69,7 +69,7 @@
     "viewsWelcome": [
       {
         "view": "autocode.views.overview",
-        "contents": "Configure AutoCode agent providers\n\n[$(gear) Open Settings](command:autocode.settings.open)\n[$(question) Help](command:autocode.help.open)"
+        "contents": "Switch the active model provider and model ID\n\n[$(server-environment) Switch Provider](command:autocode.model.selectProvider)\n[$(symbol-key) Set Model](command:autocode.model.setModel)\n[$(gear) Open Settings](command:autocode.settings.open)"
       },
       {
         "view": "autocode.views.specExplorer",
@@ -162,6 +162,30 @@
         "icon": "$(gear)"
       },
       {
+        "command": "autocode.model.selectProvider",
+        "title": "Switch Model Provider",
+        "category": "AutoCode",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "autocode.model.useProvider",
+        "title": "Use Model Provider",
+        "category": "AutoCode",
+        "icon": "$(check)"
+      },
+      {
+        "command": "autocode.model.setModel",
+        "title": "Set Active Model",
+        "category": "AutoCode",
+        "icon": "$(symbol-key)"
+      },
+      {
+        "command": "autocode.model.clearModel",
+        "title": "Clear Active Model",
+        "category": "AutoCode",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "autocode.checkForUpdates",
         "title": "Check for Updates",
         "category": "AutoCode",
@@ -243,9 +267,19 @@
     "menus": {
       "view/title": [
         {
+          "command": "autocode.model.selectProvider",
+          "when": "view == autocode.views.overview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "autocode.model.setModel",
+          "when": "view == autocode.views.overview",
+          "group": "navigation@2"
+        },
+        {
           "command": "autocode.menu.open",
           "when": "view == autocode.views.overview",
-          "group": "navigation"
+          "group": "navigation@3"
         },
         {
           "command": "autocode.spec.create",
@@ -534,8 +568,8 @@
         },
         "autocode.views.settings.visible": {
           "type": "boolean",
-          "default": false,
-          "description": "Show Settings view"
+          "default": true,
+          "description": "Show Model view"
         }
       }
     }

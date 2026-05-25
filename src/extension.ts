@@ -134,6 +134,7 @@ export async function activate(context: vscode.ExtensionContext) {
         context,
         hooksExplorer,
         mcpExplorer,
+        overviewProvider,
         updateChecker,
         settingsManager,
         outputChannel
