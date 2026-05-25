@@ -64,34 +64,46 @@ describe('registerSpecCommands task execution', () => {
         });
     });
 
-    test('marks all selected tasks in progress before launching the batch terminal', async () => {
+    test('marks the next task in progress and continues the auto queue after verification', async () => {
         const terminal = vscode.window.createTerminal('all');
         const steps: string[] = [];
         (markTaskLinesInProgress as jest.Mock).mockImplementation(async () => {
             steps.push('mark');
-            return [1, 3];
+            return [1];
         });
         specManager.implAllTasks.mockImplementation(async (_taskFilePath: string, options: any) => {
             await options.beforeLaunchTasks([
-                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' },
-                { lineNumber: 3, taskDescription: '2. Second task', status: 'pending', completionSignalPath: 'signal-2' }
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' }
             ]);
             steps.push('launch');
-            return { terminal, completionSignalPaths: ['signal-1', 'signal-2'] };
+            return {
+                terminal,
+                completionSignalPath: 'signal-1',
+                lineNumber: 1,
+                taskDescription: '1. First task'
+            };
         });
+        taskCompletionService.registerTaskCompletion.mockReturnValue(Promise.resolve(true));
 
         const command = commands.get('autocode.spec.implAllTasks');
         expect(command).toBeDefined();
         await command!(documentUri);
+        await Promise.resolve();
+        await Promise.resolve();
 
         expect(steps).toEqual(['mark', 'launch']);
-        expect(markTaskLinesInProgress).toHaveBeenCalledWith(documentUri, [1, 3]);
-        expect(taskCompletionService.registerTaskCompletionSignals).toHaveBeenCalledWith(
+        expect(markTaskLinesInProgress).toHaveBeenCalledWith(documentUri, [1]);
+        expect(taskCompletionService.registerTaskCompletion).toHaveBeenCalledWith(
             expect.anything(),
             terminal,
-            documentUri.fsPath,
-            ['signal-1', 'signal-2']
+            {
+                taskFilePath: documentUri.fsPath,
+                lineNumber: 1,
+                taskDescription: '1. First task'
+            },
+            'signal-1'
         );
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith('autocode.spec.implAllTasks', documentUri);
     });
 
     test('rolls a single pending task back when starting the task terminal fails', async () => {

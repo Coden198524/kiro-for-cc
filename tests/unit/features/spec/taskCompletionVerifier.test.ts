@@ -84,6 +84,60 @@ describe('TaskCompletionVerifier', () => {
         expect(result).toBe(true);
         expect(documentLines[0]).toBe('- [x] 1. Implement feature');
         expect(saved).toBe(true);
+        expect(runtime.invokeHeadless).toHaveBeenCalledWith(expect.objectContaining({
+            approvalPolicy: 'never'
+        }));
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
+    });
+
+    test('verifies and marks task done when it is still pending', async () => {
+        documentLines = ['- [ ] 1. Implement feature'];
+        (runtime.invokeHeadless as jest.Mock).mockResolvedValue({
+            exitCode: 0,
+            output: '{"completed":true,"confidence":0.92,"summary":"done","evidence":["tests pass"],"missing":[]}'
+        });
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 0,
+            taskDescription: '1. Implement feature'
+        });
+
+        expect(result).toBe(true);
+        expect(documentLines[0]).toBe('- [x] 1. Implement feature');
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
+    });
+
+    test('treats an already completed task as verified', async () => {
+        documentLines = ['- [x] 1. Implement feature'];
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 0,
+            taskDescription: '1. Implement feature'
+        });
+
+        expect(result).toBe(true);
+        expect(runtime.invokeHeadless).not.toHaveBeenCalled();
+        expect(documentLines[0]).toBe('- [x] 1. Implement feature');
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
+    });
+
+    test('parses verification JSON when provider output includes unrelated JSON logs', async () => {
+        (runtime.invokeHeadless as jest.Mock).mockResolvedValue({
+            exitCode: 0,
+            output: 'debug {"event":"started"}',
+            stderr: '```json\n{"completed":true,"confidence":0.92,"summary":"done","evidence":["tests pass"],"missing":[]}\n```'
+        });
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 0,
+            taskDescription: '1. Implement feature'
+        });
+
+        expect(result).toBe(true);
+        expect(documentLines[0]).toBe('- [x] 1. Implement feature');
         expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
     });
 

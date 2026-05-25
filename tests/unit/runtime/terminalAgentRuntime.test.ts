@@ -81,6 +81,22 @@ describe('TerminalAgentRuntime', () => {
         expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex exec --model gpt-5.5 -`);
     });
 
+    test('builds Codex CLI command with approval policy before exec', () => {
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--model', 'gpt-5.5'],
+            capabilities: cliCapabilities()
+        });
+
+        const command = (runtime as any).buildCommand('/tmp/autocode-storage/prompt-12345.md', undefined, {
+            approvalPolicy: 'never'
+        });
+
+        expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex --ask-for-approval never exec --model gpt-5.5 -`);
+    });
+
     test('builds custom provider command template', () => {
         const runtime = createRuntime({
             id: 'custom',
@@ -139,6 +155,18 @@ describe('TerminalAgentRuntime', () => {
         });
 
         expect((runtime as any).buildInteractiveCommand()).toBe('codex --model gpt-5.5');
+    });
+
+    test('builds Codex interactive launch command with approval policy', () => {
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--model', 'gpt-5.5'],
+            capabilities: cliCapabilities()
+        });
+
+        expect((runtime as any).buildInteractiveCommand(undefined, 'never')).toBe('codex --ask-for-approval never --model gpt-5.5');
     });
 
     test('builds Claude interactive launch command with permission bypass', () => {
@@ -214,6 +242,80 @@ describe('TerminalAgentRuntime', () => {
 
         jest.advanceTimersByTime(1);
         expect(terminal.sendText).toHaveBeenNthCalledWith(3, '', true);
+    });
+
+    test('starts auto Codex interactive terminal with approval disabled', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'Auto task',
+            title: 'AutoCode - Task 1',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
+        });
+
+        await jest.advanceTimersByTimeAsync(800);
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never', true);
+    });
+
+    test('does not reuse a normal Codex terminal for approval-disabled automation', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        const normalTerminal = {
+            name: 'Normal Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        const autoTerminal = {
+            name: 'Auto Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock)
+            .mockReturnValueOnce(normalTerminal)
+            .mockReturnValueOnce(autoTerminal);
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'Manual task',
+            title: 'AutoCode - Manual Task',
+            reuseTerminal: true
+        });
+        await jest.advanceTimersByTimeAsync(2300);
+
+        await runtime.invokeInteractive({
+            prompt: 'Auto task',
+            title: 'AutoCode - Task 1',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
+        });
+        await jest.advanceTimersByTimeAsync(800);
+
+        expect(vscode.window.createTerminal).toHaveBeenCalledTimes(2);
+        expect(normalTerminal.sendText).toHaveBeenNthCalledWith(1, 'codex', true);
+        expect(autoTerminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never', true);
     });
 
     test('reuses interactive terminal when requested', async () => {

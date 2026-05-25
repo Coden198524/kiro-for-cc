@@ -5,6 +5,8 @@ export type AgentProviderId = 'claude' | 'codex' | 'deepseek' | 'glm' | 'custom'
 
 export type AgentRuntimeMode = 'interactive' | 'headless';
 
+export type AgentApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+
 export interface AgentProviderCapabilities {
     permissions: boolean;
     expertAgents: boolean;
@@ -32,6 +34,7 @@ export interface AgentInvocationRequest {
     mode?: AgentRuntimeMode;
     agentType?: AgentType;
     reuseTerminal?: boolean;
+    approvalPolicy?: AgentApprovalPolicy;
 }
 
 export interface AgentInvocationResult {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { AgentRuntime } from '../../runtime/agentRuntime';
+import { AgentApprovalPolicy, AgentRuntime } from '../../runtime/agentRuntime';
 import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
@@ -24,6 +24,8 @@ export interface TaskImplementationRun {
     completionSignalPaths?: string[];
     parallelRuns?: ParallelTaskImplementationRun[];
     failedLineNumbers?: number[];
+    lineNumber?: number;
+    taskDescription?: string;
 }
 
 export interface TaskImplementationLaunchTask {
@@ -71,6 +73,7 @@ interface ImplTaskOptions {
     notification?: boolean;
     title?: string;
     parallelFileScopes?: string[];
+    approvalPolicy?: AgentApprovalPolicy;
 }
 
 export class SpecManager {
@@ -214,7 +217,7 @@ export class SpecManager {
             'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
         ].join(' ');
         const providerExecutionGuidance = [
-            this.getProviderTaskExecutionGuidance(false),
+            this.getProviderTaskExecutionGuidance(),
             this.getParallelTaskExecutionGuidance(options.parallelFileScopes)
         ].filter(Boolean).join('\n');
         const completionSignalInstruction = this.getCompletionSignalInstruction(
@@ -240,7 +243,8 @@ export class SpecManager {
             prompt,
             title: options.title ?? 'AutoCode - Implementing Task',
             agentType: 'task_implementer',
-            reuseTerminal: options.reuseTerminal ?? true
+            reuseTerminal: options.reuseTerminal ?? true,
+            approvalPolicy: options.approvalPolicy
         });
 
         if (this.taskSessionManager && lineNumber !== undefined) {
@@ -256,7 +260,7 @@ export class SpecManager {
             });
         }
 
-        return { terminal, completionSignalPath };
+        return { terminal, completionSignalPath, lineNumber, taskDescription };
     }
 
     private async ensureExpertAgentsReady(): Promise<CodexAgentsReadyResult | undefined | null> {
@@ -346,54 +350,23 @@ export class SpecManager {
             return undefined;
         }
 
-        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing all remaining tasks. Check the terminal for progress.`);
+        const task = tasks[0];
+        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing the next spec task. Auto mode will continue after verification passes.`);
 
-        for (const task of tasks) {
-            await this.prepareCompletionSignalFile(task.completionSignalPath);
-        }
+        await options.beforeLaunchTasks?.([this.toLaunchTask(task)]);
 
-        const combinedDescription = tasks.map(task => task.description).join('\n');
-        const languagePreference = await this.detectTaskLanguagePreference(taskFilePath, combinedDescription);
-        const languageInstruction = [
-            `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
-            'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
-        ].join(' ');
-
-        const prompt = this.buildAllTasksPrompt(
+        return this.implTask(
             taskFilePath,
-            tasks,
-            languagePreference,
-            languageInstruction,
-            this.getProviderTaskExecutionGuidance(true)
-        );
-
-        await options.beforeLaunchTasks?.(tasks.map(task => this.toLaunchTask(task)));
-
-        const terminal = await this.agentRuntime.invokeInteractive({
-            prompt,
-            title: 'AutoCode - Implementing All Tasks',
-            agentType: 'task_implementer',
-            reuseTerminal: true
-        });
-
-        if (this.taskSessionManager) {
-            for (const task of tasks) {
-                await this.taskSessionManager.recordInvocation({
-                    taskFilePath,
-                    lineNumber: task.lineNumber,
-                    taskDescription: task.description,
-                    mode: task.status === 'inProgress' ? 'resume' : 'start',
-                    provider: this.agentRuntime.provider,
-                    prompt,
-                    terminal
-                });
+            task.description,
+            task.status === 'inProgress',
+            task.lineNumber,
+            {
+                title: `AutoCode - Task ${task.lineNumber + 1}`,
+                reuseTerminal: true,
+                notification: false,
+                approvalPolicy: 'never'
             }
-        }
-
-        return {
-            terminal,
-            completionSignalPaths: tasks.map(task => task.completionSignalPath)
-        };
+        );
     }
 
     async implAllTasksParallel(taskFilePath: string, options: TaskImplementationLaunchOptions = {}): Promise<TaskImplementationRun | undefined> {
@@ -448,7 +421,8 @@ export class SpecManager {
                         reuseTerminal: false,
                         notification: false,
                         title: `AutoCode - Task ${scope.task.lineNumber + 1}`,
-                        parallelFileScopes: scope.fileScopes
+                        parallelFileScopes: scope.fileScopes,
+                        approvalPolicy: 'never'
                     }
                 );
             } catch (error) {
@@ -950,79 +924,16 @@ export class SpecManager {
             normalizedRight.startsWith(`${normalizedLeft}/`);
     }
 
-    private buildAllTasksPrompt(
-        taskFilePath: string,
-        tasks: RunnableTask[],
-        languagePreference: string,
-        languageInstruction: string,
-        providerExecutionGuidance: string
-    ): string {
-        const taskLines = tasks.map(task => [
-            `- Line ${task.lineNumber + 1}: ${task.description}`,
-            `  Status: ${task.status}`,
-            `  Completion signal path: ${task.completionSignalPath}`
-        ].join('\n')).join('\n');
-
-        const signalPayloads = tasks.map(task => [
-            `For line ${task.lineNumber + 1}, write this JSON to ${task.completionSignalPath}:`,
-            JSON.stringify({
-                status: 'ready_for_verification',
-                taskFilePath,
-                lineNumber: task.lineNumber,
-                taskDescription: task.description
-            }, null, 2)
-        ].join('\n')).join('\n\n');
-
-        return [
-            '<user_input>',
-            'Implement all remaining tasks from this spec task file in one continuous coding session.',
-            '',
-            `Task File Path: ${taskFilePath}`,
-            `Language Preference: ${languagePreference}`,
-            '',
-            'Language rules:',
-            languageInstruction,
-            '',
-            'Provider execution guidance:',
-            providerExecutionGuidance,
-            '',
-            'Tasks to implement, in order:',
-            taskLines,
-            '',
-            'Execution rules:',
-            '1. First read tasks.md, requirements.md, and design.md from the spec folder.',
-            '2. Implement each listed task in order.',
-            '3. Keep the work scoped to these tasks and avoid unrelated refactors.',
-            '4. Add or update focused tests as appropriate.',
-            '5. After each task is fully implemented, write its completion signal JSON file.',
-            '6. Do not edit task checkboxes yourself. The extension will independently verify and mark completed tasks.',
-            '',
-            'Completion signals:',
-            signalPayloads,
-            '</user_input>'
-        ].join('\n');
-    }
-
-    private getProviderTaskExecutionGuidance(isBatchRun: boolean): string {
+    private getProviderTaskExecutionGuidance(): string {
         if (this.agentRuntime.provider.id === 'codex') {
-            const batchGuidance = isBatchRun
-                ? [
-                    '- Reuse context across the listed tasks; do not re-read the same spec files before every task unless they changed.',
-                    '- Run focused checks after related changes and one broader verification pass near the end when practical.',
-                    '- Write each task completion signal only after that task has been implemented and checked.'
-                ]
-                : [
-                    '- Run the narrowest useful verification command after the implementation, then broaden only when the change risk justifies it.',
-                    '- Write the completion signal only after implementation and verification are complete.'
-                ];
-
             return [
                 'Codex quality and speed rules:',
                 '- Inspect the current worktree and the smallest relevant set of files before editing; avoid broad repository scans when targeted search is enough.',
                 '- Keep edits scoped to the requested task and preserve unrelated user changes.',
                 '- Prefer existing project helpers, scripts, and test patterns instead of introducing new abstractions.',
                 '- Keep progress updates concise so more time is spent on code and verification.',
-                ...batchGuidance,
+                '- Run the narrowest useful verification command after the implementation, then broaden only when the change risk justifies it.',
+                '- Write the completion signal only after implementation and verification are complete.',
                 '- If verification fails, fix the cause or report the blocker; do not signal completion for failed work.'
             ].join('\n');
         }

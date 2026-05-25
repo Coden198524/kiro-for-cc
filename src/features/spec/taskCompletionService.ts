@@ -286,7 +286,7 @@ export class TaskCompletionService {
         let timer: NodeJS.Timeout | undefined;
 
         const trigger = (uri: vscode.Uri) => {
-            if (uri.fsPath !== signalUri.fsPath) {
+            if (this.normalizeFsPath(uri.fsPath) !== this.normalizeFsPath(signalUri.fsPath)) {
                 return;
             }
 
@@ -320,5 +320,12 @@ export class TaskCompletionService {
                 watcher.dispose();
             }
         };
+    }
+
+    private normalizeFsPath(filePath: string): string {
+        const normalized = path.normalize(filePath);
+        return process.platform === 'win32'
+            ? normalized.toLowerCase()
+            : normalized;
     }
 }

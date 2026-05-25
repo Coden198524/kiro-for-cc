@@ -27,6 +27,29 @@ describe('agentCommandBuilder', () => {
         expect(command).toBe("Get-Content -Raw -LiteralPath 'C:\\Users\\LS\\prompt.md' | codex exec --model gpt-5.5 -");
     });
 
+    test('builds Codex commands with invocation approval policy before the subcommand', () => {
+        const provider = createProvider({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--ask-for-approval', 'on-request', '--model', 'gpt-5.5']
+        });
+
+        const headlessCommand = buildAgentCommand({
+            provider,
+            promptFilePath: 'C:\\Users\\LS\\prompt.md',
+            platform: 'win32',
+            useWslPaths: false,
+            approvalPolicy: 'never'
+        });
+        const interactiveCommand = buildAgentInteractiveCommand(provider, {
+            approvalPolicy: 'never'
+        });
+
+        expect(headlessCommand).toBe("Get-Content -Raw -LiteralPath 'C:\\Users\\LS\\prompt.md' | codex --ask-for-approval never exec --model gpt-5.5 -");
+        expect(interactiveCommand).toBe('codex --ask-for-approval never --model gpt-5.5');
+    });
+
     test('builds Claude permission command with POSIX prompt substitution', () => {
         const provider = createProvider({
             id: 'claude',

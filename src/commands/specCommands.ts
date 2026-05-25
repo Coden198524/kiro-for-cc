@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SpecManager } from '../features/spec/specManager';
+import { SpecManager, TaskImplementationRun } from '../features/spec/specManager';
 import { TaskCompletionService } from '../features/spec/taskCompletionService';
 import { TaskSessionManager } from '../features/spec/taskSessionManager';
 import { markTaskLinesInProgress, markTaskLinesPending, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
@@ -23,6 +23,40 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         taskCompletionService,
         outputChannel
     } = options;
+
+    const registerAutoTaskContinuation = (
+        documentUri: vscode.Uri,
+        run: TaskImplementationRun | undefined,
+        commandId: 'autocode.spec.implAllTasks' | 'autocode.spec.implAllTasksParallel'
+    ): void => {
+        if (!run?.terminal || !run.completionSignalPath || run.lineNumber === undefined || !run.taskDescription) {
+            return;
+        }
+
+        const completion = taskCompletionService.registerTaskCompletion(
+            context,
+            run.terminal,
+            {
+                taskFilePath: documentUri.fsPath,
+                lineNumber: run.lineNumber,
+                taskDescription: run.taskDescription
+            },
+            run.completionSignalPath
+        );
+
+        if (!completion) {
+            outputChannel.appendLine('[Task Execute] Auto task queue will not continue because automatic task verification is disabled.');
+            return;
+        }
+
+        completion.then(async verified => {
+            if (verified) {
+                await vscode.commands.executeCommand(commandId, documentUri);
+            }
+        }).catch(error => {
+            outputChannel.appendLine(`[Task Execute] Failed to continue auto task queue: ${error}`);
+        });
+    };
 
     const createSpecCommand = vscode.commands.registerCommand('autocode.spec.create', async () => {
         outputChannel.appendLine('\n=== COMMAND autocode.spec.create TRIGGERED ===');
@@ -95,7 +129,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             }
         }),
         vscode.commands.registerCommand('autocode.spec.implAllTasks', async (documentUri: vscode.Uri) => {
-            outputChannel.appendLine(`[Task Execute] Starting all tasks: ${documentUri.fsPath}`);
+            outputChannel.appendLine(`[Task Execute] Starting auto task queue: ${documentUri.fsPath}`);
 
             const changedLineNumbers: number[] = [];
             try {
@@ -110,11 +144,14 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
                 if (run?.terminal && run.completionSignalPaths) {
                     taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+                    return;
                 }
+
+                registerAutoTaskContinuation(documentUri, run, 'autocode.spec.implAllTasks');
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
-                outputChannel.appendLine(`[Task Execute] Failed to start all tasks: ${error}`);
-                vscode.window.showErrorMessage(`Failed to start all tasks: ${error}`);
+                outputChannel.appendLine(`[Task Execute] Failed to start auto task queue: ${error}`);
+                vscode.window.showErrorMessage(`Failed to start auto task queue: ${error}`);
             }
         }),
         vscode.commands.registerCommand('autocode.spec.implAllTasksParallel', async (documentUri: vscode.Uri) => {
@@ -160,7 +197,10 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
                 if (run?.terminal && run.completionSignalPaths) {
                     taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+                    return;
                 }
+
+                registerAutoTaskContinuation(documentUri, run, 'autocode.spec.implAllTasksParallel');
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 outputChannel.appendLine(`[Task Execute] Failed to start parallel tasks: ${error}`);

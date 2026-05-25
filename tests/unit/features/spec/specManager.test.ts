@@ -172,7 +172,7 @@ describe('SpecManager', () => {
         expect(runtime.invokeInteractive).not.toHaveBeenCalled();
     });
 
-    test('builds one prompt and completion signals for all remaining tasks', async () => {
+    test('start all tasks launches only the next runnable task', async () => {
         let capturedPrompt = '';
         const runtime: AgentRuntime = {
             provider,
@@ -198,16 +198,16 @@ describe('SpecManager', () => {
         const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Implementing All Tasks',
-            reuseTerminal: true
+            title: 'AutoCode - Task 2',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
         }));
-        expect(capturedPrompt).toContain('Line 2: 1. First task');
-        expect(capturedPrompt).toContain('Line 4: 3. Resume task');
+        expect(capturedPrompt).toContain('Task Description: 1. First task');
+        expect(capturedPrompt).not.toContain('3. Resume task');
         expect(capturedPrompt).not.toContain('2. Done task');
-        expect(run?.completionSignalPaths?.map(item => item.replace(/\\/g, '/'))).toEqual([
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json',
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-4.json'
-        ]);
+        expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json');
+        expect(run?.lineNumber).toBe(1);
+        expect(run?.taskDescription).toBe('1. First task');
     });
 
     test('start all tasks skips parent tasks when numbered child tasks exist', async () => {
@@ -236,18 +236,14 @@ describe('SpecManager', () => {
 
         const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
-        expect(capturedPrompt).not.toContain('Line 2: 1. Parent task');
-        expect(capturedPrompt).toContain('Line 3: 1.1 First child');
-        expect(capturedPrompt).toContain('Line 4: 1.2 Second child');
-        expect(capturedPrompt).toContain('Line 5: 2. Standalone task');
-        expect(run?.completionSignalPaths?.map(item => item.replace(/\\/g, '/'))).toEqual([
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-3.json',
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-4.json',
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-5.json'
-        ]);
+        expect(capturedPrompt).not.toContain('1. Parent task');
+        expect(capturedPrompt).toContain('Task Description: 1.1 First child');
+        expect(capturedPrompt).not.toContain('1.2 Second child');
+        expect(capturedPrompt).not.toContain('2. Standalone task');
+        expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-3.json');
     });
 
-    test('adds Codex batch guidance to all-task implementation prompts', async () => {
+    test('adds focused Codex guidance to auto-queued task prompts', async () => {
         let capturedPrompt = '';
         const runtime = createRuntime(codexProvider, prompt => {
             capturedPrompt = prompt;
@@ -265,9 +261,9 @@ describe('SpecManager', () => {
         await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(capturedPrompt).toContain('Codex quality and speed rules:');
-        expect(capturedPrompt).toContain('Reuse context across the listed tasks');
-        expect(capturedPrompt).toContain('one broader verification pass near the end when practical');
-        expect(capturedPrompt).toContain('Write each task completion signal only after that task has been implemented and checked.');
+        expect(capturedPrompt).toContain('Run the narrowest useful verification command');
+        expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
+        expect(capturedPrompt).not.toContain('Reuse context across the listed tasks');
     });
 
     test('orders sequential all-task execution by dependency metadata when file order is not topological', async () => {
@@ -291,11 +287,9 @@ describe('SpecManager', () => {
 
         const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
-        expect(capturedPrompt.indexOf('Line 5: 1. Setup core scaffolding')).toBeLessThan(capturedPrompt.indexOf('Line 2: 2. Implement dependent feature'));
-        expect(run?.completionSignalPaths?.map(item => item.replace(/\\/g, '/'))).toEqual([
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-5.json',
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json'
-        ]);
+        expect(capturedPrompt).toContain('Task Description: 1. Setup core scaffolding');
+        expect(capturedPrompt).not.toContain('2. Implement dependent feature');
+        expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-5.json');
     });
 
     test('runs the batch pre-launch hook before opening the implementation terminal', async () => {
@@ -330,7 +324,7 @@ describe('SpecManager', () => {
     });
 
     test('starts independent tasks in separate terminals for parallel all-task execution', async () => {
-        const capturedRequests: Array<{ prompt: string; title?: string; reuseTerminal?: boolean }> = [];
+        const capturedRequests: Array<{ prompt: string; title?: string; reuseTerminal?: boolean; approvalPolicy?: string }> = [];
         const runtime: AgentRuntime = {
             provider,
             refreshProvider: jest.fn(),
@@ -338,7 +332,8 @@ describe('SpecManager', () => {
                 capturedRequests.push({
                     prompt: request.prompt,
                     title: request.title,
-                    reuseTerminal: request.reuseTerminal
+                    reuseTerminal: request.reuseTerminal,
+                    approvalPolicy: request.approvalPolicy
                 });
                 return vscode.window.createTerminal('mock');
             }),
@@ -361,6 +356,7 @@ describe('SpecManager', () => {
 
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(2);
         expect(capturedRequests.map(request => request.reuseTerminal)).toEqual([false, false]);
+        expect(capturedRequests.map(request => request.approvalPolicy)).toEqual(['never', 'never']);
         expect(capturedRequests.map(request => request.title)).toEqual(['AutoCode - Task 2', 'AutoCode - Task 4']);
         expect(capturedRequests[0].prompt).toContain('Parallel execution safety rules:');
         expect(capturedRequests[0].prompt).toContain('src/render/renderer.ts');
@@ -373,7 +369,7 @@ describe('SpecManager', () => {
     });
 
     test('uses task dependency metadata as a DAG and starts only the ready parallel batch', async () => {
-        const capturedRequests: Array<{ prompt: string; title?: string; reuseTerminal?: boolean }> = [];
+        const capturedRequests: Array<{ prompt: string; title?: string; reuseTerminal?: boolean; approvalPolicy?: string }> = [];
         const runtime: AgentRuntime = {
             provider,
             refreshProvider: jest.fn(),
@@ -381,7 +377,8 @@ describe('SpecManager', () => {
                 capturedRequests.push({
                     prompt: request.prompt,
                     title: request.title,
-                    reuseTerminal: request.reuseTerminal
+                    reuseTerminal: request.reuseTerminal,
+                    approvalPolicy: request.approvalPolicy
                 });
                 return vscode.window.createTerminal('mock');
             }),
@@ -408,6 +405,7 @@ describe('SpecManager', () => {
         const run = await specManager.implAllTasksParallel('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(2);
+        expect(capturedRequests.map(request => request.approvalPolicy)).toEqual(['never', 'never']);
         expect(capturedRequests.map(request => request.title)).toEqual(['AutoCode - Task 2', 'AutoCode - Task 8']);
         expect(capturedRequests[0].prompt).toContain('1. Setup core scaffolding');
         expect(capturedRequests[1].prompt).toContain('3. Implement independent adapter');
@@ -459,8 +457,9 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('cycle'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Implementing All Tasks',
-            reuseTerminal: true
+            title: 'AutoCode - Task 2',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
         }));
     });
 
@@ -483,13 +482,11 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('fell back to sequential mode'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Implementing All Tasks',
-            reuseTerminal: true
+            title: 'AutoCode - Task 2',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
         }));
-        expect(run?.completionSignalPaths?.map(item => item.replace(/\\/g, '/'))).toEqual([
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json',
-            '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-4.json'
-        ]);
+        expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json');
     });
 
     test('falls back to sequential all-task execution when a task has no explicit file scope', async () => {
@@ -510,8 +507,9 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('no explicit file scope'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Implementing All Tasks',
-            reuseTerminal: true
+            title: 'AutoCode - Task 2',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
         }));
     });
 
@@ -537,8 +535,9 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('non-runnable incomplete task 1'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Implementing All Tasks',
-            reuseTerminal: true
+            title: 'AutoCode - Task 3',
+            reuseTerminal: true,
+            approvalPolicy: 'never'
         }));
     });
 

@@ -1,11 +1,15 @@
-import { AgentProviderConfig } from './agentRuntime';
+import { AgentApprovalPolicy, AgentProviderConfig } from './agentRuntime';
 
 interface PromptCommandOptions {
     platform?: NodeJS.Platform;
     useWslPaths?: boolean;
 }
 
-interface BuildAgentCommandOptions extends PromptCommandOptions {
+export interface AgentCommandOptions {
+    approvalPolicy?: AgentApprovalPolicy;
+}
+
+interface BuildAgentCommandOptions extends PromptCommandOptions, AgentCommandOptions {
     provider: AgentProviderConfig;
     promptFilePath: string;
 }
@@ -13,7 +17,7 @@ interface BuildAgentCommandOptions extends PromptCommandOptions {
 export function buildAgentCommand(options: BuildAgentCommandOptions): string {
     const { provider, promptFilePath } = options;
     const promptSubstitution = buildPromptSubstitution(promptFilePath, options);
-    const args = buildArgs(provider);
+    const args = buildArgs(provider, options);
     const command = quoteCommand(provider.command, provider.displayName);
 
     if (provider.id === 'claude') {
@@ -21,7 +25,8 @@ export function buildAgentCommand(options: BuildAgentCommandOptions): string {
     }
 
     if (provider.id === 'codex') {
-        return `${buildPromptReadCommand(promptFilePath, options)} | ${command} exec ${args} -`.replace(/\s+/g, ' ').trim();
+        const codexGlobalArgs = buildCodexGlobalArgs(options);
+        return `${buildPromptReadCommand(promptFilePath, options)} | ${command} ${codexGlobalArgs} exec ${args} -`.replace(/\s+/g, ' ').trim();
     }
 
     if (provider.commandTemplate) {
@@ -38,11 +43,15 @@ export function buildAgentCommand(options: BuildAgentCommandOptions): string {
     return [command, args, `"${promptSubstitution}"`].filter(Boolean).join(' ');
 }
 
-export function buildAgentInteractiveCommand(provider: AgentProviderConfig): string {
-    const args = buildArgs(provider);
+export function buildAgentInteractiveCommand(provider: AgentProviderConfig, options: AgentCommandOptions = {}): string {
+    const args = buildArgs(provider, options);
 
     if (provider.id === 'claude') {
         return `${quoteCommand(provider.command, provider.displayName)} --permission-mode bypassPermissions`;
+    }
+
+    if (provider.id === 'codex') {
+        return [quoteCommand(provider.command, provider.displayName), buildCodexGlobalArgs(options), args].filter(Boolean).join(' ');
     }
 
     return [quoteCommand(provider.command, provider.displayName), args].filter(Boolean).join(' ');
@@ -94,8 +103,40 @@ export function quoteShellArg(value: string): string {
     return `"${escapeDoubleQuoted(value)}"`;
 }
 
-function buildArgs(provider: AgentProviderConfig): string {
-    return (provider.args ?? []).map(arg => quoteShellArg(arg)).join(' ');
+function buildArgs(provider: AgentProviderConfig, options: AgentCommandOptions = {}): string {
+    const args = provider.id === 'codex' && options.approvalPolicy
+        ? removeCodexApprovalArgs(provider.args ?? [])
+        : provider.args ?? [];
+
+    return args.map(arg => quoteShellArg(arg)).join(' ');
+}
+
+function buildCodexGlobalArgs(options: AgentCommandOptions): string {
+    if (!options.approvalPolicy) {
+        return '';
+    }
+
+    return `--ask-for-approval ${quoteShellArg(options.approvalPolicy)}`;
+}
+
+function removeCodexApprovalArgs(args: readonly string[]): string[] {
+    const filtered: string[] = [];
+
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index];
+        if (arg === '--ask-for-approval' || arg === '-a') {
+            index += 1;
+            continue;
+        }
+
+        if (arg.startsWith('--ask-for-approval=') || arg.startsWith('-a=')) {
+            continue;
+        }
+
+        filtered.push(arg);
+    }
+
+    return filtered;
 }
 
 function shouldUsePowerShellPrompt(options: PromptCommandOptions): boolean {

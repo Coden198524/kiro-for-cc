@@ -37,8 +37,8 @@ export class TaskCompletionVerifier {
         }
 
         const resolvedTask = await this.resolveTaskLine(request);
-        if (!resolvedTask || resolvedTask.task.status !== 'inProgress') {
-            this.outputChannel.appendLine('[TaskVerifier] Task is no longer in progress; skipping verification.');
+        if (!resolvedTask) {
+            this.outputChannel.appendLine('[TaskVerifier] Could not resolve task line; skipping verification.');
             return false;
         }
 
@@ -47,14 +47,27 @@ export class TaskCompletionVerifier {
             lineNumber: resolvedTask.lineNumber,
             taskDescription: resolvedTask.task.description
         };
+
+        if (resolvedTask.task.status === 'completed') {
+            const markedTasks = await this.markTaskDone(resolvedRequest.taskFilePath, resolvedRequest.lineNumber);
+            await this.markTaskSessionsCompleted(resolvedRequest, markedTasks);
+            this.outputChannel.appendLine(`[TaskVerifier] Task was already marked done: ${resolvedRequest.taskDescription}`);
+            return true;
+        }
+
+        if (resolvedTask.task.status === 'pending') {
+            this.outputChannel.appendLine('[TaskVerifier] Task is still pending; verifying completion anyway because completion was signaled.');
+        }
+
         const prompt = this.buildVerificationPrompt(resolvedRequest);
         const result = await this.agentRuntime.invokeHeadless({
             prompt,
             title: 'AutoCode - Verify Task Completion',
-            agentType: 'task_implementer'
+            agentType: 'task_implementer',
+            approvalPolicy: 'never'
         });
 
-        const verification = this.parseVerification(result.output ?? '');
+        const verification = this.parseVerification([result.output, result.stderr].filter(Boolean).join('\n'));
         if (!verification) {
             this.outputChannel.appendLine('[TaskVerifier] Could not parse verification result.');
             return false;
@@ -68,14 +81,14 @@ export class TaskCompletionVerifier {
 
         const markedTasks = await this.markTaskDone(resolvedRequest.taskFilePath, resolvedRequest.lineNumber);
         if (markedTasks.length === 0) {
-            this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
-            return false;
+            const refreshedTask = await this.resolveTaskLine(resolvedRequest);
+            if (refreshedTask?.task.status !== 'completed') {
+                this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
+                return false;
+            }
         }
 
-        await this.taskSessionManager.markCompleted(resolvedRequest.taskFilePath, resolvedRequest.lineNumber, resolvedRequest.taskDescription);
-        for (const parentTask of markedTasks.filter(task => task.lineNumber !== resolvedRequest.lineNumber)) {
-            await this.taskSessionManager.markCompleted(resolvedRequest.taskFilePath, parentTask.lineNumber, parentTask.description);
-        }
+        await this.markTaskSessionsCompleted(resolvedRequest, markedTasks);
         this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${resolvedRequest.taskDescription}`);
         vscode.window.showInformationMessage(`Task verified and marked done: ${resolvedRequest.taskDescription}`);
         return true;
@@ -112,38 +125,77 @@ export class TaskCompletionVerifier {
     }
 
     private parseVerification(output: string): TaskCompletionVerification | undefined {
-        const jsonText = this.extractJsonObject(output);
-        if (!jsonText) {
-            return undefined;
-        }
+        for (const jsonText of this.extractJsonObjects(output)) {
+            try {
+                const parsed = JSON.parse(jsonText) as Partial<TaskCompletionVerification>;
+                if (typeof parsed.completed !== 'boolean' || typeof parsed.confidence !== 'number') {
+                    continue;
+                }
 
-        try {
-            const parsed = JSON.parse(jsonText) as Partial<TaskCompletionVerification>;
-            if (typeof parsed.completed !== 'boolean' || typeof parsed.confidence !== 'number') {
-                return undefined;
+                return {
+                    completed: parsed.completed,
+                    confidence: Math.max(0, Math.min(1, parsed.confidence)),
+                    summary: parsed.summary,
+                    evidence: Array.isArray(parsed.evidence) ? parsed.evidence.filter(item => typeof item === 'string') : [],
+                    missing: Array.isArray(parsed.missing) ? parsed.missing.filter(item => typeof item === 'string') : []
+                };
+            } catch (error) {
+                this.outputChannel.appendLine(`[TaskVerifier] Failed to parse verification JSON candidate: ${error}`);
             }
-
-            return {
-                completed: parsed.completed,
-                confidence: Math.max(0, Math.min(1, parsed.confidence)),
-                summary: parsed.summary,
-                evidence: Array.isArray(parsed.evidence) ? parsed.evidence.filter(item => typeof item === 'string') : [],
-                missing: Array.isArray(parsed.missing) ? parsed.missing.filter(item => typeof item === 'string') : []
-            };
-        } catch (error) {
-            this.outputChannel.appendLine(`[TaskVerifier] Failed to parse verification JSON: ${error}`);
-            return undefined;
         }
+
+        return undefined;
     }
 
-    private extractJsonObject(output: string): string | undefined {
+    private extractJsonObjects(output: string): string[] {
         const trimmed = output.trim();
+        const candidates: string[] = [];
         if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-            return trimmed;
+            candidates.push(trimmed);
         }
 
-        const match = trimmed.match(/\{[\s\S]*\}/);
-        return match?.[0];
+        let depth = 0;
+        let start = -1;
+        let inString = false;
+        let escaped = false;
+
+        for (let index = 0; index < output.length; index++) {
+            const char = output[index];
+
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (char === '\\') {
+                    escaped = true;
+                } else if (char === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (char === '"') {
+                inString = true;
+                continue;
+            }
+
+            if (char === '{') {
+                if (depth === 0) {
+                    start = index;
+                }
+                depth += 1;
+                continue;
+            }
+
+            if (char === '}' && depth > 0) {
+                depth -= 1;
+                if (depth === 0 && start >= 0) {
+                    candidates.push(output.slice(start, index + 1));
+                    start = -1;
+                }
+            }
+        }
+
+        return [...new Set(candidates)];
     }
 
     private async resolveTaskLine(request: VerifyAndMarkTaskDoneRequest): Promise<{ lineNumber: number; task: ParsedSpecTaskLine } | undefined> {
@@ -204,6 +256,16 @@ export class TaskCompletionVerifier {
                 description: update.task.description
             }))
             : [];
+    }
+
+    private async markTaskSessionsCompleted(
+        request: VerifyAndMarkTaskDoneRequest,
+        markedTasks: Array<{ lineNumber: number; description: string }>
+    ): Promise<void> {
+        await this.taskSessionManager.markCompleted(request.taskFilePath, request.lineNumber, request.taskDescription);
+        for (const parentTask of markedTasks.filter(task => task.lineNumber !== request.lineNumber)) {
+            await this.taskSessionManager.markCompleted(request.taskFilePath, parentTask.lineNumber, parentTask.description);
+        }
     }
 
     private getDocumentLines(document: vscode.TextDocument): string[] {
