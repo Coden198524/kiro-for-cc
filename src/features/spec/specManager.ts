@@ -144,6 +144,7 @@ export class SpecManager {
             `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
             'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
         ].join(' ');
+        const providerExecutionGuidance = this.getProviderTaskExecutionGuidance(false);
         const completionSignalInstruction = this.getCompletionSignalInstruction(
             taskFilePath,
             taskDescription,
@@ -158,6 +159,7 @@ export class SpecManager {
             taskModeInstruction,
             languagePreference,
             languageInstruction,
+            providerExecutionGuidance,
             completionSignalPath: completionSignalPath || '(not available)',
             completionSignalInstruction
         });
@@ -243,7 +245,13 @@ export class SpecManager {
             'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
         ].join(' ');
 
-        const prompt = this.buildAllTasksPrompt(taskFilePath, tasks, languagePreference, languageInstruction);
+        const prompt = this.buildAllTasksPrompt(
+            taskFilePath,
+            tasks,
+            languagePreference,
+            languageInstruction,
+            this.getProviderTaskExecutionGuidance(true)
+        );
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
             title: 'AutoCode - Implementing All Tasks',
@@ -308,7 +316,8 @@ export class SpecManager {
         taskFilePath: string,
         tasks: RunnableTask[],
         languagePreference: string,
-        languageInstruction: string
+        languageInstruction: string,
+        providerExecutionGuidance: string
     ): string {
         const taskLines = tasks.map(task => [
             `- Line ${task.lineNumber + 1}: ${task.description}`,
@@ -336,6 +345,9 @@ export class SpecManager {
             'Language rules:',
             languageInstruction,
             '',
+            'Provider execution guidance:',
+            providerExecutionGuidance,
+            '',
             'Tasks to implement, in order:',
             taskLines,
             '',
@@ -350,6 +362,36 @@ export class SpecManager {
             'Completion signals:',
             signalPayloads,
             '</user_input>'
+        ].join('\n');
+    }
+
+    private getProviderTaskExecutionGuidance(isBatchRun: boolean): string {
+        if (this.agentRuntime.provider.id === 'codex') {
+            const batchGuidance = isBatchRun
+                ? [
+                    '- Reuse context across the listed tasks; do not re-read the same spec files before every task unless they changed.',
+                    '- Run focused checks after related changes and one broader verification pass near the end when practical.',
+                    '- Write each task completion signal only after that task has been implemented and checked.'
+                ]
+                : [
+                    '- Run the narrowest useful verification command after the implementation, then broaden only when the change risk justifies it.',
+                    '- Write the completion signal only after implementation and verification are complete.'
+                ];
+
+            return [
+                'Codex quality and speed rules:',
+                '- Inspect the current worktree and the smallest relevant set of files before editing; avoid broad repository scans when targeted search is enough.',
+                '- Keep edits scoped to the requested task and preserve unrelated user changes.',
+                '- Prefer existing project helpers, scripts, and test patterns instead of introducing new abstractions.',
+                '- Keep progress updates concise so more time is spent on code and verification.',
+                ...batchGuidance,
+                '- If verification fails, fix the cause or report the blocker; do not signal completion for failed work.'
+            ].join('\n');
+        }
+
+        return [
+            'Keep changes scoped to the requested task.',
+            'Use existing project patterns and run focused verification before signaling completion.'
         ].join('\n');
     }
 

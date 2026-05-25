@@ -14,7 +14,13 @@ export const DEFAULT_CONFIG = {
     },
     providers: {
         claude: { command: 'claude' },
-        codex: { command: 'codex', args: [] },
+        codex: {
+            command: 'codex',
+            args: [],
+            interactiveSubmitDelayMinMs: 1200,
+            interactiveSubmitDelayMaxMs: 6000,
+            interactiveSubmitDelayCharsPerMs: 12
+        },
         deepseek: { command: 'deepseek', args: [] },
         glm: { command: 'glm', args: [] },
         custom: {

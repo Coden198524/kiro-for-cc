@@ -361,6 +361,24 @@
           },
           "description": "Additional arguments passed before the prompt for the Codex/OpenAI CLI."
         },
+        "autocode.providers.codex.interactiveSubmitDelayMinMs": {
+          "type": "number",
+          "default": 1200,
+          "minimum": 0,
+          "description": "Minimum delay before submitting a pasted prompt to the interactive Codex CLI."
+        },
+        "autocode.providers.codex.interactiveSubmitDelayMaxMs": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 0,
+          "description": "Maximum delay before submitting a pasted prompt to the interactive Codex CLI."
+        },
+        "autocode.providers.codex.interactiveSubmitDelayCharsPerMs": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "description": "Approximate pasted prompt characters per millisecond used to scale the interactive Codex submit delay. Higher values submit sooner."
+        },
         "autocode.providers.deepseek.command": {
           "type": "string",
           "default": "deepseek",

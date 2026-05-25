@@ -22,6 +22,19 @@ describe('SpecManager', () => {
             interactiveSpecWorkflow: true
         }
     };
+    const codexProvider: AgentProviderConfig = {
+        ...provider,
+        id: 'codex',
+        displayName: 'Codex',
+        command: 'codex',
+        capabilities: {
+            ...provider.capabilities,
+            permissions: false,
+            claudeAgents: false,
+            claudeHooks: false,
+            claudeMcp: false
+        }
+    };
 
     beforeEach(() => {
         jest.clearAllMocks();
@@ -82,6 +95,22 @@ describe('SpecManager', () => {
         expect(capturedPrompt).toContain('task-completion-1.json');
         expect(capturedPrompt).toContain('"status": "ready_for_verification"');
         expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-1.json');
+    });
+
+    test('adds Codex quality and speed guidance to task implementation prompts', async () => {
+        let capturedPrompt = '';
+        const runtime = createRuntime(codexProvider, prompt => {
+            capturedPrompt = prompt;
+        });
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        await specManager.implTask('/mock/workspace/.autocode/specs/demo/tasks.md', '1. 实现中文任务', false, 0);
+
+        expect(capturedPrompt).toContain('Provider execution guidance:');
+        expect(capturedPrompt).toContain('Codex quality and speed rules:');
+        expect(capturedPrompt).toContain('Run the narrowest useful verification command');
+        expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
     });
 
     test('builds one prompt and completion signals for all remaining tasks', async () => {
@@ -158,6 +187,42 @@ describe('SpecManager', () => {
             '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-5.json'
         ]);
     });
+
+    test('adds Codex batch guidance to all-task implementation prompts', async () => {
+        let capturedPrompt = '';
+        const runtime = createRuntime(codexProvider, prompt => {
+            capturedPrompt = prompt;
+        });
+        const document = createTaskDocument([
+            '# Implementation Plan',
+            '- [ ] 1. First task',
+            '- [ ] 2. Second task'
+        ]);
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(document);
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
+
+        expect(capturedPrompt).toContain('Codex quality and speed rules:');
+        expect(capturedPrompt).toContain('Reuse context across the listed tasks');
+        expect(capturedPrompt).toContain('one broader verification pass near the end when practical');
+        expect(capturedPrompt).toContain('Write each task completion signal only after that task has been implemented and checked.');
+    });
+
+    function createRuntime(providerConfig: AgentProviderConfig, onPrompt: (prompt: string) => void): AgentRuntime {
+        return {
+            provider: providerConfig,
+            refreshProvider: jest.fn(),
+            invokeInteractive: jest.fn(async (request) => {
+                onPrompt(request.prompt);
+                return vscode.window.createTerminal('mock');
+            }),
+            invokeHeadless: jest.fn(),
+            renameTerminal: jest.fn()
+        };
+    }
 
     function createTaskDocument(lines: string[]): vscode.TextDocument {
         return {

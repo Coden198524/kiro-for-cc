@@ -42,6 +42,9 @@ export interface AutoCodeSettings {
 export interface ProviderSettings {
     command?: string;
     args?: string[];
+    interactiveSubmitDelayMinMs?: number;
+    interactiveSubmitDelayMaxMs?: number;
+    interactiveSubmitDelayCharsPerMs?: number;
 }
 
 export interface CustomMcpServerSettings {
@@ -161,7 +164,13 @@ export class ConfigManager {
             },
             providers: {
                 claude: { command: 'claude' },
-                codex: { command: 'codex', args: [] },
+                codex: {
+                    command: 'codex',
+                    args: [],
+                    interactiveSubmitDelayMinMs: 1200,
+                    interactiveSubmitDelayMaxMs: 6000,
+                    interactiveSubmitDelayCharsPerMs: 12
+                },
                 deepseek: { command: 'deepseek', args: [] },
                 glm: { command: 'glm', args: [] },
                 custom: {

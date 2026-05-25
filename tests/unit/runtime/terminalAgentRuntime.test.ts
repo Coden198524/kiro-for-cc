@@ -209,7 +209,7 @@ describe('TerminalAgentRuntime', () => {
         jest.advanceTimersByTime(1500);
         expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
 
-        jest.advanceTimersByTime(2999);
+        jest.advanceTimersByTime(1199);
         expect(terminal.sendText).toHaveBeenCalledTimes(2);
 
         jest.advanceTimersByTime(1);
@@ -342,16 +342,32 @@ describe('TerminalAgentRuntime', () => {
         };
 
         const submitDelay = (runtime as any).sendPromptToInteractiveTerminal(terminal, provider, 'line 1\r\nline 2');
-        jest.advanceTimersByTime(2999);
+        jest.advanceTimersByTime(1199);
 
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, '\x1b[200~line 1\nline 2\x1b[201~', false);
-        expect(submitDelay).toBe(3000);
+        expect(submitDelay).toBe(1200);
         expect(terminal.sendText).toHaveBeenCalledTimes(1);
 
         jest.advanceTimersByTime(1);
 
         expect(terminal.sendText).toHaveBeenNthCalledWith(2, '', true);
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    });
+
+    test('uses configured Codex interactive submit delay bounds', () => {
+        configValues['providers.codex.interactiveSubmitDelayMinMs'] = 500;
+        configValues['providers.codex.interactiveSubmitDelayMaxMs'] = 2000;
+        configValues['providers.codex.interactiveSubmitDelayCharsPerMs'] = 10;
+        const provider: AgentProviderConfig = {
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        };
+        const runtime = createRuntime(provider);
+
+        expect((runtime as any).getInteractivePromptSubmitDelay('short prompt', provider)).toBe(500);
+        expect((runtime as any).getInteractivePromptSubmitDelay('x'.repeat(30000), provider)).toBe(2000);
     });
 
     test('falls back to terminal newline if sendSequence fails for non-Codex prompts', async () => {

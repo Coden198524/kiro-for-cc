@@ -11,6 +11,7 @@ import { buildAgentCommand, buildAgentInteractiveCommand, convertPathForWsl } fr
 import { AgentInvocationRequest, AgentInvocationResult, AgentProviderConfig, AgentRuntime } from './agentRuntime';
 import { getRuntimeMcpServers, McpServerInfo } from './mcpRegistry';
 import { getProviderConfig } from './providerRegistry';
+import { getRuntimeValue } from './runtimeSettings';
 
 const execAsync = promisify(exec);
 
@@ -18,9 +19,9 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly INTERACTIVE_PROMPT_PASTE_DELAY = 1500;
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 500;
     private static readonly INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 3000;
-    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 3000;
-    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 12000;
-    private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 6;
+    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 1200;
+    private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 6000;
+    private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 12;
     private configManager: ConfigManager;
     private interactiveTerminal: vscode.Terminal | undefined;
     private interactiveTerminalProviderId: string | undefined;
@@ -336,13 +337,7 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
 
     private getInteractivePromptSubmitDelay(normalizedPrompt: string, provider: AgentProviderConfig): number {
         if (provider.id === 'codex') {
-            return Math.min(
-                TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY,
-                Math.max(
-                    TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY,
-                    Math.ceil(normalizedPrompt.length / TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS)
-                )
-            );
+            return this.getCodexInteractivePromptSubmitDelay(normalizedPrompt);
         }
 
         return Math.min(
@@ -352,6 +347,43 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
                 Math.ceil(normalizedPrompt.length / 200)
             )
         );
+    }
+
+    private getCodexInteractivePromptSubmitDelay(normalizedPrompt: string): number {
+        const minDelay = this.getNumberSetting(
+            'providers.codex.interactiveSubmitDelayMinMs',
+            TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY,
+            0
+        );
+        const maxDelay = Math.max(
+            minDelay,
+            this.getNumberSetting(
+                'providers.codex.interactiveSubmitDelayMaxMs',
+                TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY,
+                minDelay
+            )
+        );
+        const charsPerMs = this.getNumberSetting(
+            'providers.codex.interactiveSubmitDelayCharsPerMs',
+            TerminalAgentRuntime.CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS,
+            1
+        );
+
+        return Math.min(
+            maxDelay,
+            Math.max(minDelay, Math.ceil(normalizedPrompt.length / charsPerMs))
+        );
+    }
+
+    private getNumberSetting(section: string, defaultValue: number, minimum: number): number {
+        const rawValue = getRuntimeValue<unknown>(section, defaultValue);
+        const value = typeof rawValue === 'number'
+            ? rawValue
+            : typeof rawValue === 'string'
+                ? Number(rawValue)
+                : Number.NaN;
+
+        return Number.isFinite(value) ? Math.max(minimum, value) : defaultValue;
     }
 
     private wait(delayMs: number): Promise<void> {

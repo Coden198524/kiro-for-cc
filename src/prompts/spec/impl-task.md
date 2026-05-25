@@ -28,6 +28,10 @@ variables:
     type: string
     required: true
     description: Language-specific response instructions
+  providerExecutionGuidance:
+    type: string
+    required: true
+    description: Provider-specific execution quality and speed guidance
   completionSignalPath:
     type: string
     required: true
@@ -51,6 +55,10 @@ Completion Signal Path: {{completionSignalPath}}
 Language rules:
 
 {{languageInstruction}}
+
+Provider execution guidance:
+
+{{providerExecutionGuidance}}
 
 Please help me:
 
