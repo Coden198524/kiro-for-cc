@@ -16,6 +16,9 @@ export interface TaskCompletionReconcileResult {
 }
 
 export class TaskCompletionService {
+    private static readonly SIGNAL_POLL_INTERVAL_MS = 2000;
+    private static readonly SIGNAL_POLL_TIMEOUT_MS = 30 * 60 * 1000;
+
     constructor(
         private verifier: TaskCompletionVerifier,
         private outputChannel: vscode.OutputChannel
@@ -28,6 +31,7 @@ export class TaskCompletionService {
         completionSignalPath?: string
     ): Promise<boolean> | undefined {
         if (!this.verifier.isEnabled()) {
+            this.outputChannel.appendLine('[Task Complete] Auto mark task done is disabled; not registering completion verification.');
             return undefined;
         }
 
@@ -45,7 +49,7 @@ export class TaskCompletionService {
             completionResolved = true;
             resolveCompletion(verified);
         };
-        const runVerification = async () => {
+        const runVerification = async (verificationRequest: VerifyAndMarkTaskDoneRequest) => {
             if (handled) {
                 return completionPromise;
             }
@@ -56,14 +60,7 @@ export class TaskCompletionService {
             signalDisposable?.dispose();
 
             try {
-                if (completionSignalPath) {
-                    const signalRequest = await this.resolveSignalRequest(completionSignalPath, request.taskFilePath);
-                    const verified = await this.verifier.verifyAndMarkDone(signalRequest ?? request);
-                    finishCompletion(verified);
-                    return verified;
-                }
-
-                const verified = await this.verifier.verifyAndMarkDone(request);
+                const verified = await this.verifier.verifyAndMarkDone(verificationRequest);
                 finishCompletion(verified);
                 return verified;
             } catch (error) {
@@ -72,12 +69,29 @@ export class TaskCompletionService {
             }
         };
 
+        const runSignalVerification = async () => {
+            const signalRequest = completionSignalPath
+                ? await this.resolveSignalRequest(completionSignalPath, request.taskFilePath)
+                : undefined;
+            if (!signalRequest) {
+                this.outputChannel.appendLine(`[Task Complete] Completion signal is not ready yet: ${completionSignalPath ?? '(not available)'}`);
+                return false;
+            }
+
+            await runVerification(signalRequest);
+            return true;
+        };
+
         const shellEndDisposable = vscode.window.onDidEndTerminalShellExecution(async (event) => {
             if (event.terminal !== terminal) {
                 return;
             }
 
-            await runVerification();
+            if (completionSignalPath && !await runSignalVerification()) {
+                return;
+            }
+
+            await runVerification(request);
         });
 
         const closeDisposable = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
@@ -85,12 +99,23 @@ export class TaskCompletionService {
                 return;
             }
 
-            await runVerification();
+            if (completionSignalPath && !await runSignalVerification()) {
+                await runVerification(request);
+                return;
+            }
+
+            await runVerification(request);
         });
 
         const signalDisposable = completionSignalPath
-            ? this.registerSignalWatcher(completionSignalPath, runVerification)
+            ? this.registerSignalMonitor(completionSignalPath, async () => {
+                await runSignalVerification();
+            })
             : undefined;
+
+        if (completionSignalPath) {
+            this.outputChannel.appendLine(`[Task Complete] Watching completion signal: ${completionSignalPath}`);
+        }
 
         context.subscriptions.push(...[closeDisposable, shellEndDisposable, signalDisposable].filter((item): item is vscode.Disposable => Boolean(item)));
         return completionPromise;
@@ -103,6 +128,7 @@ export class TaskCompletionService {
         completionSignalPaths: string[]
     ): void {
         if (!this.verifier.isEnabled()) {
+            this.outputChannel.appendLine('[Task Complete] Auto mark task done is disabled; not registering batch completion signals.');
             return;
         }
 
@@ -124,7 +150,8 @@ export class TaskCompletionService {
         };
 
         for (const signalPath of completionSignalPaths) {
-            disposables.push(this.registerSignalWatcher(signalPath, () => verifySignal(signalPath)));
+            disposables.push(this.registerSignalMonitor(signalPath, () => verifySignal(signalPath)));
+            this.outputChannel.appendLine(`[Task Complete] Watching completion signal: ${signalPath}`);
         }
 
         const terminalDisposable = vscode.window.onDidCloseTerminal(async closedTerminal => {
@@ -186,6 +213,10 @@ export class TaskCompletionService {
 
     private async resolveSignalRequest(completionSignalPath: string, fallbackTaskFilePath: string): Promise<VerifyAndMarkTaskDoneRequest | undefined> {
         const signalPayload = await this.readCompletionSignal(completionSignalPath);
+        if (!signalPayload) {
+            return undefined;
+        }
+
         if (signalPayload.status && signalPayload.status !== 'ready_for_verification') {
             this.outputChannel.appendLine(`[Task Complete] Ignoring completion signal with status ${signalPayload.status}: ${completionSignalPath}`);
             return undefined;
@@ -236,14 +267,19 @@ export class TaskCompletionService {
         }
     }
 
-    private async readCompletionSignal(completionSignalPath: string): Promise<TaskCompletionSignalPayload> {
+    private async readCompletionSignal(completionSignalPath: string): Promise<TaskCompletionSignalPayload | undefined> {
         try {
             const content = await vscode.workspace.fs.readFile(vscode.Uri.file(completionSignalPath));
             const text = Buffer.from(content).toString();
+            if (!text.trim()) {
+                this.outputChannel.appendLine(`[Task Complete] Completion signal is empty: ${completionSignalPath}`);
+                return undefined;
+            }
+
             return this.parseCompletionSignal(text);
         } catch (error) {
             this.outputChannel.appendLine(`[Task Complete] Failed to read completion signal ${completionSignalPath}: ${error}`);
-            return {};
+            return undefined;
         }
     }
 
@@ -278,19 +314,25 @@ export class TaskCompletionService {
         return match?.[1];
     }
 
-    private registerSignalWatcher(completionSignalPath: string, onSignal: () => Promise<unknown>): vscode.Disposable {
+    private registerSignalMonitor(completionSignalPath: string, onSignal: () => Promise<unknown>): vscode.Disposable {
         const signalUri = vscode.Uri.file(completionSignalPath);
         const watcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(path.dirname(signalUri.fsPath), path.basename(signalUri.fsPath))
+            new vscode.RelativePattern(vscode.Uri.file(path.dirname(signalUri.fsPath)), path.basename(signalUri.fsPath))
         );
         let timer: NodeJS.Timeout | undefined;
+        let disposed = false;
+        const startedAt = Date.now();
 
-        const trigger = (uri: vscode.Uri) => {
+        const trigger = (uri: vscode.Uri, source: 'watcher' | 'poll' | 'startup') => {
+            if (disposed) {
+                return;
+            }
+
             if (this.normalizeFsPath(uri.fsPath) !== this.normalizeFsPath(signalUri.fsPath)) {
                 return;
             }
 
-            this.outputChannel.appendLine(`[Task Complete] Completion signal detected: ${uri.fsPath}`);
+            this.outputChannel.appendLine(`[Task Complete] Completion signal detected by ${source}: ${uri.fsPath}`);
 
             if (timer) {
                 clearTimeout(timer);
@@ -303,20 +345,39 @@ export class TaskCompletionService {
             }, 500);
         };
 
-        watcher.onDidCreate(trigger);
-        watcher.onDidChange(trigger);
+        watcher.onDidCreate(uri => trigger(uri, 'watcher'));
+        watcher.onDidChange(uri => trigger(uri, 'watcher'));
         setTimeout(() => {
             vscode.workspace.fs.stat(signalUri).then(
-                () => trigger(signalUri),
+                () => trigger(signalUri, 'startup'),
                 () => undefined
             );
         }, 0);
 
+        const pollTimer = setInterval(() => {
+            if (disposed) {
+                return;
+            }
+
+            if (Date.now() - startedAt > TaskCompletionService.SIGNAL_POLL_TIMEOUT_MS) {
+                this.outputChannel.appendLine(`[Task Complete] Stopped polling completion signal after timeout: ${signalUri.fsPath}`);
+                clearInterval(pollTimer);
+                return;
+            }
+
+            vscode.workspace.fs.stat(signalUri).then(
+                () => trigger(signalUri, 'poll'),
+                () => undefined
+            );
+        }, TaskCompletionService.SIGNAL_POLL_INTERVAL_MS);
+
         return {
             dispose: () => {
+                disposed = true;
                 if (timer) {
                     clearTimeout(timer);
                 }
+                clearInterval(pollTimer);
                 watcher.dispose();
             }
         };

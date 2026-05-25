@@ -6,6 +6,7 @@ import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
 import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
 import { hasChildSpecTasks, parseSpecTaskLine, SpecTaskStatus } from './taskStatus';
+import { analyzeTaskPlanQuality, formatTaskPlanQualityIssue } from './taskPlanQuality';
 import { AgentManager, CodexAgentsReadyResult } from '../agents/agentManager';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
@@ -79,6 +80,7 @@ interface ImplTaskOptions {
 export class SpecManager {
     private configManager: ConfigManager;
     private promptLoader: PromptLoader;
+    private reportedTaskPlanQualityPaths = new Set<string>();
 
     constructor(
         private agentRuntime: AgentRuntime,
@@ -343,6 +345,8 @@ export class SpecManager {
             return undefined;
         }
 
+        await this.reportTaskPlanQuality(taskFilePath);
+
         const taskContext = await this.getRunnableTaskContext(taskFilePath);
         const tasks = this.getSequentialTaskOrder(taskContext);
         if (tasks.length === 0) {
@@ -377,6 +381,8 @@ export class SpecManager {
             vscode.window.showErrorMessage('No workspace folder open');
             return undefined;
         }
+
+        await this.reportTaskPlanQuality(taskFilePath);
 
         const taskContext = await this.getRunnableTaskContext(taskFilePath);
         if (taskContext.tasks.length === 0) {
@@ -459,6 +465,28 @@ export class SpecManager {
 
     private async getRunnableTasks(taskFilePath: string): Promise<RunnableTask[]> {
         return this.getSequentialTaskOrder(await this.getRunnableTaskContext(taskFilePath));
+    }
+
+    private async reportTaskPlanQuality(taskFilePath: string): Promise<void> {
+        const normalizedPath = path.normalize(taskFilePath).toLowerCase();
+        if (this.reportedTaskPlanQualityPaths.has(normalizedPath)) {
+            return;
+        }
+
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(taskFilePath));
+        const report = analyzeTaskPlanQuality(this.getDocumentLines(document));
+        if (report.issueCount === 0) {
+            this.reportedTaskPlanQualityPaths.add(normalizedPath);
+            return;
+        }
+
+        this.outputChannel.appendLine(`[Task Plan Quality] ${taskFilePath}: ${report.errorCount} error(s), ${report.warningCount} warning(s).`);
+        for (const item of report.issues) {
+            this.outputChannel.appendLine(`[Task Plan Quality] ${formatTaskPlanQualityIssue(item)}`);
+        }
+
+        vscode.window.showWarningMessage(`Task plan quality check found ${report.errorCount} error(s) and ${report.warningCount} warning(s). See AutoCode output for details.`);
+        this.reportedTaskPlanQualityPaths.add(normalizedPath);
     }
 
     private toLaunchTask(task: RunnableTask): TaskImplementationLaunchTask {
@@ -991,6 +1019,8 @@ export class SpecManager {
         return [
             'When you believe this task is fully implemented, create or overwrite the completion signal file with the JSON object below.',
             'The VS Code extension will run an independent model verification and will mark the task checkbox as completed only if verification passes.',
+            'This file is mandatory for AutoCode automation. If you only summarize completion without writing this file, automatic verification and task status updates cannot run.',
+            'Create the parent directory if needed, then write exactly this JSON object after your own implementation checks pass.',
             'Do not edit the task checkbox yourself.',
             '',
             `Completion signal path: ${completionSignalPath}`,

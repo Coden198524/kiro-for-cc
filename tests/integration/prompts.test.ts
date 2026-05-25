@@ -27,7 +27,11 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('Tasks');
       expect(result).toContain('_Files:');
       expect(result).toContain('_Depends on:');
+      expect(result).toContain('_Verify:');
+      expect(result).toContain('_Done when:');
       expect(result).toContain('directed acyclic graph');
+      expect(result).toContain('Requirement Traceability Matrix');
+      expect(result).toContain('out-of-scope');
     });
 
     test('includes directory creation instruction', () => {
@@ -68,7 +72,10 @@ describe('Prompt Integration Tests', () => {
 
       expect(result).toContain('_Files:');
       expect(result).toContain('_Depends on:');
+      expect(result).toContain('_Verify:');
+      expect(result).toContain('_Done when:');
       expect(result).toContain('directed acyclic graph');
+      expect(result).toContain('Requirement Traceability Matrix');
     });
   });
 

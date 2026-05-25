@@ -36,21 +36,25 @@ eg:
 
 #### General Evaluation Criteria
 
-1. **Completeness** (25 points)
+1. **Completeness** (20 points)
    - Whether all necessary content is covered
    - Whether there are any important aspects missing
 
-2. **Clarity** (25 points)
+2. **Clarity** (20 points)
    - Whether the expression is clear and explicit
    - Whether the structure is logical and easy to understand
 
-3. **Feasibility** (25 points)
+3. **Feasibility** (20 points)
    - Whether the solution is practical and feasible
    - Whether implementation difficulty has been considered
 
-4. **Innovation** (25 points)
-   - Whether there are unique insights
-   - Whether better solutions are provided
+4. **Traceability** (20 points)
+   - Whether requirements, design decisions, and tasks can be traced across documents
+   - Whether coverage gaps are visible
+
+5. **Testability / Automation Readiness** (20 points)
+   - Whether the document can drive deterministic review, implementation, and verification
+   - Whether task metadata is machine-readable where applicable
 
 #### Specific Type Criteria
 
@@ -60,6 +64,7 @@ eg:
 - Testability of acceptance criteria
 - Edge case consideration
 - **Alignment with user requirements**
+- Explicit in-scope, out-of-scope, assumptions, open questions, and non-functional requirements
 
 ##### Design Document
 
@@ -67,6 +72,8 @@ eg:
 - Technology selection appropriateness
 - Scalability consideration
 - **Coverage of all requirements**
+- Requirement Traceability Matrix with no uncovered requirements
+- Clear state transitions, error handling, compatibility, and testing strategy
 
 ##### Tasks Document
 
@@ -74,6 +81,16 @@ eg:
 - Dependency clarity
 - Incremental implementation
 - **Consistency with requirements and design**
+- Every leaf task includes `_Files`, `_Depends on`, `_Requirements`, `_Verify`, and `_Done when`
+- Dependency metadata forms a DAG with no unknown task ids, self dependencies, or parent-task dependencies when child tasks are actionable
+- File scopes make parallel execution safe or clearly force sequential execution
+
+### Quality Gate
+
+- A document scoring below 80/100 MUST NOT be selected unless every candidate is below 80 and the final output combines and fixes the critical gaps.
+- Any candidate with missing required task metadata, cyclic task dependencies, untestable requirements, or uncovered requirements/design components MUST be penalized heavily.
+- The final document MUST include the strongest parts of the candidates and fix blocking quality issues before returning final_document_path.
+- If no candidate can be fixed safely, return the least risky candidate and clearly list the blocking gaps in the summary.
 
 ### Evaluation Process
 
@@ -86,7 +103,8 @@ def evaluate_documents(documents):
             'completeness': evaluate_completeness(doc),
             'clarity': evaluate_clarity(doc),
             'feasibility': evaluate_feasibility(doc),
-            'innovation': evaluate_innovation(doc),
+            'traceability': evaluate_traceability(doc),
+            'testability': evaluate_testability(doc),
             'total': sum(scores),
             'strengths': identify_strengths(doc),
             'weaknesses': identify_weaknesses(doc)
@@ -117,6 +135,7 @@ summary: Brief summary including scores, for example:
 - "Created requirements document with 8 main requirements. Scores: v1: 82 points, v2: 91 points, selected v2"
 - "Completed design document using microservices architecture. Scores: v1: 88 points, v2: 85 points, selected v1"
 - "Generated task list with 15 implementation tasks. Scores: v1: 90 points, v2: 92 points, combined strengths from both versions"
+- Include any quality gate fixes or remaining gaps in the summary
 
 ## **Important Constraints**
 

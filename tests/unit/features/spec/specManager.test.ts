@@ -94,6 +94,7 @@ describe('SpecManager', () => {
         expect(capturedPrompt).toContain('Completion Signal Path:');
         expect(capturedPrompt).toContain('task-completion-1.json');
         expect(capturedPrompt).toContain('"status": "ready_for_verification"');
+        expect(capturedPrompt).toContain('This file is mandatory for AutoCode automation.');
         expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-1.json');
     });
 

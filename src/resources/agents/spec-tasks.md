@@ -61,6 +61,9 @@ Required metadata for every leaf task:
 - `_Files: path/to/file.ts, tests/path/to/file.test.ts_` lists the expected write scope for the task.
 - `_Depends on: none_` means the task has no prerequisites and can run in the first parallel batch if its file scope does not conflict.
 - `_Depends on: 1, 2.1_` means the task must wait for those task IDs to complete.
+- `_Requirements: 1.1, 2.3_` maps the task to granular requirements or acceptance criteria.
+- `_Verify: npm test -- feature.test.ts_` lists the smallest useful verification command or deterministic check.
+- `_Done when: observable completion condition_` states the concrete completion criteria for the implementation agent.
 
 Dependency rules:
 
@@ -69,6 +72,14 @@ Dependency rules:
 - Do not create cyclic dependencies.
 - Do not depend on a parent task when the actionable work is represented by child tasks; depend on the child task IDs instead.
 - Tasks with no dependency path between them should remain independent so they can run in parallel.
+
+Task quality rules:
+
+- Leaf tasks MUST be atomic and scoped to one coherent code change; split tasks that touch unrelated components.
+- Leaf tasks MUST avoid broad objectives such as "optimize", "refactor", "improve", or "support everything" unless the scope is narrowed by files and done criteria.
+- A task that touches shared configuration, package manifests, generated files, or global state MUST either be sequenced with dependencies or isolated as its own prerequisite task.
+- The plan MUST cover every requirement from requirements.md and every implementable design component from design.md.
+- The final task SHOULD wire the feature together only after prior tasks have introduced tested building blocks.
 
 **Example Format:**
 
@@ -115,6 +126,9 @@ Convert the feature design into a series of prompts for a code-generation LLM th
 - Machine-readable execution metadata on every leaf task:
   - `_Files: path/to/file.ts, tests/path/to/file.test.ts_`
   - `_Depends on: none_` or `_Depends on: 1, 2.1_`
+  - `_Requirements: 1.1, 2.3_`
+  - `_Verify: npm test -- feature.test.ts_`
+  - `_Done when: observable completion condition_`
 - The model MUST ensure that the implementation plan is a series of discrete, manageable coding steps
 - The model MUST ensure each task references specific requirements from the requirement document
 - The model MUST NOT include excessive implementation details that are already covered in the design document
@@ -125,6 +139,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
 - The model MUST ensure the plan covers all aspects of the design that can be implemented through code
 - The model SHOULD sequence steps to validate core functionality early through code
 - The model MUST ensure that all requirements are covered by the implementation tasks
+- The model MUST include a "Requirement Coverage" section or table before the dependency diagram showing which tasks cover each requirement
+- The model MUST perform a task quality self-check before asking for approval: no missing metadata, no unknown dependencies, no cycles, no parent-task dependencies when child tasks represent the actionable work, no overlapping file scopes for tasks intended to run in parallel
 - The model MUST offer to return to previous steps (requirements or design) if gaps are identified during implementation planning
 - The model MUST ONLY include tasks that can be performed by a coding agent (writing code, creating tests, etc.)
 - The model MUST NOT include tasks related to user testing, deployment, performance metrics gathering, or other non-coding activities
@@ -170,6 +186,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
  - _Files: src/models/index.ts, src/services/index.ts_
  - _Depends on: none_
  - _Requirements: 1.1_
+ - _Verify: npm test -- models/index.test.ts_
+ - _Done when: core interfaces compile and downstream services can import them_
 
 - [ ] 2. Implement data models and validation
 - [ ] 2.1 Create core data model interfaces and types
@@ -178,6 +196,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
   - _Files: src/models/types.ts, src/models/validation.ts, tests/models/validation.test.ts_
   - _Depends on: 1_
   - _Requirements: 2.1, 3.3, 1.2_
+  - _Verify: npm test -- validation.test.ts_
+  - _Done when: model validation accepts valid data and rejects invalid data_
 
 - [ ] 2.2 Implement User model with validation
   - Write User class with validation methods
@@ -185,6 +205,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
   - _Files: src/models/User.ts, tests/models/User.test.ts_
   - _Depends on: 2.1_
   - _Requirements: 1.2_
+  - _Verify: npm test -- User.test.ts_
+  - _Done when: User model behavior is covered by focused unit tests_
 
 - [ ] 2.3 Implement Document model with relationships
    - Code Document class with relationship handling
@@ -192,6 +214,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
    - _Files: src/models/Document.ts, tests/models/Document.test.ts_
    - _Depends on: 2.1_
    - _Requirements: 2.1, 3.3, 1.2_
+   - _Verify: npm test -- Document.test.ts_
+   - _Done when: Document relationships are implemented and tested_
 
 - [ ] 3. Create storage mechanism
 - [ ] 3.1 Implement database connection utilities
@@ -200,6 +224,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
    - _Files: src/db/connection.ts, src/db/errors.ts, tests/db/connection.test.ts_
    - _Depends on: 1_
    - _Requirements: 2.1, 3.3, 1.2_
+   - _Verify: npm test -- connection.test.ts_
+   - _Done when: connection utilities handle success and failure paths_
 
 - [ ] 3.2 Implement repository pattern for data access
   - Code base repository interface
@@ -208,6 +234,8 @@ Convert the feature design into a series of prompts for a code-generation LLM th
   - _Files: src/repositories/baseRepository.ts, src/repositories/userRepository.ts, tests/repositories/userRepository.test.ts_
   - _Depends on: 2.1, 3.1_
   - _Requirements: 4.3_
+  - _Verify: npm test -- userRepository.test.ts_
+  - _Done when: repository CRUD behavior is implemented and tested_
 
 [Additional coding tasks continue...]
 ```

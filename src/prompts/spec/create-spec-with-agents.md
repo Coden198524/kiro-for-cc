@@ -81,7 +81,10 @@ Execution rules:
 - Start by creating or updating `{{specBasePath}}/<feature_name>/requirements.md`.
 - Include the original Feature Description in your working context; do not ask the user to re-enter it.
 - Keep all conversational replies and generated document prose in the detected language.
+- requirements.md must include testable EARS acceptance criteria, scope, out-of-scope, assumptions / open questions, and non-functional requirements when relevant.
+- design.md must include a Requirement Traceability Matrix, clear component contracts, state/error flow coverage, compatibility notes, and a testing strategy mapped to requirements.
 - After requirements.md is created, ask the user to review and approve it before continuing to design.md.
-- When the workflow reaches tasks.md creation, require every leaf task to include `_Files: ..._` and `_Depends on: none_` or `_Depends on: <task ids>_`; dependencies must form a directed acyclic graph so independent tasks can run in parallel.
+- When the workflow reaches tasks.md creation, require every leaf task to include `_Files: ..._`, `_Depends on: none_` or `_Depends on: <task ids>_`, `_Requirements: ..._`, `_Verify: ..._`, and `_Done when: ..._`; dependencies must form a directed acyclic graph so independent tasks can run in parallel.
+- Before asking the user to approve each document, run a quality self-check: no untestable requirements, no uncovered requirements in design, no missing task metadata, no dependency cycles, and no unsafe parallel file-scope overlap.
 - You have full control over the naming and file creation.
 </user_input>
