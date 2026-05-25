@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { SpecManager } from '../features/spec/specManager';
 import { TaskCompletionService } from '../features/spec/taskCompletionService';
 import { TaskSessionManager } from '../features/spec/taskSessionManager';
-import { markRunnableTasksInProgress, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
+import { markTaskLinesInProgress, markTaskLinesPending, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
 import { SpecExplorerProvider } from '../providers/specExplorerProvider';
 
 export interface RegisterSpecCommandsOptions {
@@ -69,9 +69,15 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
             const effectiveDescription = task?.description || taskDescription;
             const shouldResume = resume || task?.status === 'inProgress';
+            const changedLineNumbers = result?.changedLineNumbers ?? [];
 
-            const run = await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
-            if (run?.terminal) {
+            try {
+                const run = await specManager.implTask(documentUri.fsPath, effectiveDescription, shouldResume, lineNumber);
+                if (!run?.terminal) {
+                    await markTaskLinesPending(documentUri, changedLineNumbers);
+                    return;
+                }
+
                 taskCompletionService.registerTaskCompletion(
                     context,
                     run.terminal,
@@ -82,15 +88,83 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                     },
                     run.completionSignalPath
                 );
+            } catch (error) {
+                await markTaskLinesPending(documentUri, changedLineNumbers);
+                outputChannel.appendLine(`[Task Execute] Failed to start task on line ${lineNumber + 1}: ${error}`);
+                vscode.window.showErrorMessage(`Failed to start task: ${error}`);
             }
         }),
         vscode.commands.registerCommand('autocode.spec.implAllTasks', async (documentUri: vscode.Uri) => {
             outputChannel.appendLine(`[Task Execute] Starting all tasks: ${documentUri.fsPath}`);
 
-            const run = await specManager.implAllTasks(documentUri.fsPath);
-            if (run?.terminal && run.completionSignalPaths) {
-                await markRunnableTasksInProgress(documentUri);
-                taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+            const changedLineNumbers: number[] = [];
+            try {
+                const run = await specManager.implAllTasks(documentUri.fsPath, {
+                    beforeLaunchTasks: async tasks => {
+                        changedLineNumbers.push(...await markTaskLinesInProgress(documentUri, tasks.map(task => task.lineNumber)));
+                    }
+                });
+                if (run?.failedLineNumbers?.length) {
+                    await markTaskLinesPending(documentUri, run.failedLineNumbers);
+                }
+
+                if (run?.terminal && run.completionSignalPaths) {
+                    taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+                }
+            } catch (error) {
+                await markTaskLinesPending(documentUri, changedLineNumbers);
+                outputChannel.appendLine(`[Task Execute] Failed to start all tasks: ${error}`);
+                vscode.window.showErrorMessage(`Failed to start all tasks: ${error}`);
+            }
+        }),
+        vscode.commands.registerCommand('autocode.spec.implAllTasksParallel', async (documentUri: vscode.Uri) => {
+            outputChannel.appendLine(`[Task Execute] Starting parallel tasks: ${documentUri.fsPath}`);
+
+            const changedLineNumbers: number[] = [];
+            try {
+                const run = await specManager.implAllTasksParallel(documentUri.fsPath, {
+                    beforeLaunchTasks: async tasks => {
+                        changedLineNumbers.push(...await markTaskLinesInProgress(documentUri, tasks.map(task => task.lineNumber)));
+                    }
+                });
+                if (run?.failedLineNumbers?.length) {
+                    await markTaskLinesPending(documentUri, run.failedLineNumbers);
+                    vscode.window.showWarningMessage(`${run.failedLineNumbers.length} parallel task(s) failed to start and were returned to pending.`);
+                }
+
+                if (run?.parallelRuns?.length) {
+                    const completionResults = run.parallelRuns
+                        .map(parallelRun => taskCompletionService.registerTaskCompletion(
+                        context,
+                        parallelRun.terminal,
+                        {
+                            taskFilePath: parallelRun.taskFilePath,
+                            lineNumber: parallelRun.lineNumber,
+                            taskDescription: parallelRun.taskDescription
+                        },
+                        parallelRun.completionSignalPath
+                        ))
+                        .filter((result): result is Promise<boolean> => Boolean(result));
+
+                    if (completionResults.length > 0 && !run.failedLineNumbers?.length) {
+                        Promise.all(completionResults).then(async results => {
+                            if (results.every(Boolean)) {
+                                await vscode.commands.executeCommand('autocode.spec.implAllTasksParallel', documentUri);
+                            }
+                        }).catch(error => {
+                            outputChannel.appendLine(`[Task Execute] Failed to continue parallel task batch: ${error}`);
+                        });
+                    }
+                    return;
+                }
+
+                if (run?.terminal && run.completionSignalPaths) {
+                    taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+                }
+            } catch (error) {
+                await markTaskLinesPending(documentUri, changedLineNumbers);
+                outputChannel.appendLine(`[Task Execute] Failed to start parallel tasks: ${error}`);
+                vscode.window.showErrorMessage(`Failed to start parallel tasks: ${error}`);
             }
         }),
         vscode.commands.registerCommand('autocode.spec.reconcileTaskCompletions', async (documentUri?: vscode.Uri) => {

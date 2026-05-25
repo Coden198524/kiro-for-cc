@@ -25,6 +25,9 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('Requirements');
       expect(result).toContain('Design');
       expect(result).toContain('Tasks');
+      expect(result).toContain('_Files:');
+      expect(result).toContain('_Depends on:');
+      expect(result).toContain('directed acyclic graph');
     });
 
     test('includes directory creation instruction', () => {
@@ -49,6 +52,22 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('Use that language');
       expect(result).toContain('yong-hu-ren-zheng');
       expect(result).toContain('Add material batch import tool for FlaxEngine');
+    });
+
+    test('agent workflow prompt requires DAG task metadata', () => {
+      const result = promptLoader.renderPrompt('create-spec-with-agents', {
+        description: 'Add task scheduling',
+        workspacePath: '/test',
+        specBasePath: '.autocode/specs',
+        providerName: 'Codex',
+        agentDirectory: '/test/.codex/agents',
+        agentConfigPath: '/test/.codex/config.toml',
+        agentInvocationInstruction: 'Use configured agents.'
+      });
+
+      expect(result).toContain('_Files:');
+      expect(result).toContain('_Depends on:');
+      expect(result).toContain('directed acyclic graph');
     });
   });
 

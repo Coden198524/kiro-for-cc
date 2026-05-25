@@ -5,14 +5,35 @@ import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { PromptLoader } from '../../services/promptLoader';
 import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
-import { hasChildSpecTasks, parseSpecTaskLine } from './taskStatus';
+import { hasChildSpecTasks, parseSpecTaskLine, SpecTaskStatus } from './taskStatus';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
-export interface TaskImplementationRun {
+export interface ParallelTaskImplementationRun {
     terminal: vscode.Terminal;
+    taskFilePath: string;
+    lineNumber: number;
+    taskDescription: string;
+    completionSignalPath: string;
+}
+
+export interface TaskImplementationRun {
+    terminal?: vscode.Terminal;
     completionSignalPath?: string;
     completionSignalPaths?: string[];
+    parallelRuns?: ParallelTaskImplementationRun[];
+    failedLineNumbers?: number[];
+}
+
+export interface TaskImplementationLaunchTask {
+    lineNumber: number;
+    taskDescription: string;
+    status: 'pending' | 'inProgress';
+    completionSignalPath: string;
+}
+
+export interface TaskImplementationLaunchOptions {
+    beforeLaunchTasks?: (tasks: readonly TaskImplementationLaunchTask[]) => Promise<void>;
 }
 
 interface RunnableTask {
@@ -20,6 +41,35 @@ interface RunnableTask {
     description: string;
     status: 'pending' | 'inProgress';
     completionSignalPath: string;
+    detailLines: string[];
+    taskId?: string;
+    dependencies?: string[];
+    hasExplicitDependencies: boolean;
+}
+
+interface ParallelTaskScope {
+    task: RunnableTask;
+    fileScopes: string[];
+}
+
+interface ParallelTaskAnalysis {
+    canRunInParallel: boolean;
+    fallbackReason?: string;
+    scopes: ParallelTaskScope[];
+    readyScopes: ParallelTaskScope[];
+    blockedTaskCount: number;
+}
+
+interface RunnableTaskContext {
+    tasks: RunnableTask[];
+    taskStatusesById: Map<string, SpecTaskStatus>;
+}
+
+interface ImplTaskOptions {
+    reuseTerminal?: boolean;
+    notification?: boolean;
+    title?: string;
+    parallelFileScopes?: string[];
 }
 
 export class SpecManager {
@@ -119,7 +169,13 @@ export class SpecManager {
         });
     }
 
-    async implTask(taskFilePath: string, taskDescription: string, resume = false, lineNumber?: number): Promise<TaskImplementationRun | undefined> {
+    async implTask(
+        taskFilePath: string,
+        taskDescription: string,
+        resume = false,
+        lineNumber?: number,
+        options: ImplTaskOptions = {}
+    ): Promise<TaskImplementationRun | undefined> {
         await this.agentRuntime.refreshProvider?.();
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -129,7 +185,9 @@ export class SpecManager {
         }
 
         // Show notification immediately after user input
-        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing your task. Check the terminal for progress.`);
+        if (options.notification !== false) {
+            NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing your task. Check the terminal for progress.`);
+        }
 
         const completionSignalPath = lineNumber !== undefined
             ? this.getCompletionSignalPath(taskFilePath, lineNumber)
@@ -144,7 +202,10 @@ export class SpecManager {
             `Use ${languagePreference} for all conversational responses, implementation summaries, task progress updates, and any generated documentation prose.`,
             'Preserve code identifiers, file names, API names, commands, logs, and existing project terminology in their required technical form.'
         ].join(' ');
-        const providerExecutionGuidance = this.getProviderTaskExecutionGuidance(false);
+        const providerExecutionGuidance = [
+            this.getProviderTaskExecutionGuidance(false),
+            this.getParallelTaskExecutionGuidance(options.parallelFileScopes)
+        ].filter(Boolean).join('\n');
         const completionSignalInstruction = this.getCompletionSignalInstruction(
             taskFilePath,
             taskDescription,
@@ -166,9 +227,9 @@ export class SpecManager {
 
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
-            title: 'AutoCode - Implementing Task',
+            title: options.title ?? 'AutoCode - Implementing Task',
             agentType: 'task_implementer',
-            reuseTerminal: true
+            reuseTerminal: options.reuseTerminal ?? true
         });
 
         if (this.taskSessionManager && lineNumber !== undefined) {
@@ -217,7 +278,7 @@ export class SpecManager {
         };
     }
 
-    async implAllTasks(taskFilePath: string): Promise<TaskImplementationRun | undefined> {
+    async implAllTasks(taskFilePath: string, options: TaskImplementationLaunchOptions = {}): Promise<TaskImplementationRun | undefined> {
         await this.agentRuntime.refreshProvider?.();
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -226,7 +287,8 @@ export class SpecManager {
             return undefined;
         }
 
-        const tasks = await this.getRunnableTasks(taskFilePath);
+        const taskContext = await this.getRunnableTaskContext(taskFilePath);
+        const tasks = this.getSequentialTaskOrder(taskContext);
         if (tasks.length === 0) {
             vscode.window.showInformationMessage('No pending or in-progress spec tasks found.');
             return undefined;
@@ -252,6 +314,9 @@ export class SpecManager {
             languageInstruction,
             this.getProviderTaskExecutionGuidance(true)
         );
+
+        await options.beforeLaunchTasks?.(tasks.map(task => this.toLaunchTask(task)));
+
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
             title: 'AutoCode - Implementing All Tasks',
@@ -279,9 +344,180 @@ export class SpecManager {
         };
     }
 
+    async implAllTasksParallel(taskFilePath: string, options: TaskImplementationLaunchOptions = {}): Promise<TaskImplementationRun | undefined> {
+        await this.agentRuntime.refreshProvider?.();
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace folder open');
+            return undefined;
+        }
+
+        const taskContext = await this.getRunnableTaskContext(taskFilePath);
+        if (taskContext.tasks.length === 0) {
+            vscode.window.showInformationMessage('No pending or in-progress spec tasks found.');
+            return undefined;
+        }
+
+        if (taskContext.tasks.length === 1) {
+            vscode.window.showInformationMessage('Only one runnable spec task was found. Running the normal task executor.');
+            return this.implAllTasks(taskFilePath, options);
+        }
+
+        const analysis = this.analyzeParallelTaskSafety(taskContext);
+        if (!analysis.canRunInParallel) {
+            vscode.window.showWarningMessage(`Parallel task execution fell back to sequential mode: ${analysis.fallbackReason}`);
+            return this.implAllTasks(taskFilePath, options);
+        }
+
+        if (analysis.readyScopes.length === 0) {
+            vscode.window.showInformationMessage('No spec tasks are ready for parallel execution yet. Complete the prerequisite tasks first.');
+            return undefined;
+        }
+
+        const blockedMessage = analysis.blockedTaskCount > 0
+            ? ` ${analysis.blockedTaskCount} task(s) are waiting for dependencies.`
+            : '';
+        NotificationUtils.showAutoDismissNotification(`${this.agentRuntime.provider.displayName} is implementing ${analysis.readyScopes.length} ready task(s) in parallel.${blockedMessage} Check the terminals for progress.`);
+
+        const runs: ParallelTaskImplementationRun[] = [];
+        const failedLineNumbers: number[] = [];
+
+        for (const scope of analysis.readyScopes) {
+            let run: TaskImplementationRun | undefined;
+            try {
+                await options.beforeLaunchTasks?.([this.toLaunchTask(scope.task)]);
+                run = await this.implTask(
+                    taskFilePath,
+                    scope.task.description,
+                    scope.task.status === 'inProgress',
+                    scope.task.lineNumber,
+                    {
+                        reuseTerminal: false,
+                        notification: false,
+                        title: `AutoCode - Task ${scope.task.lineNumber + 1}`,
+                        parallelFileScopes: scope.fileScopes
+                    }
+                );
+            } catch (error) {
+                failedLineNumbers.push(scope.task.lineNumber);
+                this.outputChannel.appendLine(`[SpecManager] Failed to start parallel task on line ${scope.task.lineNumber + 1}: ${error}`);
+                continue;
+            }
+
+            if (!run?.terminal || !run.completionSignalPath) {
+                failedLineNumbers.push(scope.task.lineNumber);
+                continue;
+            }
+
+            runs.push({
+                terminal: run.terminal,
+                taskFilePath,
+                lineNumber: scope.task.lineNumber,
+                taskDescription: scope.task.description,
+                completionSignalPath: run.completionSignalPath
+            });
+        }
+
+        if (runs.length === 0) {
+            return failedLineNumbers.length > 0
+                ? { parallelRuns: [], failedLineNumbers }
+                : undefined;
+        }
+
+        return {
+            parallelRuns: runs,
+            failedLineNumbers
+        };
+    }
+
     private async getRunnableTasks(taskFilePath: string): Promise<RunnableTask[]> {
+        return this.getSequentialTaskOrder(await this.getRunnableTaskContext(taskFilePath));
+    }
+
+    private toLaunchTask(task: RunnableTask): TaskImplementationLaunchTask {
+        return {
+            lineNumber: task.lineNumber,
+            taskDescription: task.description,
+            status: task.status,
+            completionSignalPath: task.completionSignalPath
+        };
+    }
+
+    private getSequentialTaskOrder(context: RunnableTaskContext): RunnableTask[] {
+        const tasks = context.tasks;
+        if (tasks.length < 2 || tasks.some(task => !task.hasExplicitDependencies)) {
+            return tasks;
+        }
+
+        const graphError = this.getTaskDependencyGraphError(
+            tasks.map(task => ({ task, fileScopes: [] })),
+            context.taskStatusesById
+        );
+        if (graphError) {
+            return tasks;
+        }
+
+        const tasksById = new Map<string, RunnableTask>();
+        for (const task of tasks) {
+            if (!task.taskId) {
+                return tasks;
+            }
+
+            tasksById.set(task.taskId, task);
+        }
+
+        const inDegreeByTaskId = new Map<string, number>();
+        const dependentsByTaskId = new Map<string, RunnableTask[]>();
+        for (const task of tasks) {
+            inDegreeByTaskId.set(task.taskId!, 0);
+        }
+
+        for (const task of tasks) {
+            for (const dependency of task.dependencies ?? []) {
+                if (!tasksById.has(dependency)) {
+                    continue;
+                }
+
+                inDegreeByTaskId.set(task.taskId!, (inDegreeByTaskId.get(task.taskId!) ?? 0) + 1);
+                const dependents = dependentsByTaskId.get(dependency) ?? [];
+                dependents.push(task);
+                dependentsByTaskId.set(dependency, dependents);
+            }
+        }
+
+        const readyTasks = tasks.filter(task => (inDegreeByTaskId.get(task.taskId!) ?? 0) === 0);
+        const orderedTasks: RunnableTask[] = [];
+
+        while (readyTasks.length > 0) {
+            const task = readyTasks.shift()!;
+            orderedTasks.push(task);
+
+            for (const dependent of dependentsByTaskId.get(task.taskId!) ?? []) {
+                const nextInDegree = (inDegreeByTaskId.get(dependent.taskId!) ?? 0) - 1;
+                inDegreeByTaskId.set(dependent.taskId!, nextInDegree);
+                if (nextInDegree === 0) {
+                    readyTasks.push(dependent);
+                }
+            }
+        }
+
+        return orderedTasks.length === tasks.length ? orderedTasks : tasks;
+    }
+
+    private async getRunnableTaskContext(taskFilePath: string): Promise<RunnableTaskContext> {
         const document = await vscode.workspace.openTextDocument(vscode.Uri.file(taskFilePath));
         const tasks: RunnableTask[] = [];
+        const lines = this.getDocumentLines(document);
+        const taskStatusesById = new Map<string, SpecTaskStatus>();
+
+        for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
+            const task = parseSpecTaskLine(document.lineAt(lineNumber).text);
+            const taskId = task ? this.parseTaskId(task.description) : undefined;
+            if (task && taskId) {
+                taskStatusesById.set(taskId, task.status);
+            }
+        }
 
         for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
             const task = parseSpecTaskLine(document.lineAt(lineNumber).text);
@@ -289,19 +525,29 @@ export class SpecManager {
                 continue;
             }
 
-            if (hasChildSpecTasks(this.getDocumentLines(document), lineNumber)) {
+            if (hasChildSpecTasks(lines, lineNumber)) {
                 continue;
             }
+
+            const detailLines = this.getTaskDetailLines(lines, lineNumber);
+            const dependencyMetadata = this.parseTaskDependencies([task.description, ...detailLines].join('\n'));
 
             tasks.push({
                 lineNumber,
                 description: task.description,
                 status: task.status,
-                completionSignalPath: this.getCompletionSignalPath(taskFilePath, lineNumber)
+                completionSignalPath: this.getCompletionSignalPath(taskFilePath, lineNumber),
+                detailLines,
+                taskId: this.parseTaskId(task.description),
+                dependencies: dependencyMetadata.dependencies,
+                hasExplicitDependencies: dependencyMetadata.hasExplicitDependencies
             });
         }
 
-        return tasks;
+        return {
+            tasks,
+            taskStatusesById
+        };
     }
 
     private getDocumentLines(document: vscode.TextDocument): string[] {
@@ -310,6 +556,346 @@ export class SpecManager {
             lines.push(document.lineAt(lineNumber).text);
         }
         return lines;
+    }
+
+    private getTaskDetailLines(lines: readonly string[], lineNumber: number): string[] {
+        const task = parseSpecTaskLine(lines[lineNumber]);
+        if (!task) {
+            return [];
+        }
+
+        const taskIndent = this.getIndentationWidth(task.indentation);
+        const detailLines: string[] = [];
+
+        for (let i = lineNumber + 1; i < lines.length; i++) {
+            const candidate = parseSpecTaskLine(lines[i]);
+            if (candidate && this.getIndentationWidth(candidate.indentation) <= taskIndent) {
+                break;
+            }
+
+            detailLines.push(lines[i]);
+        }
+
+        return detailLines;
+    }
+
+    private getIndentationWidth(indentation: string): number {
+        return indentation.replace(/\t/g, '    ').length;
+    }
+
+    private parseTaskId(description: string): string | undefined {
+        const match = description.trim().match(/^(\d+(?:\.\d+)*)(?:[.)])?\s+/);
+        return match?.[1];
+    }
+
+    private parseTaskDependencies(text: string): { dependencies?: string[]; hasExplicitDependencies: boolean } {
+        const dependencyLine = text
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .find(line => this.isDependencyMetadataLine(line));
+
+        if (!dependencyLine) {
+            return {
+                hasExplicitDependencies: false
+            };
+        }
+
+        const value = dependencyLine.replace(/^(?:[-*]\s*)?(?:_)?(?:depends on|dependencies|depends|blocked by|依赖|前置任务|依赖任务)\s*[:：]\s*/i, '').replace(/_$/, '').trim();
+        if (!value || /^(none|n\/a|na|null|empty|无|无依赖|没有|不依赖|-+)$/i.test(value)) {
+            return {
+                dependencies: [],
+                hasExplicitDependencies: true
+            };
+        }
+
+        const dependencies = [...value.matchAll(/\b\d+(?:\.\d+)*\b/g)]
+            .map(match => match[0])
+            .filter((dependency, index, all) => all.indexOf(dependency) === index);
+
+        return {
+            dependencies,
+            hasExplicitDependencies: true
+        };
+    }
+
+    private analyzeParallelTaskSafety(context: RunnableTaskContext): ParallelTaskAnalysis {
+        const scopes = context.tasks.map(task => ({
+            task,
+            fileScopes: this.extractReferencedFileScopes(this.getTaskScopeText(task))
+        }));
+        const legacyMode = scopes.every(scope => !scope.task.hasExplicitDependencies);
+        const readyScopes = legacyMode
+            ? scopes
+            : this.getReadyParallelScopes(scopes, context.taskStatusesById);
+
+        if (!legacyMode && scopes.some(scope => !scope.task.hasExplicitDependencies)) {
+            return {
+                canRunInParallel: false,
+                fallbackReason: 'task dependency metadata is incomplete',
+                scopes,
+                readyScopes: [],
+                blockedTaskCount: scopes.length
+            };
+        }
+
+        if (!legacyMode) {
+            const graphError = this.getTaskDependencyGraphError(scopes, context.taskStatusesById);
+            if (graphError) {
+                return {
+                    canRunInParallel: false,
+                    fallbackReason: graphError,
+                    scopes,
+                    readyScopes: [],
+                    blockedTaskCount: scopes.length
+                };
+            }
+        }
+
+        for (const scope of readyScopes) {
+            if (scope.fileScopes.length === 0) {
+                return {
+                    canRunInParallel: false,
+                    fallbackReason: `line ${scope.task.lineNumber + 1} has no explicit file scope`,
+                    scopes,
+                    readyScopes,
+                    blockedTaskCount: scopes.length - readyScopes.length
+                };
+            }
+
+            const sharedScope = scope.fileScopes.find(fileScope => this.isSharedConflictScope(fileScope));
+            if (sharedScope) {
+                return {
+                    canRunInParallel: false,
+                    fallbackReason: `line ${scope.task.lineNumber + 1} touches shared project file ${sharedScope}`,
+                    scopes,
+                    readyScopes,
+                    blockedTaskCount: scopes.length - readyScopes.length
+                };
+            }
+
+            const broadRisk = this.getBroadParallelRisk(scope.task);
+            if (broadRisk) {
+                return {
+                    canRunInParallel: false,
+                    fallbackReason: `line ${scope.task.lineNumber + 1} looks cross-cutting (${broadRisk})`,
+                    scopes,
+                    readyScopes,
+                    blockedTaskCount: scopes.length - readyScopes.length
+                };
+            }
+        }
+
+        for (let i = 0; i < readyScopes.length; i++) {
+            for (let j = i + 1; j < readyScopes.length; j++) {
+                const overlap = this.findOverlappingFileScope(readyScopes[i].fileScopes, readyScopes[j].fileScopes);
+                if (overlap) {
+                    return {
+                        canRunInParallel: false,
+                        fallbackReason: `lines ${readyScopes[i].task.lineNumber + 1} and ${readyScopes[j].task.lineNumber + 1} both target ${overlap}`,
+                        scopes,
+                        readyScopes,
+                        blockedTaskCount: scopes.length - readyScopes.length
+                    };
+                }
+            }
+        }
+
+        return {
+            canRunInParallel: true,
+            scopes,
+            readyScopes,
+            blockedTaskCount: scopes.length - readyScopes.length
+        };
+    }
+
+    private getReadyParallelScopes(scopes: ParallelTaskScope[], taskStatusesById: Map<string, SpecTaskStatus>): ParallelTaskScope[] {
+        const runnableTaskIds = new Set(scopes.map(scope => scope.task.taskId).filter((taskId): taskId is string => Boolean(taskId)));
+
+        return scopes.filter(scope => {
+            const dependencies = scope.task.dependencies ?? [];
+            return dependencies.every(dependency => {
+                if (runnableTaskIds.has(dependency)) {
+                    return false;
+                }
+
+                return taskStatusesById.get(dependency) === 'completed';
+            });
+        });
+    }
+
+    private getTaskDependencyGraphError(scopes: ParallelTaskScope[], taskStatusesById: Map<string, SpecTaskStatus>): string | undefined {
+        const runnableTaskIds = new Set(scopes.map(scope => scope.task.taskId).filter((taskId): taskId is string => Boolean(taskId)));
+        const visiting = new Set<string>();
+        const visited = new Set<string>();
+        const dependenciesByTaskId = new Map<string, string[]>();
+
+        for (const scope of scopes) {
+            if (!scope.task.taskId) {
+                return `line ${scope.task.lineNumber + 1} has no parseable task id`;
+            }
+
+            for (const dependency of scope.task.dependencies ?? []) {
+                if (dependency === scope.task.taskId) {
+                    return `line ${scope.task.lineNumber + 1} depends on itself`;
+                }
+
+                if (!taskStatusesById.has(dependency)) {
+                    return `line ${scope.task.lineNumber + 1} depends on unknown task ${dependency}`;
+                }
+
+                if (!runnableTaskIds.has(dependency) && taskStatusesById.get(dependency) !== 'completed') {
+                    return `line ${scope.task.lineNumber + 1} depends on non-runnable incomplete task ${dependency}`;
+                }
+            }
+
+            dependenciesByTaskId.set(
+                scope.task.taskId,
+                (scope.task.dependencies ?? []).filter(dependency => runnableTaskIds.has(dependency))
+            );
+        }
+
+        const visit = (taskId: string): boolean => {
+            if (visiting.has(taskId)) {
+                return false;
+            }
+
+            if (visited.has(taskId)) {
+                return true;
+            }
+
+            visiting.add(taskId);
+            for (const dependency of dependenciesByTaskId.get(taskId) ?? []) {
+                if (!visit(dependency)) {
+                    return false;
+                }
+            }
+
+            visiting.delete(taskId);
+            visited.add(taskId);
+            return true;
+        };
+
+        for (const taskId of dependenciesByTaskId.keys()) {
+            if (!visit(taskId)) {
+                return 'task dependencies contain a cycle';
+            }
+        }
+
+        return undefined;
+    }
+
+    private getTaskScopeText(task: RunnableTask): string {
+        return [task.description, ...task.detailLines].join('\n');
+    }
+
+    private extractReferencedFileScopes(text: string): string[] {
+        const scopes = new Map<string, string>();
+        const addCandidate = (candidate: string | undefined) => {
+            if (!candidate) {
+                return;
+            }
+
+            const normalized = this.normalizeFileScope(candidate);
+            if (!normalized || !this.isFileScopeCandidate(normalized)) {
+                return;
+            }
+
+            scopes.set(normalized.toLowerCase(), normalized);
+        };
+
+        let match: RegExpExecArray | null;
+        const inlineCodePattern = /`([^`]+)`/g;
+        while ((match = inlineCodePattern.exec(text)) !== null) {
+            addCandidate(match[1]);
+        }
+
+        const barePathPattern = /(^|[\s([{"'])((?:\.{0,2}[\\/])?(?:(?:src|tests?|lib|media|icons|scripts|resources|prompts|dist|out|\.autocode|\.vscode)[\\/][^\s,;:)\]}]+|[A-Za-z0-9_.-]+[\\/][A-Za-z0-9_.\\/:-]+\.[A-Za-z0-9]+|[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|css|scss|html|yml|yaml|toml|py|cs|cpp|c|h|hpp|java|go|rs|vue|svelte|xml|svg)))/g;
+        while ((match = barePathPattern.exec(text)) !== null) {
+            addCandidate(match[2]);
+        }
+
+        return [...scopes.values()].sort((a, b) => a.localeCompare(b));
+    }
+
+    private normalizeFileScope(candidate: string): string | undefined {
+        let value = candidate.trim();
+        value = value.replace(/^[_*`]+/, '').replace(/[_*`]+$/, '');
+        value = value.replace(/^["'([{]+/, '').replace(/["'.,;)\]}]+$/, '');
+        value = value.replace(/^[_*`]+/, '').replace(/[_*`]+$/, '');
+        value = value.replace(/:\d+(?::\d+)?$/, '');
+        value = value.replace(/\\/g, '/').replace(/\/+/g, '/');
+        value = value.replace(/^\.\//, '');
+
+        if (!value || /^[a-z]+:\/\//i.test(value) || value.includes(' ')) {
+            return undefined;
+        }
+
+        return path.normalize(value).replace(/\\/g, '/').replace(/^\.\//, '');
+    }
+
+    private isFileScopeCandidate(fileScope: string): boolean {
+        if (/\.(ts|tsx|js|jsx|json|md|css|scss|html|yml|yaml|toml|py|cs|cpp|c|h|hpp|java|go|rs|vue|svelte|xml|svg)$/i.test(fileScope)) {
+            return true;
+        }
+
+        return /^(src|tests?|lib|media|icons|scripts|resources|prompts|dist|out|\.autocode|\.vscode)\//i.test(fileScope);
+    }
+
+    private isSharedConflictScope(fileScope: string): boolean {
+        const normalized = fileScope.toLowerCase();
+        const baseName = path.posix.basename(normalized);
+
+        if (/^(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|npm-shrinkwrap\.json)$/.test(baseName)) {
+            return true;
+        }
+
+        if (/^(tsconfig.*\.json|webpack\.config\.[cm]?[jt]s|vite\.config\.[cm]?[jt]s|jest\.config\.[cm]?[jt]s|rollup\.config\.[cm]?[jt]s)$/.test(baseName)) {
+            return true;
+        }
+
+        return normalized === 'tasks.md' ||
+            normalized.endsWith('/tasks.md') ||
+            normalized.startsWith('.autocode/') ||
+            normalized.startsWith('.vscode/');
+    }
+
+    private getBroadParallelRisk(task: RunnableTask): string | undefined {
+        const text = this.getTaskScopeText(task)
+            .split(/\r?\n/)
+            .filter(line => !this.isDependencyMetadataLine(line.trim()))
+            .join('\n');
+        const englishRisk = text.match(/\b(all|global|shared|cross-cutting|refactor|rename|move|install|package|configuration|config|build|generated|migration)\b/i);
+        if (englishRisk) {
+            return englishRisk[1];
+        }
+
+        const chineseRisk = text.match(/全局|共享|公共|重构|依赖|安装|配置|构建|生成|迁移|改名|移动/);
+        return chineseRisk?.[0];
+    }
+
+    private isDependencyMetadataLine(line: string): boolean {
+        return /^(?:[-*]\s*)?(?:_)?(?:depends on|dependencies|depends|blocked by|依赖|前置任务|依赖任务)\s*[:：]/i.test(line);
+    }
+
+    private findOverlappingFileScope(leftScopes: string[], rightScopes: string[]): string | undefined {
+        for (const left of leftScopes) {
+            for (const right of rightScopes) {
+                if (this.fileScopesOverlap(left, right)) {
+                    return left === right ? left : `${left} / ${right}`;
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    private fileScopesOverlap(left: string, right: string): boolean {
+        const normalizedLeft = left.toLowerCase();
+        const normalizedRight = right.toLowerCase();
+
+        return normalizedLeft === normalizedRight ||
+            normalizedLeft.startsWith(`${normalizedRight}/`) ||
+            normalizedRight.startsWith(`${normalizedLeft}/`);
     }
 
     private buildAllTasksPrompt(
@@ -392,6 +978,20 @@ export class SpecManager {
         return [
             'Keep changes scoped to the requested task.',
             'Use existing project patterns and run focused verification before signaling completion.'
+        ].join('\n');
+    }
+
+    private getParallelTaskExecutionGuidance(fileScopes?: string[]): string {
+        if (!fileScopes || fileScopes.length === 0) {
+            return '';
+        }
+
+        return [
+            'Parallel execution safety rules:',
+            '- This task was launched alongside other spec tasks after static file-scope analysis.',
+            `- Treat these paths as the allowed write scope for this task: ${fileScopes.join(', ')}.`,
+            '- Do not edit files outside that scope. If the task requires another file, stop and report the conflict instead of continuing.',
+            '- Do not write the completion signal until the task is complete within that scope and verification has passed.'
         ].join('\n');
     }
 

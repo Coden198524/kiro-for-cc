@@ -133,4 +133,49 @@ describe('TaskCompletionService', () => {
         expect(vscode.workspace.fs.readDirectory).not.toHaveBeenCalled();
         expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
     });
+
+    test('verifies existing batch completion signals before disposing watchers on terminal close', async () => {
+        const terminal = vscode.window.createTerminal('tasks');
+        const watcherDispose = jest.fn();
+        let closeHandler: ((terminal: vscode.Terminal) => Promise<void>) | undefined;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: watcherDispose
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('missing signal'));
+        (vscode.window.onDidCloseTerminal as jest.Mock).mockImplementation((handler) => {
+            closeHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            if (uri.fsPath.endsWith('task-completion-3.json')) {
+                return Buffer.from(JSON.stringify({
+                    status: 'ready_for_verification',
+                    taskFilePath,
+                    lineNumber: 2,
+                    taskDescription: '1. First task'
+                }));
+            }
+
+            throw new Error(`Unexpected read: ${uri.fsPath}`);
+        });
+
+        service.registerTaskCompletionSignals(
+            { subscriptions: [] } as unknown as vscode.ExtensionContext,
+            terminal,
+            taskFilePath,
+            [`${signalDir}/task-completion-3.json`]
+        );
+
+        await closeHandler?.(terminal);
+
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        });
+        expect(watcherDispose).toHaveBeenCalled();
+    });
 });

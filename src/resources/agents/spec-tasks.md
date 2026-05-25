@@ -32,7 +32,7 @@ The tasks document should be based on the design document, so ensure it exists f
 
 1. Read requirements.md and design.md
 2. Analyze all components that need to be implemented
-3. Create tasks
+3. Create tasks with explicit file scopes and dependency metadata
 4. Determine the output file name:
    - If output_suffix is provided: tasks{output_suffix}.md
    - Otherwise: tasks.md
@@ -54,7 +54,21 @@ The tasks document should be based on the design document, so ensure it exists f
 
 ### Tasks Dependency Diagram
 
-To facilitate parallel execution by other agents, please use mermaid format to draw task dependency diagrams.
+To facilitate parallel execution by other agents, every leaf task MUST include machine-readable dependency metadata. The Mermaid diagram is useful for human review, but the `_Depends on:` fields are the source of truth for automated execution.
+
+Required metadata for every leaf task:
+
+- `_Files: path/to/file.ts, tests/path/to/file.test.ts_` lists the expected write scope for the task.
+- `_Depends on: none_` means the task has no prerequisites and can run in the first parallel batch if its file scope does not conflict.
+- `_Depends on: 1, 2.1_` means the task must wait for those task IDs to complete.
+
+Dependency rules:
+
+- The dependency graph MUST be a directed acyclic graph (DAG).
+- Use task IDs from the numbered checkbox list only.
+- Do not create cyclic dependencies.
+- Do not depend on a parent task when the actionable work is represented by child tasks; depend on the child task IDs instead.
+- Tasks with no dependency path between them should remain independent so they can run in parallel.
 
 **Example Format:**
 
@@ -98,11 +112,15 @@ Convert the feature design into a series of prompts for a code-generation LLM th
 - A clear objective as the task description that involves writing, modifying, or testing code
 - Additional information as sub-bullets under the task
 - Specific references to requirements from the requirements document (referencing granular sub-requirements, not just user stories)
+- Machine-readable execution metadata on every leaf task:
+  - `_Files: path/to/file.ts, tests/path/to/file.test.ts_`
+  - `_Depends on: none_` or `_Depends on: 1, 2.1_`
 - The model MUST ensure that the implementation plan is a series of discrete, manageable coding steps
 - The model MUST ensure each task references specific requirements from the requirement document
 - The model MUST NOT include excessive implementation details that are already covered in the design document
 - The model MUST assume that all context documents (feature requirements, design) will be available during implementation
 - The model MUST ensure each step builds incrementally on previous steps
+- The model MUST ensure task dependencies form a DAG that can be used to run independent tasks in parallel and dependent tasks in order
 - The model SHOULD prioritize test-driven development where appropriate
 - The model MUST ensure the plan covers all aspects of the design that can be implemented through code
 - The model SHOULD sequence steps to validate core functionality early through code
@@ -149,34 +167,46 @@ Convert the feature design into a series of prompts for a code-generation LLM th
 - [ ] 1. Set up project structure and core interfaces
  - Create directory structure for models, services, repositories, and API components
  - Define interfaces that establish system boundaries
+ - _Files: src/models/index.ts, src/services/index.ts_
+ - _Depends on: none_
  - _Requirements: 1.1_
 
 - [ ] 2. Implement data models and validation
 - [ ] 2.1 Create core data model interfaces and types
   - Write TypeScript interfaces for all data models
   - Implement validation functions for data integrity
+  - _Files: src/models/types.ts, src/models/validation.ts, tests/models/validation.test.ts_
+  - _Depends on: 1_
   - _Requirements: 2.1, 3.3, 1.2_
 
 - [ ] 2.2 Implement User model with validation
   - Write User class with validation methods
   - Create unit tests for User model validation
+  - _Files: src/models/User.ts, tests/models/User.test.ts_
+  - _Depends on: 2.1_
   - _Requirements: 1.2_
 
 - [ ] 2.3 Implement Document model with relationships
    - Code Document class with relationship handling
    - Write unit tests for relationship management
+   - _Files: src/models/Document.ts, tests/models/Document.test.ts_
+   - _Depends on: 2.1_
    - _Requirements: 2.1, 3.3, 1.2_
 
 - [ ] 3. Create storage mechanism
 - [ ] 3.1 Implement database connection utilities
    - Write connection management code
    - Create error handling utilities for database operations
+   - _Files: src/db/connection.ts, src/db/errors.ts, tests/db/connection.test.ts_
+   - _Depends on: 1_
    - _Requirements: 2.1, 3.3, 1.2_
 
 - [ ] 3.2 Implement repository pattern for data access
   - Code base repository interface
   - Implement concrete repositories with CRUD operations
   - Write unit tests for repository operations
+  - _Files: src/repositories/baseRepository.ts, src/repositories/userRepository.ts, tests/repositories/userRepository.test.ts_
+  - _Depends on: 2.1, 3.1_
   - _Requirements: 4.3_
 
 [Additional coding tasks continue...]

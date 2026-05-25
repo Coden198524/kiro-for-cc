@@ -26,15 +26,28 @@ export class TaskCompletionService {
         terminal: vscode.Terminal,
         request: VerifyAndMarkTaskDoneRequest,
         completionSignalPath?: string
-    ): void {
+    ): Promise<boolean> | undefined {
         if (!this.verifier.isEnabled()) {
-            return;
+            return undefined;
         }
 
         let handled = false;
+        let resolveCompletion: (verified: boolean) => void = () => undefined;
+        let completionResolved = false;
+        const completionPromise = new Promise<boolean>(resolve => {
+            resolveCompletion = resolve;
+        });
+        const finishCompletion = (verified: boolean) => {
+            if (completionResolved) {
+                return;
+            }
+
+            completionResolved = true;
+            resolveCompletion(verified);
+        };
         const runVerification = async () => {
             if (handled) {
-                return;
+                return completionPromise;
             }
 
             handled = true;
@@ -42,13 +55,21 @@ export class TaskCompletionService {
             shellEndDisposable.dispose();
             signalDisposable?.dispose();
 
-            if (completionSignalPath) {
-                const signalRequest = await this.resolveSignalRequest(completionSignalPath, request.taskFilePath);
-                await this.verifier.verifyAndMarkDone(signalRequest ?? request);
-                return;
-            }
+            try {
+                if (completionSignalPath) {
+                    const signalRequest = await this.resolveSignalRequest(completionSignalPath, request.taskFilePath);
+                    const verified = await this.verifier.verifyAndMarkDone(signalRequest ?? request);
+                    finishCompletion(verified);
+                    return verified;
+                }
 
-            await this.verifier.verifyAndMarkDone(request);
+                const verified = await this.verifier.verifyAndMarkDone(request);
+                finishCompletion(verified);
+                return verified;
+            } catch (error) {
+                finishCompletion(false);
+                throw error;
+            }
         };
 
         const shellEndDisposable = vscode.window.onDidEndTerminalShellExecution(async (event) => {
@@ -72,6 +93,7 @@ export class TaskCompletionService {
             : undefined;
 
         context.subscriptions.push(...[closeDisposable, shellEndDisposable, signalDisposable].filter((item): item is vscode.Disposable => Boolean(item)));
+        return completionPromise;
     }
 
     registerTaskCompletionSignals(
@@ -105,9 +127,13 @@ export class TaskCompletionService {
             disposables.push(this.registerSignalWatcher(signalPath, () => verifySignal(signalPath)));
         }
 
-        const terminalDisposable = vscode.window.onDidCloseTerminal(closedTerminal => {
+        const terminalDisposable = vscode.window.onDidCloseTerminal(async closedTerminal => {
             if (closedTerminal !== terminal) {
                 return;
+            }
+
+            for (const signalPath of completionSignalPaths) {
+                await verifySignal(signalPath);
             }
 
             disposables.forEach(disposable => disposable.dispose());
@@ -252,7 +278,7 @@ export class TaskCompletionService {
         return match?.[1];
     }
 
-    private registerSignalWatcher(completionSignalPath: string, onSignal: () => Promise<void>): vscode.Disposable {
+    private registerSignalWatcher(completionSignalPath: string, onSignal: () => Promise<unknown>): vscode.Disposable {
         const signalUri = vscode.Uri.file(completionSignalPath);
         const watcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(path.dirname(signalUri.fsPath), path.basename(signalUri.fsPath))

@@ -38,6 +38,15 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
                 command: 'autocode.spec.implAllTasks',
                 arguments: [document.uri]
             }));
+
+            if (runnableTasks.length > 1) {
+                codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                    title: `Start Parallel Tasks (${runnableTasks.length})`,
+                    tooltip: 'Implement independent tasks in separate agent sessions; falls back to sequential execution when file scopes conflict',
+                    command: 'autocode.spec.implAllTasksParallel',
+                    arguments: [document.uri]
+                }));
+            }
         }
 
         for (let i = 0; i < lines.length; i++) {

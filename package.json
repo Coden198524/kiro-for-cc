@@ -220,6 +220,11 @@
         "category": "AutoCode"
       },
       {
+        "command": "autocode.spec.implAllTasksParallel",
+        "title": "Implement Spec Tasks in Parallel",
+        "category": "AutoCode"
+      },
+      {
         "command": "autocode.spec.markTaskDone",
         "title": "Mark Spec Task Done",
         "category": "AutoCode"

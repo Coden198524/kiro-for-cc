@@ -10,6 +10,7 @@ import {
 export interface TaskStatusEditResult {
     task: NonNullable<ReturnType<typeof parseSpecTaskLine>>;
     parentTasks: Array<{ lineNumber: number; description: string }>;
+    changedLineNumbers: number[];
 }
 
 export async function updateTaskLineStatus(
@@ -25,14 +26,14 @@ export async function updateTaskLineStatus(
     }
 
     if (task.status === 'completed' && status !== 'completed') {
-        return { task, parentTasks: [] };
+        return { task, parentTasks: [], changedLineNumbers: [] };
     }
 
     const updates = status === 'completed'
         ? buildSpecTaskStatusUpdates(getDocumentLines(document), lineNumber, status)
         : buildSingleTaskStatusUpdate(line.text, lineNumber, status);
     if (updates.length === 0) {
-        return { task, parentTasks: [] };
+        return { task, parentTasks: [], changedLineNumbers: [] };
     }
 
     const edit = new vscode.WorkspaceEdit();
@@ -52,15 +53,16 @@ export async function updateTaskLineStatus(
             .map(update => ({
                 lineNumber: update.lineNumber,
                 description: update.task.description
-            }))
+            })),
+        changedLineNumbers: applied ? updates.map(update => update.lineNumber) : []
     };
 }
 
-export async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<void> {
+export async function markRunnableTasksInProgress(documentUri: vscode.Uri): Promise<number[]> {
     const document = await vscode.workspace.openTextDocument(documentUri);
     const lines = getDocumentLines(document);
     const edit = new vscode.WorkspaceEdit();
-    let changed = false;
+    const changedLineNumbers: number[] = [];
 
     for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
         const line = document.lineAt(lineNumber);
@@ -79,17 +81,72 @@ export async function markRunnableTasksInProgress(documentUri: vscode.Uri): Prom
         }
 
         edit.replace(documentUri, new vscode.Range(lineNumber, 0, lineNumber, line.text.length), newLine);
-        changed = true;
+        changedLineNumbers.push(lineNumber);
     }
 
-    if (!changed) {
-        return;
+    if (changedLineNumbers.length === 0) {
+        return [];
     }
 
     const applied = await vscode.workspace.applyEdit(edit);
     if (applied) {
         await document.save();
+        return changedLineNumbers;
     }
+
+    return [];
+}
+
+export async function markTaskLinesInProgress(documentUri: vscode.Uri, lineNumbers: readonly number[]): Promise<number[]> {
+    return markTaskLinesStatus(documentUri, lineNumbers, 'pending', 'inProgress');
+}
+
+export async function markTaskLinesPending(documentUri: vscode.Uri, lineNumbers: readonly number[]): Promise<number[]> {
+    return markTaskLinesStatus(documentUri, lineNumbers, 'inProgress', 'pending');
+}
+
+async function markTaskLinesStatus(
+    documentUri: vscode.Uri,
+    lineNumbers: readonly number[],
+    currentStatus: SpecTaskStatus,
+    nextStatus: SpecTaskStatus
+): Promise<number[]> {
+    const document = await vscode.workspace.openTextDocument(documentUri);
+    const lineNumberSet = new Set(lineNumbers);
+    const edit = new vscode.WorkspaceEdit();
+    const changedLineNumbers: number[] = [];
+
+    for (const lineNumber of lineNumberSet) {
+        if (lineNumber < 0 || lineNumber >= document.lineCount) {
+            continue;
+        }
+
+        const line = document.lineAt(lineNumber);
+        const task = parseSpecTaskLine(line.text);
+        if (!task || task.status !== currentStatus) {
+            continue;
+        }
+
+        const newLine = replaceSpecTaskStatus(line.text, nextStatus);
+        if (!newLine || newLine === line.text) {
+            continue;
+        }
+
+        edit.replace(documentUri, new vscode.Range(lineNumber, 0, lineNumber, line.text.length), newLine);
+        changedLineNumbers.push(lineNumber);
+    }
+
+    if (changedLineNumbers.length === 0) {
+        return [];
+    }
+
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (applied) {
+        await document.save();
+        return changedLineNumbers;
+    }
+
+    return [];
 }
 
 export async function readTaskLine(documentUri: vscode.Uri, lineNumber: number): Promise<ReturnType<typeof parseSpecTaskLine>> {

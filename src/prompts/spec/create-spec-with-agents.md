@@ -75,5 +75,6 @@ Execution rules:
 - Include the original Feature Description in your working context; do not ask the user to re-enter it.
 - Keep all conversational replies and generated document prose in the detected language.
 - After requirements.md is created, ask the user to review and approve it before continuing to design.md.
+- When the workflow reaches tasks.md creation, require every leaf task to include `_Files: ..._` and `_Depends on: none_` or `_Depends on: <task ids>_`; dependencies must form a directed acyclic graph so independent tasks can run in parallel.
 - You have full control over the naming and file creation.
 </user_input>
