@@ -70,7 +70,10 @@ describe('FinalVerificationManager', () => {
             '- [ ] 3. Build task',
             '  - _Verify: npm run compile_'
         ].join('\n')));
-        const manager = new FinalVerificationManager(vscode.window.createOutputChannel('test'));
+        const memoryManager = {
+            recordSpecArchive: jest.fn().mockResolvedValue(undefined)
+        };
+        const manager = new FinalVerificationManager(vscode.window.createOutputChannel('test'), memoryManager as any);
         const documentUri = vscode.Uri.file('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         const plan = await manager.run(documentUri);
@@ -89,6 +92,19 @@ describe('FinalVerificationManager', () => {
         }));
         expect(terminal.sendText).toHaveBeenCalledWith('npm test -- first.test.ts');
         expect(terminal.sendText).toHaveBeenCalledWith('npm run compile');
+        const archiveRequest = memoryManager.recordSpecArchive.mock.calls[0][0];
+        expect(archiveRequest).toEqual(expect.objectContaining({
+            specName: 'demo',
+            taskFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            duplicateCheckCount: 1,
+            commandChecks: [
+                expect.objectContaining({ taskId: '1', value: 'npm test -- first.test.ts' }),
+                expect.objectContaining({ taskId: '3', value: 'npm run compile' })
+            ]
+        }));
+        expect(normalize(archiveRequest.requirementsPath)).toBe('/mock/workspace/.autocode/specs/demo/requirements.md');
+        expect(normalize(archiveRequest.designPath)).toBe('/mock/workspace/.autocode/specs/demo/design.md');
+        expect(normalize(archiveRequest.reportPath)).toBe('/mock/workspace/.autocode/specs/demo/verification/final-report.md');
     });
 
     test('formats a final verification report with commands and manual checks', () => {

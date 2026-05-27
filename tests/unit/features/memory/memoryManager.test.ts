@@ -433,6 +433,61 @@ describe('MemoryManager', () => {
         expect(records[0].text).toContain('Prompt snapshots:');
     });
 
+    test('records spec archive summaries in searchable spec memory', async () => {
+        await memoryManager.recordSpecArchive({
+            specName: 'demo',
+            taskFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            requirementsPath: '/mock/workspace/.autocode/specs/demo/requirements.md',
+            designPath: '/mock/workspace/.autocode/specs/demo/design.md',
+            reportPath: '/mock/workspace/.autocode/specs/demo/verification/final-report.md',
+            commandChecks: [
+                {
+                    lineNumber: 3,
+                    taskId: '1.1',
+                    taskDescription: '1.1 Compile extension',
+                    value: 'npm run compile'
+                }
+            ],
+            manualChecks: [
+                {
+                    lineNumber: 7,
+                    taskId: '2',
+                    taskDescription: '2. Inspect panel',
+                    value: 'Manual: inspect Memory panel'
+                }
+            ],
+            duplicateCheckCount: 1,
+            completedAt: '2026-05-27T00:00:00.000Z'
+        });
+
+        const jsonlPath = normalize('/mock/workspace/.autocode/specs/demo/memory/spec-summary.jsonl');
+        const markdownPath = normalize('/mock/workspace/.autocode/specs/demo/memory/spec-summary.md');
+        const record = JSON.parse(files.get(jsonlPath)!.toString().trim());
+
+        expect(record).toEqual(expect.objectContaining({
+            scope: 'spec',
+            type: 'summary',
+            status: 'active',
+            subject: 'spec-archive:demo'
+        }));
+        expect(record.text).toContain('Spec demo final verification was archived');
+        expect(record.text).toContain('npm run compile');
+        expect(record.metadata).toEqual(expect.objectContaining({
+            specName: 'demo',
+            reportPath: '/mock/workspace/.autocode/specs/demo/verification/final-report.md',
+            duplicateCheckCount: 1
+        }));
+        expect(record.metadata.commandChecks).toHaveLength(1);
+        expect(files.get(markdownPath)?.toString()).toContain('Spec demo final verification was archived');
+
+        const records = await memoryManager.search({
+            query: 'demo final verification compile',
+            specFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            maxItems: 1
+        });
+        expect(records[0].id).toBe(record.id);
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

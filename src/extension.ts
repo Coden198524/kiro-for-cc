@@ -137,6 +137,7 @@ export async function activate(context: vscode.ExtensionContext) {
         specExplorer,
         taskSessionManager,
         taskCompletionService,
+        memoryManager,
         currentWorkProvider,
         outputChannel,
         recoverTaskQueuesOnStartup: true

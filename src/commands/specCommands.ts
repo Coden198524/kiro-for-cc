@@ -17,6 +17,7 @@ import { FinalVerificationManager } from '../features/spec/finalVerificationMana
 import { TaskQueueRecoveryInspector } from '../features/spec/taskQueueRecovery';
 import { TaskSessionManager } from '../features/spec/taskSessionManager';
 import { markTaskLinesInProgress, markTaskLinesPending, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
+import { MemoryManager } from '../features/memory/memoryManager';
 import { CurrentWorkProvider } from '../providers/currentWorkProvider';
 import { SpecExplorerProvider } from '../providers/specExplorerProvider';
 
@@ -26,6 +27,7 @@ export interface RegisterSpecCommandsOptions {
     specExplorer: SpecExplorerProvider;
     taskSessionManager: TaskSessionManager;
     taskCompletionService: TaskCompletionService;
+    memoryManager?: MemoryManager;
     currentWorkProvider?: CurrentWorkProvider;
     outputChannel: vscode.OutputChannel;
     recoverTaskQueuesOnStartup?: boolean;
@@ -38,6 +40,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         specExplorer,
         taskSessionManager,
         taskCompletionService,
+        memoryManager,
         currentWorkProvider,
         outputChannel,
         recoverTaskQueuesOnStartup = false
@@ -52,7 +55,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         recoveryInspector: taskQueueRecovery,
         outputChannel
     });
-    const finalVerificationManager = new FinalVerificationManager(outputChannel);
+    const finalVerificationManager = new FinalVerificationManager(outputChannel, memoryManager);
     const refreshQueueViews = (): void => {
         specExplorer.refresh();
         currentWorkProvider?.refresh();

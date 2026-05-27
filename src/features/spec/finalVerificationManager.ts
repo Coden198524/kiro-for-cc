@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { MemoryManager } from '../memory/memoryManager';
 import { localize } from '../../utils/localization';
 import { hasChildSpecTasks, parseSpecTaskLine } from './taskStatus';
 
@@ -23,7 +24,10 @@ export interface FinalVerificationPlan {
 }
 
 export class FinalVerificationManager {
-    constructor(private outputChannel: vscode.OutputChannel) { }
+    constructor(
+        private outputChannel: vscode.OutputChannel,
+        private memoryManager?: MemoryManager
+    ) { }
 
     async run(tasksDocumentUri: vscode.Uri): Promise<FinalVerificationPlan | undefined> {
         const plan = await this.buildPlan(tasksDocumentUri);
@@ -36,6 +40,7 @@ export class FinalVerificationManager {
         }
 
         await this.writeReport(plan);
+        await this.recordSpecArchive(plan);
         this.launchVisibleTerminal(plan);
 
         vscode.window.showInformationMessage(localize(
@@ -71,6 +76,30 @@ export class FinalVerificationManager {
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(plan.reportPath)));
         await vscode.workspace.fs.writeFile(reportUri, Buffer.from(formatFinalVerificationReport(plan), 'utf8'));
         this.outputChannel.appendLine(`[Final Verification] Report written: ${plan.reportPath}`);
+    }
+
+    private async recordSpecArchive(plan: FinalVerificationPlan): Promise<void> {
+        if (!this.memoryManager) {
+            return;
+        }
+
+        const specDir = path.dirname(plan.taskFilePath);
+        try {
+            await this.memoryManager.recordSpecArchive({
+                specName: plan.specName,
+                taskFilePath: plan.taskFilePath,
+                requirementsPath: path.join(specDir, 'requirements.md'),
+                designPath: path.join(specDir, 'design.md'),
+                tasksPath: plan.taskFilePath,
+                reportPath: plan.reportPath,
+                commandChecks: plan.commandItems.map(toSpecArchiveCheck),
+                manualChecks: plan.manualItems.map(toSpecArchiveCheck),
+                duplicateCheckCount: plan.duplicateCount
+            });
+            this.outputChannel.appendLine(`[Final Verification] Spec archive memory recorded for ${plan.specName}.`);
+        } catch (error) {
+            this.outputChannel.appendLine(`[Final Verification] Failed to record spec archive memory: ${error}`);
+        }
     }
 
     private launchVisibleTerminal(plan: FinalVerificationPlan): void {
@@ -246,6 +275,20 @@ function dedupeVerificationItems(items: readonly FinalVerificationItem[]): { ite
 
 function parseTaskId(description: string): string | undefined {
     return description.trim().match(/^(\d+(?:\.\d+)*)(?:[.)])?\s+/)?.[1];
+}
+
+function toSpecArchiveCheck(item: FinalVerificationItem): {
+    lineNumber: number;
+    taskId?: string;
+    taskDescription: string;
+    value: string;
+} {
+    return {
+        lineNumber: item.lineNumber,
+        taskId: item.taskId,
+        taskDescription: item.taskDescription,
+        value: item.value
+    };
 }
 
 function indentationWidth(indentation: string): number {

@@ -99,6 +99,26 @@ export interface SessionSummaryMemoryRequest {
     completedAt: string;
 }
 
+export interface SpecArchiveCheck {
+    lineNumber: number;
+    taskId?: string;
+    taskDescription: string;
+    value: string;
+}
+
+export interface SpecArchiveMemoryRequest {
+    specName: string;
+    taskFilePath: string;
+    requirementsPath?: string;
+    designPath?: string;
+    tasksPath?: string;
+    reportPath?: string;
+    commandChecks: SpecArchiveCheck[];
+    manualChecks: SpecArchiveCheck[];
+    duplicateCheckCount?: number;
+    completedAt?: string;
+}
+
 export class MemoryManager {
     constructor(
         private context: vscode.ExtensionContext,
@@ -290,6 +310,50 @@ export class MemoryManager {
                 completedAt: request.completedAt
             }
         });
+    }
+
+    async recordSpecArchive(request: SpecArchiveMemoryRequest): Promise<MemoryRecord | undefined> {
+        if (!this.isAutoWriteEnabled()) {
+            return undefined;
+        }
+
+        const completedAt = request.completedAt ?? new Date().toISOString();
+        const commandValues = this.uniqueValues(request.commandChecks.map(item => item.value));
+        const manualValues = this.uniqueValues(request.manualChecks.map(item => item.value));
+        const text = [
+            `Spec ${request.specName} final verification was archived at ${completedAt}.`,
+            `Command checks: ${commandValues.length ? commandValues.join('; ') : 'none'}.`,
+            `Manual checks: ${manualValues.length ? manualValues.join('; ') : 'none'}.`,
+            request.reportPath ? `Final verification report: ${request.reportPath}.` : ''
+        ].filter(Boolean).join(' ');
+
+        const record = await this.addMemory({
+            scope: 'spec',
+            type: 'summary',
+            text,
+            specFilePath: request.taskFilePath,
+            source: {
+                kind: 'spec',
+                path: request.taskFilePath
+            },
+            tags: ['spec-archive', 'final-verification', request.specName],
+            confidence: 0.95,
+            subject: `spec-archive:${request.specName}`,
+            status: 'active',
+            metadata: {
+                specName: request.specName,
+                requirementsPath: request.requirementsPath,
+                designPath: request.designPath,
+                tasksPath: request.tasksPath ?? request.taskFilePath,
+                reportPath: request.reportPath,
+                commandChecks: request.commandChecks,
+                manualChecks: request.manualChecks,
+                duplicateCheckCount: request.duplicateCheckCount ?? 0,
+                completedAt
+            }
+        });
+
+        return record;
     }
 
     async buildPromptContext(request: MemorySearchRequest): Promise<string> {
@@ -560,6 +624,7 @@ export class MemoryManager {
         if (request.specFilePath) {
             paths.add(path.join(this.getSpecMemoryDir(request.specFilePath), 'task-history.jsonl'));
             paths.add(path.join(this.getSpecMemoryDir(request.specFilePath), 'verification.jsonl'));
+            paths.add(path.join(this.getSpecMemoryDir(request.specFilePath), 'spec-summary.jsonl'));
         } else {
             for (const specMemoryPath of await this.listSpecMemoryJsonlPaths()) {
                 paths.add(specMemoryPath);
@@ -616,6 +681,10 @@ export class MemoryManager {
         if (record.scope === 'task' || record.scope === 'spec') {
             const specPath = specFilePath ?? record.source?.path;
             if (specPath) {
+                if (record.scope === 'spec' && record.type === 'summary') {
+                    return path.join(this.getSpecMemoryDir(specPath), 'spec-summary.jsonl');
+                }
+
                 return path.join(
                     this.getSpecMemoryDir(specPath),
                     record.type === 'verification' ? 'verification.jsonl' : 'task-history.jsonl'
@@ -639,7 +708,9 @@ export class MemoryManager {
             return;
         }
 
-        const fileName = record.type === 'pitfall'
+        const fileName = record.scope === 'spec' && record.type === 'summary'
+            ? 'spec-summary.md'
+            : record.type === 'pitfall'
             ? 'pitfalls.md'
             : record.type === 'decision'
                 ? 'decisions.md'
@@ -843,6 +914,10 @@ export class MemoryManager {
 
     private addUnique(values: string[] | undefined, value: string): string[] {
         return [...new Set([...(values ?? []), value])];
+    }
+
+    private uniqueValues(values: readonly string[]): string[] {
+        return [...new Set(values.map(value => value.trim()).filter(Boolean))];
     }
 
     private normalizePathForMemory(filePath: string): string {
