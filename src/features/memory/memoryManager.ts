@@ -218,13 +218,43 @@ export class MemoryManager {
             'Priority order: current user request > current spec documents > project memory > user preferences > older session memory.',
             'If a memory conflicts with current files or user instructions, follow the current source and mention the conflict briefly.'
         ];
+        const maxPromptChars = Math.max(1000, getRuntimeValue<number>('memory.maxPromptChars', 12000));
+        let usedChars = sections.join('\n').length;
+        let omittedCount = 0;
 
         for (const [key, items] of groups) {
-            sections.push('', `### ${this.formatGroupTitle(key)}`);
+            const header = ['', `### ${this.formatGroupTitle(key)}`];
+            const headerLength = header.join('\n').length + 1;
+            if (usedChars + headerLength > maxPromptChars) {
+                omittedCount += items.length;
+                continue;
+            }
+
+            sections.push(...header);
+            usedChars += headerLength;
             for (const item of items) {
                 const tags = item.tags?.length ? ` [${item.tags.slice(0, 4).join(', ')}]` : '';
-                sections.push(`- ${item.text}${tags}`);
+                const line = `- ${this.formatMemoryTextForPrompt(item.text, Math.min(1200, Math.max(240, maxPromptChars - usedChars - tags.length - 4)))}${tags}`;
+                if (usedChars + line.length + 1 > maxPromptChars) {
+                    omittedCount += 1;
+                    continue;
+                }
+
+                sections.push(line);
+                usedChars += line.length + 1;
             }
+        }
+
+        if (omittedCount > 0) {
+            const footer = `\n(${omittedCount} lower-priority memory item(s) omitted because of prompt budget.)`;
+            const output = sections.join('\n');
+            if (output.length + footer.length <= maxPromptChars) {
+                return `${output}${footer}`;
+            }
+
+            const clippedMarker = '\n... [memory truncated]';
+            const clippedLength = Math.max(0, maxPromptChars - footer.length - clippedMarker.length - 1);
+            return `${output.slice(0, clippedLength).trimEnd()}${clippedMarker}${footer}`;
         }
 
         return sections.join('\n');
@@ -760,6 +790,16 @@ export class MemoryManager {
 
     private normalizeText(text: string): string {
         return text.trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    private formatMemoryTextForPrompt(text: string, maxChars: number): string {
+        const compact = text.replace(/\s+/g, ' ').trim();
+        if (compact.length <= maxChars) {
+            return compact;
+        }
+
+        const headLength = Math.max(80, maxChars - 48);
+        return `${compact.slice(0, headLength).trimEnd()}... [memory truncated]`;
     }
 
     private hashString(value: string): string {

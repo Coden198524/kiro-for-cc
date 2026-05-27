@@ -260,6 +260,37 @@ describe('MemoryManager', () => {
         expect(records.map(record => record.id)).toEqual(['demo-task', 'project-fact']);
     });
 
+    test('keeps generated memory context within the configured prompt budget', async () => {
+        (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
+            inspect: jest.fn((key: string) => key === 'memory.maxPromptChars'
+                ? { workspaceValue: 1000 }
+                : undefined),
+            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue)
+        });
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: `Queue detail ${'x'.repeat(1400)}`,
+            tags: ['queue'],
+            confidence: 0.9
+        });
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: `Queue secondary detail ${'y'.repeat(1400)}`,
+            tags: ['queue'],
+            confidence: 0.8
+        });
+
+        const context = await memoryManager.buildPromptContext({
+            query: 'queue detail'
+        });
+
+        expect(context.length).toBeLessThanOrEqual(1000);
+        expect(context).toContain('[memory truncated]');
+        expect(context).toContain('omitted');
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

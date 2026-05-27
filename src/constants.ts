@@ -48,6 +48,7 @@ export const DEFAULT_CONFIG = {
         enabled: true,
         autoWrite: true,
         maxPromptItems: 8,
+        maxPromptChars: 12000,
         includeUserPreferences: true,
         embeddingProvider: 'none'
     },

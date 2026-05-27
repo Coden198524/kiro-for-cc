@@ -33,6 +33,7 @@ export interface AutoCodeSettings {
         enabled: boolean;
         autoWrite: boolean;
         maxPromptItems: number;
+        maxPromptChars: number;
         includeUserPreferences: boolean;
         embeddingProvider: 'none' | 'openai' | 'custom';
     };
@@ -217,6 +218,7 @@ export class ConfigManager {
                 enabled: true,
                 autoWrite: true,
                 maxPromptItems: 8,
+                maxPromptChars: 12000,
                 includeUserPreferences: true,
                 embeddingProvider: 'none'
             },

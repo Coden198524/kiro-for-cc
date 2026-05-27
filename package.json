@@ -933,6 +933,13 @@
           "maximum": 30,
           "description": "Maximum relevant memories injected into agent prompts."
         },
+        "autocode.memory.maxPromptChars": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Maximum characters used by AutoCode memory context in generated prompts."
+        },
         "autocode.memory.includeUserPreferences": {
           "type": "boolean",
           "default": true,
