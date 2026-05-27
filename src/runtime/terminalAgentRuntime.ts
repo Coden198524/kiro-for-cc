@@ -22,6 +22,8 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 1200;
     private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 6000;
     private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 12;
+    private static readonly VISIBLE_HEADLESS_POLL_INTERVAL_MS = 1000;
+    private static readonly VISIBLE_HEADLESS_TIMEOUT_MS = 30 * 60 * 1000;
     private configManager: ConfigManager;
     private interactiveTerminal: vscode.Terminal | undefined;
     private interactiveTerminalProviderId: string | undefined;
@@ -73,7 +75,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 return this.invokePromptPastedInteractive(prompt, request.title, request.reuseTerminal, request.approvalPolicy, {
                     sandboxMode: request.sandboxMode,
                     bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
-                });
+                }, request.targetTerminal);
             }
 
             const promptFilePath = await this.createTempFile(prompt, 'prompt');
@@ -107,6 +109,10 @@ export class TerminalAgentRuntime implements AgentRuntime {
         await this.refreshProviderConfig();
         await this.ensureProviderReady();
         const prompt = this.decoratePrompt(request.prompt, request.agentType);
+
+        if (request.visibleTerminal) {
+            return this.invokeVisibleHeadless(request, prompt);
+        }
 
         this.outputChannel.appendLine(`[AgentRuntime] Invoking ${this.provider.displayName} in headless mode`);
         this.outputChannel.appendLine('========================================');
@@ -143,6 +149,35 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 stderr: error?.stderr ?? String(error)
             };
         }
+    }
+
+    private async invokeVisibleHeadless(request: AgentInvocationRequest, prompt: string): Promise<AgentInvocationResult> {
+        this.outputChannel.appendLine(`[AgentRuntime] Invoking ${this.provider.displayName} in visible headless terminal`);
+        this.outputChannel.appendLine('========================================');
+        this.outputChannel.appendLine(prompt);
+        this.outputChannel.appendLine('========================================');
+
+        const promptFilePath = await this.createTempFile(prompt, 'visible-background-prompt');
+        const outputFilePath = this.createTempArtifactPath('visible-headless-output', 'log');
+        const statusFilePath = this.createTempArtifactPath('visible-headless-status', 'txt');
+        const commandLine = this.buildCommand(promptFilePath, this.provider, {
+            approvalPolicy: request.approvalPolicy,
+            sandboxMode: request.sandboxMode,
+            bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
+        });
+        const terminalCommand = this.buildVisibleHeadlessCommand(commandLine, outputFilePath, statusFilePath, this.provider);
+        const terminal = this.createTerminal(request.title || `${this.provider.displayName} - Verification`);
+
+        await this.deleteTempArtifact(outputFilePath);
+        await this.deleteTempArtifact(statusFilePath);
+        terminal.show();
+        terminal.sendText(terminalCommand, true);
+
+        const result = await this.waitForVisibleHeadlessResult(statusFilePath, outputFilePath);
+        await this.cleanupPromptFile(promptFilePath);
+        await this.deleteTempArtifact(statusFilePath);
+        await this.deleteTempArtifact(outputFilePath);
+        return result;
     }
 
     async renameTerminal(terminal: vscode.Terminal, newName: string): Promise<void> {
@@ -188,15 +223,23 @@ export class TerminalAgentRuntime implements AgentRuntime {
         title?: string,
         reuseTerminal = false,
         approvalPolicy?: AgentApprovalPolicy,
-        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {},
+        targetTerminal?: vscode.Terminal
     ): Promise<vscode.Terminal> {
         const provider = this.provider;
         const terminalApprovalPolicy = provider.id === 'codex' ? approvalPolicy : undefined;
-        const terminal = reuseTerminal
+        const terminal = targetTerminal ?? (reuseTerminal
             ? this.getOrCreateInteractiveTerminal(title, provider.id, terminalApprovalPolicy)
-            : this.createTerminal(title);
+            : this.createTerminal(title));
 
         terminal.show();
+
+        if (targetTerminal) {
+            setTimeout(() => {
+                this.sendPromptToInteractiveTerminal(terminal, provider, prompt);
+            }, this.configManager.getTerminalDelay());
+            return terminal;
+        }
 
         if (reuseTerminal) {
             this.enqueueInteractivePrompt(terminal, provider, prompt, terminalApprovalPolicy, commandOptions);
@@ -353,6 +396,78 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         await fs.promises.writeFile(tempFile, content);
 
         return this.convertPathIfWSL(tempFile);
+    }
+
+    private createTempArtifactPath(prefix: string, extension: string): string {
+        const safeExtension = extension.replace(/^\./, '');
+        return path.join(
+            this.context.globalStorageUri.fsPath,
+            `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${safeExtension}`
+        );
+    }
+
+    private buildVisibleHeadlessCommand(
+        commandLine: string,
+        outputFilePath: string,
+        statusFilePath: string,
+        provider: AgentProviderConfig = this.provider
+    ): string {
+        const outputShellPath = this.convertPathForProviderShell(outputFilePath, provider);
+        const statusShellPath = this.convertPathForProviderShell(statusFilePath, provider);
+        if (process.platform === 'win32' && !this.shouldUseWslPaths(provider)) {
+            return [
+                `$__autocodeOutput = '${this.escapePowerShellSingleQuoted(outputShellPath)}'`,
+                `$__autocodeStatus = '${this.escapePowerShellSingleQuoted(statusShellPath)}'`,
+                'Remove-Item -LiteralPath $__autocodeOutput -ErrorAction SilentlyContinue',
+                'Remove-Item -LiteralPath $__autocodeStatus -ErrorAction SilentlyContinue',
+                `& { ${commandLine} } 2>&1 | Tee-Object -FilePath $__autocodeOutput`,
+                '$__autocodeExitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { 0 }',
+                'Set-Content -LiteralPath $__autocodeStatus -Value $__autocodeExitCode -Encoding UTF8'
+            ].join('; ');
+        }
+
+        return [
+            `rm -f ${this.quotePosixSingleQuoted(outputShellPath)} ${this.quotePosixSingleQuoted(statusShellPath)}`,
+            `{ ${commandLine}; printf '%s' "$?" > ${this.quotePosixSingleQuoted(statusShellPath)}; } 2>&1 | tee ${this.quotePosixSingleQuoted(outputShellPath)}`
+        ].join('; ');
+    }
+
+    private async waitForVisibleHeadlessResult(statusFilePath: string, outputFilePath: string): Promise<AgentInvocationResult> {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < TerminalAgentRuntime.VISIBLE_HEADLESS_TIMEOUT_MS) {
+            const statusText = await this.readTextFileIfExists(statusFilePath);
+            if (statusText !== undefined) {
+                const parsedExitCode = Number.parseInt(statusText.replace(/^\uFEFF/, '').trim(), 10);
+                return {
+                    exitCode: Number.isFinite(parsedExitCode) ? parsedExitCode : undefined,
+                    output: await this.readTextFileIfExists(outputFilePath)
+                };
+            }
+
+            await this.wait(TerminalAgentRuntime.VISIBLE_HEADLESS_POLL_INTERVAL_MS);
+        }
+
+        return {
+            exitCode: 1,
+            output: await this.readTextFileIfExists(outputFilePath),
+            stderr: `Visible ${this.provider.displayName} command did not finish within ${TerminalAgentRuntime.VISIBLE_HEADLESS_TIMEOUT_MS}ms`
+        };
+    }
+
+    private async readTextFileIfExists(filePath: string): Promise<string | undefined> {
+        try {
+            return await fs.promises.readFile(filePath, 'utf8');
+        } catch {
+            return undefined;
+        }
+    }
+
+    private async deleteTempArtifact(filePath: string): Promise<void> {
+        try {
+            await fs.promises.unlink(filePath);
+        } catch {
+            // Temporary capture files are best-effort cleanup only.
+        }
     }
 
     private buildCommand(
@@ -523,10 +638,22 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
     }
 
     private convertPathIfWSL(filePath: string): string {
+        return this.convertPathForProviderShell(filePath, this.provider);
+    }
+
+    private convertPathForProviderShell(filePath: string, provider: AgentProviderConfig): string {
         return convertPathForWsl(filePath, {
             platform: process.platform,
-            useWslPaths: this.shouldUseWslPaths()
+            useWslPaths: this.shouldUseWslPaths(provider)
         });
+    }
+
+    private escapePowerShellSingleQuoted(value: string): string {
+        return value.replace(/'/g, "''");
+    }
+
+    private quotePosixSingleQuoted(value: string): string {
+        return `'${value.replace(/'/g, `'\\''`)}'`;
     }
 
     private shouldUseWslPaths(provider: AgentProviderConfig = this.provider): boolean {

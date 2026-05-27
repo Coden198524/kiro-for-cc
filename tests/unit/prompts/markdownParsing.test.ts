@@ -88,6 +88,21 @@ describe('Markdown Prompt Parsing', () => {
             type: 'string',
             required: true,
             description: 'Base path for specs directory'
+          },
+          steeringPath: {
+            type: 'string',
+            required: true,
+            description: 'Project context steering document directory'
+          },
+          memoryContext: {
+            type: 'string',
+            required: true,
+            description: 'Relevant AutoCode memory context for this feature request'
+          },
+          suggestedFeatureName: {
+            type: 'string',
+            required: true,
+            description: 'Extension-generated rough feature directory name hint used only as fallback'
           }
         }
       });
@@ -98,6 +113,9 @@ describe('Markdown Prompt Parsing', () => {
       expect(body).toContain('{{description}}');
       expect(body).toContain('{{workspacePath}}');
       expect(body).toContain('{{specBasePath}}');
+      expect(body).toContain('{{steeringPath}}');
+      expect(body).toContain('{{{memoryContext}}}');
+      expect(body).toContain('{{suggestedFeatureName}}');
     });
     
     test('MD-04: 验证 init-steering.md 文件结构', () => {

@@ -42,6 +42,11 @@ export const frontmatter = {
       "required": true,
       "description": "Provider-specific execution quality and speed guidance"
     },
+    "memoryContext": {
+      "type": "string",
+      "required": true,
+      "description": "Relevant AutoCode memory context for this task"
+    },
     "completionSignalPath": {
       "type": "string",
       "required": true,
@@ -55,7 +60,7 @@ export const frontmatter = {
   }
 };
 
-export const content = "<user_input>\nI just completed a spec workflow and now need to implement one of the specific tasks.\n\nTask File Path: {{taskFilePath}}\nTask Description: {{taskDescription}}\nTask Mode: {{taskMode}}\nLanguage Preference: {{languagePreference}}\nCompletion Signal Path: {{completionSignalPath}}\n\n{{taskModeInstruction}}\n\nLanguage rules:\n\n{{languageInstruction}}\n\nProvider execution guidance:\n\n{{providerExecutionGuidance}}\n\nPlease help me:\n\n1. Review the spec workflow guidance if it is available at `.autocode/system-prompts/spec-workflow-starter.md`; do not require a Claude-only subagent\n2. Review the requirements and design documents in the spec folder\n3. Implement this task based on existing codebase patterns and conventions\n4. Ensure code quality, including error handling, performance, and security\n5. Add or update focused tests for the implemented code\n6. When finished, report what changed and what you verified in the language specified above\n\nCompletion signal:\n\n{{{completionSignalInstruction}}}\n\nTask status is managed by the VS Code extension. Do not mark the task as `- [x]` yourself unless the user explicitly asks you to edit task status.\n</user_input>\n";
+export const content = "<user_input>\nI just completed a spec workflow and now need to implement one of the specific tasks.\n\nTask File Path: {{taskFilePath}}\nTask Description: {{taskDescription}}\nTask Mode: {{taskMode}}\nLanguage Preference: {{languagePreference}}\nCompletion Signal Path: {{completionSignalPath}}\n\n{{taskModeInstruction}}\n\nLanguage rules:\n\n{{languageInstruction}}\n\nProvider execution guidance:\n\n{{providerExecutionGuidance}}\n\nAutoCode memory context:\n\n{{{memoryContext}}}\n\nUse relevant memory to preserve project conventions, avoid recorded pitfalls, and respect user preferences. Current task instructions, current spec documents, and current repository files take precedence over memory.\n\nPlease help me:\n\n1. Review the spec workflow guidance if it is available at `.autocode/system-prompts/spec-workflow-starter.md`; do not require a Claude-only subagent\n2. Review the requirements and design documents in the spec folder\n3. Implement this task based on existing codebase patterns and conventions\n4. Ensure code quality, including error handling, performance, and security\n5. Add or update focused tests for the implemented code\n6. When finished, report what changed and what you verified in the language specified above\n\nCompletion signal:\n\n{{{completionSignalInstruction}}}\n\nTask status is managed by the VS Code extension. Do not mark the task as `- [x]` yourself unless the user explicitly asks you to edit task status.\n</user_input>\n";
 
 export default {
   frontmatter,

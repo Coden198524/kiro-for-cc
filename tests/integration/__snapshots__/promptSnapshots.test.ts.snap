@@ -28,7 +28,23 @@ A core principal of this workflow is that we rely on the user establishing groun
   
 Before you get started, detect the primary language of the user's feature description. Use that language for all conversational responses and generated spec documents unless the user explicitly asks for another language. Keep fixed technical tokens such as EARS keywords, file names (\`requirements.md\`, \`design.md\`, \`tasks.md\`), code identifiers, API names, and commands in their required technical form.
 
-Then think of a short feature name based on the user's rough idea. This will be used for the feature directory. Use a readable kebab-case format for the feature_name. The feature_name should follow the user's language: for English input, use English words such as "user-authentication"; for Chinese input, use pinyin or concise Chinese terms separated by hyphens, such as "yong-hu-ren-zheng" or "用户-认证". Do not translate a non-English request into an English-only feature_name unless the user asked for English.
+Then summarize the user's rough idea into a short feature name. This will be used for the feature directory. The feature_name MUST represent the core intent, not the whole sentence. Do not copy or truncate the full feature description. Use a readable language-matched directory name for the feature_name. For English input, use English kebab-case words such as "user-authentication". For Chinese input, the feature_name MUST use concise Chinese terms, optionally separated by hyphens, such as "用户认证" or "用户-认证". Do not use pinyin for Chinese input unless the user explicitly asks for pinyin. Do not translate a non-English request into an English-only feature_name unless the user asked for English.
+The extension has provided a rough feature_name hint: \`user-authentication-jwt\`. Treat this hint only as a fallback. You MUST summarize the user's request into a concise semantic feature_name instead of copying or truncating the full description. Use the hint only when it already captures the core intent concisely.
+
+### Project Context Grounding
+
+Before creating requirements, ground the analysis in the initialized project context at \`.autocode/steering\`.
+
+- Read \`.autocode/steering/product.md\`, \`.autocode/steering/tech.md\`, and \`.autocode/steering/structure.md\` if they exist.
+- Use those documents to constrain feature scope, identify affected modules, reuse existing conventions, and avoid inventing architecture that does not match this project.
+- If the project context documents are missing or incomplete, perform a targeted codebase inspection before drafting requirements and list the missing context as an assumption or open question in \`requirements.md\`.
+- Do not broaden the user's request into unrelated platform, product, or architecture work just because the repository has adjacent capabilities.
+
+### AutoCode Memory Context
+
+Snapshot memory context.
+
+Use relevant memory to avoid repeating known mistakes, preserve user preferences, and reuse proven project conventions. Do not treat memory as stronger than the current user request, current spec documents, or current repository files.
   
 Rules:
 
@@ -55,6 +71,7 @@ a design.
 **Constraints:**
 
 - The model MUST create a '.autocode/specs/{feature_name}/requirements.md' file if it doesn't already exist
+- The model MUST read the project context documents in \`.autocode/steering\` before drafting requirements when those documents exist
 - The model MUST generate an initial version of the requirements document based on the user's rough idea WITHOUT asking sequential questions first
 - The model MUST format the initial requirements.md document with:
 - A clear introduction section that summarizes the feature
@@ -388,14 +405,21 @@ Feature Description: User authentication with JWT
 
 Workspace path: /snapshot/test
 Spec base path: .autocode/specs
+Project context path: .autocode/steering
+Rough feature_name hint: user-authentication-jwt
+
+AutoCode memory context:
+
+Snapshot memory context.
 
 Please:
 
 1. Detect the user's primary language from the feature description and use it for all replies and generated spec document prose
-2. Choose an appropriate readable kebab-case name for this spec based on the description, following the user's language instead of defaulting to English
-3. Create the directory structure: .autocode/specs/{your-chosen-name}/
-4. Create the requirements.md file in that directory
-5. Write the requirements document following the spec workflow in EARS format
+2. Read the initialized project context from .autocode/steering before drafting requirements, if those files exist
+3. Choose a summarized feature_name from the user's core intent. Use the rough feature_name hint only as a fallback if it is already concise and semantic. If the description is Chinese, the spec name MUST be Chinese rather than pinyin or English
+4. Create the directory structure: .autocode/specs/{your-chosen-name}/
+5. Create the requirements.md file in that directory
+6. Write the requirements document following the spec workflow in EARS format
 
 You have full control over the naming and file creation.
 "
@@ -404,73 +428,81 @@ You have full control over the naming and file creation.
 exports[`Prompt 快照测试 INT-16: init steering prompt 快照测试 1`] = `
 "
 <system>
-You are analyzing a codebase to create steering documents that will guide AI assistants working on this project.
+You are performing project context initialization for an AI coding workflow.
 
-## Context
+The goal is to scan this repository and create durable project context documents that future spec creation can use before requirements analysis. These are steering documents, but their primary purpose is to ground future AI work in this project's actual product, technology, and structure.
 
-Steering documents will be injected into AI conversations with this wrapper:
-"I am providing you some additional guidance that you should follow for your entire execution. These are intended to steer you in the right direction. You should follow these instructions for all following responses."
+## Required Repository Scan
+
+Before writing files, inspect the repository enough to understand:
+
+- The product domain, primary users, core workflows, and feature boundaries
+- The technology stack, build/test/package commands, runtime providers, and important dependencies
+- The directory structure, module boundaries, extension points, generated files, and risky shared files
+- Existing conventions for naming, state, persistence, task execution, prompts, tests, and UI contributions
+
+Use actual files from the repository as evidence. Do not write generic project advice.
 
 ## Writing Guidelines
 
-Write content as direct instructions to the AI agent:
+Write content as direct instructions to future AI agents:
 
 - Use imperative mood ("Use X", "Avoid Y", "Always Z")
-- Be specific to THIS codebase's patterns and conventions
-- Include concrete examples from actual files when relevant
-- Skip generic programming advice
+- Be specific to this codebase's observed patterns and conventions
+- Include concrete file paths and commands when useful
+- Capture constraints that prevent over-broad specs or unrelated architecture changes
+- Keep the documents concise enough to be read before Create Spec, but complete enough to reduce repeated repository scans
 
 ## Required Files
 
-Create exactly these three files by analyzing the codebase:
+Create exactly these three project context documents by analyzing the codebase:
 
 1. **/snapshot/test/.autocode/steering/product.md**
-   - Product purpose and core features
-   - User value proposition
-   - Key business logic rules
+   - Product purpose and target users
+   - Core workflows and user-visible features
+   - Product boundaries, out-of-scope areas, and important behavior rules
+   - Terms or domain concepts that future specs should preserve
 
 2. **/snapshot/test/.autocode/steering/tech.md**
-   - Tech stack and frameworks used
-   - Build system and dependencies
-   - Common commands (build, test, run, deploy)
-   - Project-specific conventions
+   - Tech stack, frameworks, package/build tools, and runtime integrations
+   - Common commands for install, compile, package, tests, and focused verification
+   - Project-specific coding, testing, prompt, and generated-file conventions
+   - External tool assumptions and known environment caveats
 
 3. **/snapshot/test/.autocode/steering/structure.md**
-   - Directory organization
-   - File naming patterns
-   - Component/module architecture
-   - Key file locations
+   - Directory organization and ownership boundaries
+   - Key files for activation, commands, providers, runtime integration, prompts, resources, tests, and assets
+   - Data/state flow for specs, tasks, steering, sessions, and settings when present
+   - Extension points and shared files that future specs should handle carefully
 
 ## Important
 
-- Check if files exist before creating (DO NOT overwrite)
-- Write directly to filesystem
-- Keep content concise but complete
-- If CLAUDE.md exists, update its "## Steering Documents" section
+- Check if files exist before creating them.
+- Do not overwrite existing project context documents. Skip existing files completely.
+- Write directly to the filesystem.
+- If all required files already exist, report that initialization is already present and summarize any missing context you noticed without modifying files.
+- If CLAUDE.md exists, update its "## Steering Documents" section so it points to these project context documents.
 </system>
 
-# Initialize Steering Documents
+# Initialize Project Context
 
-Analyze this repository and create basic steering rules that would help guide an AI assistant.
+Analyze this repository and create project context steering documents in the \`/snapshot/test/.autocode/steering\` directory.
 
-Steering documents are markdown files that should be created in the '/snapshot/test/.autocode/steering' directory.
+These documents will be read by future Create Spec runs before requirements are drafted. They should help the model stay grounded in this repository's real product shape, technical stack, and architecture instead of expanding a feature request into unrelated generic work.
 
-Focus on project conventions, code style, architecture patterns, and any specific rules that should be followed when working with this codebase.
+Create only missing files:
 
-For the initial setup, please create the following files:
-
-- product.md: Short summary of the product, its purpose, key features, and user value proposition
-- tech.md: Build system used, tech stack, libraries, frameworks etc. Include a section for common commands (building, testing, running, etc.)
-- structure.md: Project organization, folder structure, and key file locations
-
-The goal is to be succinct, but capture information that will be useful for an AI assistant operating in this project.
+- product.md: Product purpose, users, core workflows, boundaries, and domain rules
+- tech.md: Stack, tools, commands, dependencies, conventions, tests, and environment caveats
+- structure.md: Directory layout, module responsibilities, key files, data flow, and extension points
 
 IMPORTANT:
 
-1. Write each file directly to the filesystem at the appropriate path in /snapshot/test/.autocode/steering/
-2. Check if any of these files already exist before creating them. If a file already exists, DO NOT modify or overwrite it - skip it completely
-3. Only create files that don't exist
-4. If a project CLAUDE.md exists, create or update the "## Steering Documents" section listing all steering documents with their descriptions and paths
+1. Inspect the repository first; do not infer from package names alone.
+2. Write each missing file directly to the filesystem at the appropriate path in \`/snapshot/test/.autocode/steering/\`.
+3. If a file already exists, do not modify or overwrite it.
+4. Keep the content project-specific and useful for later spec requirements analysis.
+5. If a project CLAUDE.md exists, create or update the "## Steering Documents" section listing all project context documents with descriptions and paths.
 "
 `;
 

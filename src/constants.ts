@@ -37,7 +37,15 @@ export const DEFAULT_CONFIG = {
     },
     spec: {
         autoMarkTaskDone: true,
+        taskCompletionVerificationMode: 'fast',
         autoMarkTaskDoneMinConfidence: 0.8
+    },
+    memory: {
+        enabled: true,
+        autoWrite: true,
+        maxPromptItems: 8,
+        includeUserPreferences: true,
+        embeddingProvider: 'none'
     },
     paths: {
         specs: '.autocode/specs',
@@ -50,7 +58,8 @@ export const DEFAULT_CONFIG = {
         steering: true,
         mcp: true,
         hooks: true,
-        settings: true
+        settings: true,
+        memory: true
     }
 } as const;
 

@@ -14,7 +14,10 @@ describe('Prompt Integration Tests', () => {
       const result = promptLoader.renderPrompt('create-spec', {
         description: 'A user authentication system with OAuth support',
         workspacePath: '/Users/test/my-project',
-        specBasePath: '.autocode/specs'
+        specBasePath: '.autocode/specs',
+        steeringPath: '.autocode/steering',
+        memoryContext: 'Remember OAuth must follow existing auth conventions.',
+        suggestedFeatureName: 'user-authentication-oauth'
       });
 
       expect(result).toContain('A user authentication system with OAuth support');
@@ -32,13 +35,25 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('directed acyclic graph');
       expect(result).toContain('Requirement Traceability Matrix');
       expect(result).toContain('out-of-scope');
+      expect(result).toContain('Project context path: .autocode/steering');
+      expect(result).toContain('product.md');
+      expect(result).toContain('tech.md');
+      expect(result).toContain('structure.md');
+      expect(result).toContain('AutoCode memory context');
+      expect(result).toContain('Remember OAuth must follow existing auth conventions.');
+      expect(result).toContain('Rough feature_name hint: user-authentication-oauth');
+      expect(result).toContain('summarize the user');
+      expect(result).not.toContain('Use this exact feature_name');
     });
 
     test('includes directory creation instruction', () => {
       const result = promptLoader.renderPrompt('create-spec', {
         description: 'test feature',
         workspacePath: '/test',
-        specBasePath: '.autocode/specs'
+        specBasePath: '.autocode/specs',
+        steeringPath: '.autocode/steering',
+        memoryContext: 'No relevant AutoCode memory was found.',
+        suggestedFeatureName: 'test'
       });
 
       expect(result).toMatch(/mkdir|create.*directory/i);
@@ -47,15 +62,22 @@ describe('Prompt Integration Tests', () => {
 
     test('preserves the user language', () => {
       const result = promptLoader.renderPrompt('create-spec', {
-        description: 'Add material batch import tool for FlaxEngine',
+        description: '添加用户认证系统',
         workspacePath: '/test',
-        specBasePath: '.autocode/specs'
+        specBasePath: '.autocode/specs',
+        steeringPath: '.autocode/steering',
+        memoryContext: 'Prefer Chinese summaries.',
+        suggestedFeatureName: '用户认证'
       });
 
       expect(result).toContain('Detect the user');
       expect(result).toContain('Use that language');
-      expect(result).toContain('yong-hu-ren-zheng');
-      expect(result).toContain('Add material batch import tool for FlaxEngine');
+      expect(result).toContain('用户认证');
+      expect(result).toContain('Rough feature_name hint: 用户认证');
+      expect(result).toContain('Treat this hint only as a fallback');
+      expect(result).toContain('Do not use pinyin for Chinese input');
+      expect(result).not.toContain('yong-hu-ren-zheng');
+      expect(result).toContain('添加用户认证系统');
     });
 
     test('agent workflow prompt requires DAG task metadata', () => {
@@ -67,7 +89,10 @@ describe('Prompt Integration Tests', () => {
         agentDirectory: '/test/.codex/agents',
         agentConfigPath: '/test/.codex/config.toml',
         agentReadiness: 'Codex project expert agents were verified before launch.',
-        agentInvocationInstruction: 'Use configured agents.'
+        agentInvocationInstruction: 'Use configured agents.',
+        steeringPath: '.autocode/steering',
+        memoryContext: 'Avoid over-expanding task scheduling requirements.',
+        suggestedFeatureName: '用户认证'
       });
 
       expect(result).toContain('_Files:');
@@ -76,6 +101,15 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('_Done when:');
       expect(result).toContain('directed acyclic graph');
       expect(result).toContain('Requirement Traceability Matrix');
+      expect(result).toContain('用户认证');
+      expect(result).toContain('Rough feature_name hint: 用户认证');
+      expect(result).toContain('Treat the provided rough feature_name hint');
+      expect(result).not.toContain('Use the provided Suggested feature_name');
+      expect(result).toContain('Do not use pinyin for Chinese input');
+      expect(result).not.toContain('yong-hu-ren-zheng');
+      expect(result).toContain('Project context path: .autocode/steering');
+      expect(result).toContain('Project context grounding');
+      expect(result).toContain('Avoid over-expanding task scheduling requirements.');
     });
   });
 
@@ -86,6 +120,7 @@ describe('Prompt Integration Tests', () => {
       });
 
       expect(result).toContain('steering documents');
+      expect(result).toContain('project context');
       expect(result).toContain('/Users/test/project/.autocode/steering');
       expect(result).toContain('codebase');
       expect(result).toContain('analyzing');
@@ -152,7 +187,10 @@ describe('Prompt Integration Tests', () => {
           variables: {
             description: 'test',
             workspacePath: '/test',
-            specBasePath: '.autocode/specs'
+            specBasePath: '.autocode/specs',
+            steeringPath: '.autocode/steering',
+            memoryContext: 'No relevant AutoCode memory was found.',
+            suggestedFeatureName: 'test'
           }
         },
         {
@@ -166,6 +204,7 @@ describe('Prompt Integration Tests', () => {
             languageInstruction: 'Use Chinese (中文) for all conversational responses.',
             completionSignalPath: '/test/.autocode/specs/demo/.autocode/task-completion-1.json',
             providerExecutionGuidance: 'Use focused checks before completion.',
+            memoryContext: 'Remember to run focused tests.',
             completionSignalInstruction: 'Write the completion signal when ready.'
           }
         },
@@ -211,7 +250,10 @@ describe('Prompt Integration Tests', () => {
           variables: {
             description: 'test feature',
             workspacePath: '/project',
-            specBasePath: '.autocode/specs'
+            specBasePath: '.autocode/specs',
+            steeringPath: '.autocode/steering',
+            memoryContext: 'No relevant AutoCode memory was found.',
+            suggestedFeatureName: 'test'
           }
         },
         {
@@ -236,7 +278,10 @@ describe('Prompt Integration Tests', () => {
       const specPrompt = promptLoader.renderPrompt('create-spec', {
         description: 'test',
         workspacePath: '/test',
-        specBasePath: '.autocode/specs'
+        specBasePath: '.autocode/specs',
+        steeringPath: '.autocode/steering',
+        memoryContext: 'No relevant AutoCode memory was found.',
+        suggestedFeatureName: 'test'
       });
 
       const steeringPrompt = promptLoader.renderPrompt('init-steering', {
@@ -259,6 +304,7 @@ describe('Prompt Integration Tests', () => {
         languageInstruction: 'Use Chinese (中文) for all conversational responses.',
         completionSignalPath: '/test/.autocode/specs/demo/.autocode/task-completion-1.json',
         providerExecutionGuidance: 'Use focused checks before completion.',
+        memoryContext: 'Remember to preserve Chinese output.',
         completionSignalInstruction: 'Write the completion signal when ready.'
       });
 
@@ -267,6 +313,8 @@ describe('Prompt Integration Tests', () => {
       expect(result).toContain('Use Chinese (中文) for all conversational responses.');
       expect(result).toContain('Provider execution guidance:');
       expect(result).toContain('Use focused checks before completion.');
+      expect(result).toContain('AutoCode memory context:');
+      expect(result).toContain('Remember to preserve Chinese output.');
       expect(result).toContain('Completion Signal Path: /test/.autocode/specs/demo/.autocode/task-completion-1.json');
       expect(result).toContain('Completion signal:');
       expect(result).toContain('1. 实现中文任务');

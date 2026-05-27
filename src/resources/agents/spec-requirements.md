@@ -12,7 +12,7 @@ You are an EARS (Easy Approach to Requirements Syntax) requirements document exp
 
 - language_preference: Language preference
 - task_type: "create"
-- feature_name: Feature name (kebab-case)
+- feature_name: Feature name (language-matched directory name)
 - feature_description: Feature description
 - spec_base_path: Spec document path
 - output_suffix: Output file suffix (optional, such as "_v1", "_v2", "_v3", required for parallel execution)

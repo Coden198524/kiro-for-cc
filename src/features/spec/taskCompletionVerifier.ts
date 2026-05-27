@@ -4,6 +4,7 @@ import { AgentRuntime } from '../../runtime/agentRuntime';
 import { getRuntimeValue } from '../../runtime/runtimeSettings';
 import { buildSpecTaskStatusUpdates, ParsedSpecTaskLine, parseSpecTaskLine } from './taskStatus';
 import { TaskSessionManager } from './taskSessionManager';
+import { MemoryManager } from '../memory/memoryManager';
 
 interface TaskCompletionVerification {
     completed: boolean;
@@ -13,6 +14,8 @@ interface TaskCompletionVerification {
     missing?: string[];
 }
 
+type TaskCompletionVerificationMode = 'fast' | 'strict';
+
 export interface VerifyAndMarkTaskDoneRequest {
     taskFilePath: string;
     lineNumber: number;
@@ -20,17 +23,21 @@ export interface VerifyAndMarkTaskDoneRequest {
 }
 
 export class TaskCompletionVerifier {
+    private static readonly INTERACTIVE_VERIFICATION_POLL_INTERVAL_MS = 1000;
+    private static readonly INTERACTIVE_VERIFICATION_TIMEOUT_MS = 30 * 60 * 1000;
+
     constructor(
         private agentRuntime: AgentRuntime,
         private taskSessionManager: TaskSessionManager,
-        private outputChannel: vscode.OutputChannel
+        private outputChannel: vscode.OutputChannel,
+        private memoryManager?: MemoryManager
     ) { }
 
     isEnabled(): boolean {
         return getRuntimeValue<boolean>('spec.autoMarkTaskDone', true);
     }
 
-    async verifyAndMarkDone(request: VerifyAndMarkTaskDoneRequest): Promise<boolean> {
+    async verifyAndMarkDone(request: VerifyAndMarkTaskDoneRequest, verificationTerminal?: vscode.Terminal): Promise<boolean> {
         if (!this.isEnabled()) {
             this.outputChannel.appendLine('[TaskVerifier] Auto mark task done is disabled.');
             return false;
@@ -59,13 +66,20 @@ export class TaskCompletionVerifier {
             this.outputChannel.appendLine('[TaskVerifier] Task is still pending; verifying completion anyway because completion was signaled.');
         }
 
+        if (this.getVerificationMode() === 'fast') {
+            return this.markCompletionAccepted(resolvedRequest, 'Task marked done from completion signal');
+        }
+
         const prompt = this.buildVerificationPrompt(resolvedRequest);
-        const result = await this.agentRuntime.invokeHeadless({
-            prompt,
-            title: 'AutoCode - Verify Task Completion',
-            agentType: 'task_implementer',
-            approvalPolicy: 'never'
-        });
+        const result = verificationTerminal
+            ? await this.invokeVerificationInTaskTerminal(resolvedRequest, prompt, verificationTerminal)
+            : await this.agentRuntime.invokeHeadless({
+                prompt,
+                title: 'AutoCode - Verify Task Completion',
+                agentType: 'task_implementer',
+                approvalPolicy: 'never',
+                visibleTerminal: true
+            });
 
         const verification = this.parseVerification([result.output, result.stderr].filter(Boolean).join('\n'));
         if (!verification) {
@@ -79,25 +93,176 @@ export class TaskCompletionVerifier {
             return false;
         }
 
-        const markedTasks = await this.markTaskDone(resolvedRequest.taskFilePath, resolvedRequest.lineNumber);
+        return this.markCompletionAccepted(resolvedRequest, 'Task verified and marked done', verification);
+    }
+
+    private getVerificationMode(): TaskCompletionVerificationMode {
+        const mode = getRuntimeValue<string>('spec.taskCompletionVerificationMode', 'fast');
+        return mode === 'strict' ? 'strict' : 'fast';
+    }
+
+    private async markCompletionAccepted(
+        request: VerifyAndMarkTaskDoneRequest,
+        logPrefix: string,
+        verification?: TaskCompletionVerification
+    ): Promise<boolean> {
+        const markedTasks = await this.markTaskDone(request.taskFilePath, request.lineNumber);
         if (markedTasks.length === 0) {
-            const refreshedTask = await this.resolveTaskLine(resolvedRequest);
+            const refreshedTask = await this.resolveTaskLine(request);
             if (refreshedTask?.task.status !== 'completed') {
-                this.outputChannel.appendLine('[TaskVerifier] Verification passed but failed to update the task checkbox.');
+                this.outputChannel.appendLine('[TaskVerifier] Completion accepted but failed to update the task checkbox.');
                 return false;
             }
         }
 
-        await this.markTaskSessionsCompleted(resolvedRequest, markedTasks);
-        this.outputChannel.appendLine(`[TaskVerifier] Task verified and marked done: ${resolvedRequest.taskDescription}`);
-        vscode.window.showInformationMessage(`Task verified and marked done: ${resolvedRequest.taskDescription}`);
+        await this.markTaskSessionsCompleted(request, markedTasks);
+        await this.memoryManager?.recordTaskCompletion({
+            taskFilePath: request.taskFilePath,
+            lineNumber: request.lineNumber,
+            taskDescription: request.taskDescription,
+            verified: true,
+            summary: verification?.summary ?? logPrefix,
+            evidence: verification?.evidence
+        });
+        this.outputChannel.appendLine(`[TaskVerifier] ${logPrefix}: ${request.taskDescription}`);
+        vscode.window.showInformationMessage(`${logPrefix}: ${request.taskDescription}`);
         return true;
+    }
+
+    private async invokeVerificationInTaskTerminal(
+        request: VerifyAndMarkTaskDoneRequest,
+        prompt: string,
+        terminal: vscode.Terminal
+    ): Promise<{ exitCode: number | undefined; output?: string; stderr?: string }> {
+        const resultPath = this.getInteractiveVerificationResultPath(request);
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(resultPath)));
+        await this.deleteIfExists(resultPath);
+
+        await this.agentRuntime.invokeInteractive({
+            prompt: this.buildInteractiveVerificationPrompt(prompt, resultPath, request),
+            title: 'AutoCode - Verify Task Completion',
+            agentType: 'task_implementer',
+            approvalPolicy: 'never',
+            targetTerminal: terminal
+        });
+
+        const output = await this.waitForInteractiveVerificationResult(resultPath);
+        if (output === undefined) {
+            return {
+                exitCode: 1,
+                stderr: `Task completion verification did not write a result file within ${TaskCompletionVerifier.INTERACTIVE_VERIFICATION_TIMEOUT_MS}ms: ${resultPath}`
+            };
+        }
+
+        return {
+            exitCode: 0,
+            output
+        };
+    }
+
+    private buildInteractiveVerificationPrompt(prompt: string, resultPath: string, request: VerifyAndMarkTaskDoneRequest): string {
+        const payload = '{"completed":true,"confidence":0.95,"summary":"...","evidence":["..."],"missing":[]}';
+        if (this.shouldUseChinese(request.taskDescription)) {
+            return [
+                prompt,
+                '',
+                '验证结果文件：',
+                resultPath,
+                '',
+                '由于本次验证在当前任务终端中执行，请将最终 JSON 验证结果写入上面的验证结果文件。',
+                '如有需要，请先创建父目录。不要修改源码文件，也不要修改任务复选框。',
+                '文件内容必须是下面格式的单个 JSON 对象：',
+                payload,
+                '',
+                '写入验证结果文件后，请在当前终端用中文简要总结验证结论。'
+            ].join('\n');
+        }
+
+        return [
+            prompt,
+            '',
+            'Verification result file:',
+            resultPath,
+            '',
+            'Because this verification is running inside the existing task terminal, write the final JSON result to the verification result file above.',
+            'Create the parent directory if needed. Do not modify source files or task checkboxes.',
+            'The file content must be exactly one JSON object in this shape:',
+            payload,
+            '',
+            'After writing the verification result file, briefly summarize the verdict in this terminal.'
+        ].join('\n');
+    }
+
+    private getInteractiveVerificationResultPath(request: VerifyAndMarkTaskDoneRequest): string {
+        return path.join(
+            path.dirname(request.taskFilePath),
+            '.autocode',
+            `task-verification-${request.lineNumber + 1}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.json`
+        );
+    }
+
+    private async waitForInteractiveVerificationResult(resultPath: string): Promise<string | undefined> {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < TaskCompletionVerifier.INTERACTIVE_VERIFICATION_TIMEOUT_MS) {
+            const output = await this.readTextIfExists(resultPath);
+            if (output !== undefined && output.trim()) {
+                return output;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, TaskCompletionVerifier.INTERACTIVE_VERIFICATION_POLL_INTERVAL_MS));
+        }
+
+        return undefined;
+    }
+
+    private async readTextIfExists(filePath: string): Promise<string | undefined> {
+        try {
+            const content = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
+            return Buffer.from(content).toString().replace(/^\uFEFF/, '');
+        } catch {
+            return undefined;
+        }
+    }
+
+    private async deleteIfExists(filePath: string): Promise<void> {
+        try {
+            await vscode.workspace.fs.delete(vscode.Uri.file(filePath));
+        } catch {
+            // The result file normally does not exist before verification starts.
+        }
     }
 
     private buildVerificationPrompt(request: VerifyAndMarkTaskDoneRequest): string {
         const specDir = path.dirname(request.taskFilePath);
         const requirementsPath = path.join(specDir, 'requirements.md');
         const designPath = path.join(specDir, 'design.md');
+
+        if (this.shouldUseChinese(request.taskDescription)) {
+            return [
+                '你正在验证一个 Spec 实现任务是否真正完成。',
+                '',
+                '请检查工作区、任务文件、requirements.md、design.md、实际代码改动以及相关测试。',
+                '不要修改任何文件。不要自行修改任务复选框。只输出验证结果。',
+                '',
+                `任务文件：${request.taskFilePath}`,
+                `需求文件：${requirementsPath}`,
+                `设计文件：${designPath}`,
+                `任务行号：${request.lineNumber + 1}`,
+                `任务描述：${request.taskDescription}`,
+                '',
+                '完成标准：',
+                '- 实现内容符合 requirements.md 和 design.md。',
+                '- 已存在并通过相关测试或验证命令；如果无法运行，必须有明确、可信的原因。',
+                '- 没有明显回归、未完成占位、无关大改或范围外修改。',
+                '- 实现范围与当前任务一致。',
+                '',
+                '只返回一个 JSON 对象，不要使用 markdown：',
+                '{"completed":true,"confidence":0.95,"summary":"...","evidence":["..."],"missing":[]}',
+                '',
+                '如果存在任何不确定、未完成、未验证或阻塞项，请返回 completed=false，并在 missing 中列出原因。',
+                'JSON 字段名必须保持英文；summary、evidence、missing 的文本内容请使用中文。'
+            ].join('\n');
+        }
 
         return [
             'You are verifying whether a single spec implementation task is truly complete.',
@@ -122,6 +287,10 @@ export class TaskCompletionVerifier {
             '',
             'If anything is uncertain, incomplete, untested, or blocked, return completed=false with missing items.'
         ].join('\n');
+    }
+
+    private shouldUseChinese(text: string): boolean {
+        return /[\u3400-\u9FFF]/.test(text);
     }
 
     private parseVerification(output: string): TaskCompletionVerification | undefined {

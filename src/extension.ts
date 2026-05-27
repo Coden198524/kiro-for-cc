@@ -7,7 +7,9 @@ import { HooksExplorerProvider } from './providers/hooksExplorerProvider';
 import { MCPExplorerProvider } from './providers/mcpExplorerProvider';
 import { OverviewProvider } from './providers/overviewProvider';
 import { AgentsExplorerProvider } from './providers/agentsExplorerProvider';
+import { MemoryExplorerProvider } from './providers/memoryExplorerProvider';
 import { AgentManager } from './features/agents/agentManager';
+import { MemoryManager } from './features/memory/memoryManager';
 import { ConfigManager } from './utils/configManager';
 import { PromptLoader } from './services/promptLoader';
 import { UpdateChecker } from './utils/updateChecker';
@@ -20,6 +22,7 @@ import { TaskCompletionService } from './features/spec/taskCompletionService';
 import { registerSpecCommands } from './commands/specCommands';
 import { registerPermissionCommands } from './commands/permissionCommands';
 import { registerSteeringCommands } from './commands/steeringCommands';
+import { registerMemoryCommands } from './commands/memoryCommands';
 import { registerGeneralCommands } from './commands/generalCommands';
 import { registerWorkspaceWatchers } from './watchers/workspaceWatchers';
 import { SettingsManager } from './features/settings/settingsManager';
@@ -34,6 +37,7 @@ let taskSessionManager: TaskSessionManager;
 let taskCompletionVerifier: TaskCompletionVerifier;
 let taskCompletionService: TaskCompletionService;
 let settingsManager: SettingsManager;
+let memoryManager: MemoryManager;
 export let outputChannel: vscode.OutputChannel;
 
 // 导出 getter 函数供其他模块使用
@@ -80,19 +84,21 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize feature managers with output channel
     settingsManager = new SettingsManager(outputChannel);
-    taskSessionManager = new TaskSessionManager(outputChannel);
-    taskCompletionVerifier = new TaskCompletionVerifier(agentRuntime, taskSessionManager, outputChannel);
+    memoryManager = new MemoryManager(context, outputChannel);
+    taskSessionManager = new TaskSessionManager(outputChannel, undefined, memoryManager);
+    taskCompletionVerifier = new TaskCompletionVerifier(agentRuntime, taskSessionManager, outputChannel, memoryManager);
     taskCompletionService = new TaskCompletionService(taskCompletionVerifier, outputChannel);
     // Initialize Agent Manager and agents
     agentManager = new AgentManager(context, outputChannel);
-    specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager, agentManager);
     steeringManager = new SteeringManager(agentRuntime, outputChannel);
+    specManager = new SpecManager(agentRuntime, outputChannel, taskSessionManager, agentManager, () => steeringManager.init(), memoryManager);
     await agentManager.initializeBuiltInAgents();
 
     // Register tree data providers
     const overviewProvider = new OverviewProvider(context);
     const specExplorer = new SpecExplorerProvider(context, outputChannel);
     const steeringExplorer = new SteeringExplorerProvider(context);
+    const memoryExplorer = new MemoryExplorerProvider(memoryManager);
     const hooksExplorer = new HooksExplorerProvider(context, agentRuntime.provider);
     const mcpExplorer = new MCPExplorerProvider(context, outputChannel);
     const agentsExplorer = new AgentsExplorerProvider(context, agentManager, outputChannel, agentRuntime.provider);
@@ -106,6 +112,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerTreeDataProvider('autocode.views.specExplorer', specExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.agentsExplorer', agentsExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.steeringExplorer', steeringExplorer),
+        vscode.window.registerTreeDataProvider('autocode.views.memoryExplorer', memoryExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.hooksStatus', hooksExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.mcpServerStatus', mcpExplorer)
     );
@@ -128,6 +135,12 @@ export async function activate(context: vscode.ExtensionContext) {
         steeringExplorer,
         agentsExplorer,
         agentManager,
+        outputChannel
+    });
+    registerMemoryCommands({
+        context,
+        memoryManager,
+        memoryExplorer,
         outputChannel
     });
     registerGeneralCommands({

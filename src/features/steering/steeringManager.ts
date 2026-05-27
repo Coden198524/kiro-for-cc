@@ -129,7 +129,7 @@ export class SteeringManager {
         if (existingDocs.length > 0) {
             const existingNames = existingDocs.map(doc => doc.name).join(', ');
             const confirm = await vscode.window.showWarningMessage(
-                `Steering documents already exist (${existingNames}). Init steering will analyze the project again but won't overwrite existing files.`,
+                `Project context documents already exist (${existingNames}). Initialize Project Context will analyze the project again but won't overwrite existing files.`,
                 'Continue',
                 'Cancel'
             );
@@ -145,7 +145,7 @@ export class SteeringManager {
         // Generate steering documents using Claude
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: 'Analyzing project and generating steering documents...',
+            title: 'Analyzing project and generating project context documents...',
             cancellable: false
         }, async () => {
             const prompt = this.promptLoader.renderPrompt('init-steering', {
@@ -154,12 +154,12 @@ export class SteeringManager {
 
             await this.agentRuntime.invokeInteractive({
                 prompt,
-                title: 'AutoCode - Init Steering',
+                title: 'Initialize Project Context',
                 agentType: 'steering_initializer'
             });
 
             // Auto-dismiss notification after 3 seconds
-            await NotificationUtils.showAutoDismissNotification('Steering documents generation started. Check the terminal for progress.');
+            await NotificationUtils.showAutoDismissNotification('Project context initialization started. Check the terminal for progress.');
         });
     }
 

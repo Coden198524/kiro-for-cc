@@ -8,6 +8,8 @@ import { TaskInvocationMode, TaskSessionManager } from './taskSessionManager';
 import { hasChildSpecTasks, parseSpecTaskLine, SpecTaskStatus } from './taskStatus';
 import { analyzeTaskPlanQuality, formatTaskPlanQualityIssue } from './taskPlanQuality';
 import { AgentManager, CodexAgentsReadyResult } from '../agents/agentManager';
+import { SpecDescriptionInput } from './specDescriptionInput';
+import { MemoryManager } from '../memory/memoryManager';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
@@ -17,11 +19,13 @@ export interface ParallelTaskImplementationRun {
     lineNumber: number;
     taskDescription: string;
     completionSignalPath: string;
+    completionSignalToken: string;
 }
 
 export interface TaskImplementationRun {
     terminal?: vscode.Terminal;
     completionSignalPath?: string;
+    completionSignalToken?: string;
     completionSignalPaths?: string[];
     parallelRuns?: ParallelTaskImplementationRun[];
     failedLineNumbers?: number[];
@@ -77,6 +81,8 @@ interface ImplTaskOptions {
     approvalPolicy?: AgentApprovalPolicy;
 }
 
+type ProjectContextInitializer = () => Promise<void>;
+
 export class SpecManager {
     private configManager: ConfigManager;
     private promptLoader: PromptLoader;
@@ -86,7 +92,9 @@ export class SpecManager {
         private agentRuntime: AgentRuntime,
         private outputChannel: vscode.OutputChannel,
         private taskSessionManager?: TaskSessionManager,
-        private agentManager?: AgentManager
+        private agentManager?: AgentManager,
+        private projectContextInitializer?: ProjectContextInitializer,
+        private memoryManager?: MemoryManager
     ) {
         this.configManager = ConfigManager.getInstance();
         this.configManager.loadSettings();
@@ -99,12 +107,14 @@ export class SpecManager {
     }
 
     async create() {
-        // Get feature description only
-        const description = await vscode.window.showInputBox({
-            title: '✨ Create New Spec ✨',
-            prompt: 'Specs are a structured way to build features so you can plan before building',
-            placeHolder: 'Enter your idea to generate requirement, design, and task specs...',
-            ignoreFocusOut: false
+        if (!(await this.ensureProjectContextReadyForSpec())) {
+            return;
+        }
+
+        const description = await SpecDescriptionInput.prompt({
+            title: 'Create New Spec',
+            prompt: 'Describe the feature or change. Multi-line notes, constraints, examples, and acceptance details are supported.',
+            placeholder: 'Enter your idea, context, constraints, edge cases, and desired behavior...'
         });
 
         if (!description) {
@@ -115,12 +125,14 @@ export class SpecManager {
     }
 
     async createWithAgents() {
-        // Get feature description only
-        const description = await vscode.window.showInputBox({
-            title: '✨ Create New Spec with Agents ✨',
-            prompt: 'This will use specialized subagents for creating requirements, design, and tasks',
-            placeHolder: 'Enter your idea to generate requirement, design, and task specs...',
-            ignoreFocusOut: false
+        if (!(await this.ensureProjectContextReadyForSpec())) {
+            return;
+        }
+
+        const description = await SpecDescriptionInput.prompt({
+            title: 'Create New Spec with Agents',
+            prompt: 'Describe the feature or change. Specialized agents will use this multi-line context for requirements, design, and tasks.',
+            placeholder: 'Enter your idea, context, constraints, edge cases, and desired behavior...'
         });
 
         if (!description) {
@@ -164,11 +176,17 @@ export class SpecManager {
 
         // Let the active agent handle directory creation, naming, and file creation.
         const specBasePath = await this.getSpecBasePath();
+        const steeringPath = this.configManager.getPath('steering');
+        const featureNameHint = this.suggestFeatureName(description);
+        const memoryContext = await this.getMemoryContext(description);
         const agentContext = useAgents ? this.getExpertAgentPromptContext(workspaceFolder.uri.fsPath, codexAgentReadiness) : {};
         const prompt = this.promptLoader.renderPrompt(useAgents ? 'create-spec-with-agents' : 'create-spec', {
             description,
             workspacePath: workspaceFolder.uri.fsPath,
             specBasePath,
+            steeringPath,
+            memoryContext,
+            suggestedFeatureName: featureNameHint,
             ...agentContext
         });
 
@@ -183,6 +201,113 @@ export class SpecManager {
         this.setupSpecFolderWatcher(workspaceFolder, terminal).catch(error => {
             this.outputChannel.appendLine(`[SpecManager] Failed to set up watcher: ${error}`);
         });
+    }
+
+    private async ensureProjectContextReadyForSpec(): Promise<boolean> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace folder open');
+            return false;
+        }
+
+        const missingDocuments = await this.getMissingProjectContextDocuments(workspaceFolder);
+        if (missingDocuments.length === 0) {
+            return true;
+        }
+
+        const initializeOption = 'Initialize Project Context';
+        const continueOption = 'Continue Without Context';
+        const cancelOption = 'Cancel';
+        const choice = await vscode.window.showWarningMessage(
+            [
+                'Project context has not been initialized.',
+                `Missing: ${missingDocuments.join(', ')}.`,
+                'Initialize it first so Create Spec can ground requirements in this repository instead of over-expanding the request?'
+            ].join(' '),
+            initializeOption,
+            continueOption,
+            cancelOption
+        );
+
+        if (choice === continueOption) {
+            this.outputChannel.appendLine('[SpecManager] Create Spec continued without initialized project context.');
+            return true;
+        }
+
+        if (choice === initializeOption) {
+            if (this.projectContextInitializer) {
+                await this.projectContextInitializer();
+            } else {
+                vscode.window.showInformationMessage('Run "AutoCode: Initialize Project Context" before creating this spec.');
+            }
+        }
+
+        return false;
+    }
+
+    private async getMissingProjectContextDocuments(workspaceFolder: vscode.WorkspaceFolder): Promise<string[]> {
+        const steeringPath = path.join(workspaceFolder.uri.fsPath, this.configManager.getPath('steering'));
+        const requiredDocuments = ['product.md', 'tech.md', 'structure.md'];
+        const missingDocuments: string[] = [];
+
+        for (const documentName of requiredDocuments) {
+            try {
+                await vscode.workspace.fs.stat(vscode.Uri.file(path.join(steeringPath, documentName)));
+            } catch {
+                missingDocuments.push(documentName);
+            }
+        }
+
+        return missingDocuments;
+    }
+
+    private suggestFeatureName(description: string): string {
+        const normalizedDescription = description.trim().normalize('NFKC');
+        if (!normalizedDescription) {
+            return 'new-spec';
+        }
+
+        if (/[\u3400-\u9fff]/.test(normalizedDescription)) {
+            return this.suggestChineseFeatureName(normalizedDescription);
+        }
+
+        return this.suggestAsciiFeatureName(normalizedDescription);
+    }
+
+    private suggestChineseFeatureName(description: string): string {
+        const tokens = description.match(/[\u3400-\u9fffA-Za-z0-9]+/g) ?? [];
+        const fallback = '新功能';
+        let featureName = tokens.join('-')
+            .replace(/^(?:请|帮我|帮助我|需要|希望|想要|添加|新增|增加|创建|实现|开发|构建|支持|优化|改进|修复)+/u, '')
+            .replace(/-+/g, '-')
+            .replace(/^-+|-+$/g, '');
+
+        if (!featureName) {
+            featureName = fallback;
+        }
+
+        return this.truncateFeatureName(featureName, 32) || fallback;
+    }
+
+    private suggestAsciiFeatureName(description: string): string {
+        const words = description.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+        const stopWords = new Set([
+            'a', 'an', 'the', 'to', 'for', 'with', 'and', 'or', 'of', 'in', 'on', 'by',
+            'add', 'create', 'build', 'implement', 'make', 'new', 'feature'
+        ]);
+        const meaningfulWords = words.filter(word => !stopWords.has(word));
+        const selectedWords = (meaningfulWords.length > 0 ? meaningfulWords : words).slice(0, 6);
+
+        return selectedWords.join('-') || 'new-spec';
+    }
+
+    private truncateFeatureName(featureName: string, maxLength: number): string {
+        const characters = Array.from(featureName);
+        if (characters.length <= maxLength) {
+            return featureName;
+        }
+
+        return characters.slice(0, maxLength).join('').replace(/-+$/g, '');
     }
 
     async implTask(
@@ -208,6 +333,9 @@ export class SpecManager {
         const completionSignalPath = lineNumber !== undefined
             ? this.getCompletionSignalPath(taskFilePath, lineNumber)
             : undefined;
+        const completionSignalToken = completionSignalPath
+            ? this.createCompletionSignalToken()
+            : undefined;
         if (completionSignalPath) {
             await this.prepareCompletionSignalFile(completionSignalPath);
         }
@@ -226,8 +354,10 @@ export class SpecManager {
             taskFilePath,
             taskDescription,
             lineNumber,
-            completionSignalPath
+            completionSignalPath,
+            completionSignalToken
         );
+        const memoryContext = await this.getMemoryContext(taskDescription, taskFilePath);
 
         const prompt = this.promptLoader.renderPrompt('impl-task', {
             taskFilePath,
@@ -237,13 +367,14 @@ export class SpecManager {
             languagePreference,
             languageInstruction,
             providerExecutionGuidance,
+            memoryContext,
             completionSignalPath: completionSignalPath || '(not available)',
             completionSignalInstruction
         });
 
         const terminal = await this.agentRuntime.invokeInteractive({
             prompt,
-            title: options.title ?? 'AutoCode - Implementing Task',
+            title: options.title ?? this.getTaskTerminalTitle(taskDescription, lineNumber),
             agentType: 'task_implementer',
             reuseTerminal: options.reuseTerminal ?? true,
             approvalPolicy: options.approvalPolicy
@@ -262,7 +393,7 @@ export class SpecManager {
             });
         }
 
-        return { terminal, completionSignalPath, lineNumber, taskDescription };
+        return { terminal, completionSignalPath, completionSignalToken, lineNumber, taskDescription };
     }
 
     private async ensureExpertAgentsReady(): Promise<CodexAgentsReadyResult | undefined | null> {
@@ -365,12 +496,44 @@ export class SpecManager {
             task.status === 'inProgress',
             task.lineNumber,
             {
-                title: `AutoCode - Task ${task.lineNumber + 1}`,
-                reuseTerminal: true,
+                title: this.getTaskTerminalTitle(task.description, task.lineNumber),
+                reuseTerminal: this.shouldReuseAutoTaskTerminal(),
                 notification: false,
                 approvalPolicy: 'never'
             }
         );
+    }
+
+    private shouldReuseAutoTaskTerminal(): boolean {
+        return this.agentRuntime.provider.id !== 'codex';
+    }
+
+    private getTaskTerminalTitle(taskDescription: string, lineNumber?: number): string {
+        const taskNumber = this.parseTaskId(taskDescription);
+        const taskLabel = taskNumber
+            ? `Task ${taskNumber}`
+            : (lineNumber === undefined ? 'Task' : `Task ${lineNumber + 1}`);
+        const taskName = this.truncateTerminalTitleSegment(this.stripTaskNumbering(taskDescription), 48);
+
+        return taskName
+            ? `${taskLabel}: ${taskName}`
+            : taskLabel;
+    }
+
+    private stripTaskNumbering(taskDescription: string): string {
+        return taskDescription
+            .trim()
+            .replace(/^\d+(?:\.\d+)*[.)]?\s+/, '')
+            .trim();
+    }
+
+    private truncateTerminalTitleSegment(value: string, maxLength: number): string {
+        const characters = Array.from(value);
+        if (characters.length <= maxLength) {
+            return value;
+        }
+
+        return `${characters.slice(0, Math.max(0, maxLength - 3)).join('').trimEnd()}...`;
     }
 
     async implAllTasksParallel(taskFilePath: string, options: TaskImplementationLaunchOptions = {}): Promise<TaskImplementationRun | undefined> {
@@ -426,7 +589,7 @@ export class SpecManager {
                     {
                         reuseTerminal: false,
                         notification: false,
-                        title: `AutoCode - Task ${scope.task.lineNumber + 1}`,
+                        title: this.getTaskTerminalTitle(scope.task.description, scope.task.lineNumber),
                         parallelFileScopes: scope.fileScopes,
                         approvalPolicy: 'never'
                     }
@@ -437,7 +600,7 @@ export class SpecManager {
                 continue;
             }
 
-            if (!run?.terminal || !run.completionSignalPath) {
+            if (!run?.terminal || !run.completionSignalPath || !run.completionSignalToken) {
                 failedLineNumbers.push(scope.task.lineNumber);
                 continue;
             }
@@ -447,7 +610,8 @@ export class SpecManager {
                 taskFilePath,
                 lineNumber: scope.task.lineNumber,
                 taskDescription: scope.task.description,
-                completionSignalPath: run.completionSignalPath
+                completionSignalPath: run.completionSignalPath,
+                completionSignalToken: run.completionSignalToken
             });
         }
 
@@ -972,6 +1136,23 @@ export class SpecManager {
         ].join('\n');
     }
 
+    private async getMemoryContext(query: string, specFilePath?: string): Promise<string> {
+        if (!this.memoryManager) {
+            return 'No AutoCode memory manager is available.';
+        }
+
+        try {
+            return await this.memoryManager.buildPromptContext({
+                query,
+                specFilePath,
+                includeUserPreferences: true
+            });
+        } catch (error) {
+            this.outputChannel.appendLine(`[SpecManager] Failed to build memory context: ${error}`);
+            return 'AutoCode memory retrieval failed for this prompt.';
+        }
+    }
+
     private getParallelTaskExecutionGuidance(fileScopes?: string[]): string {
         if (!fileScopes || fileScopes.length === 0) {
             return '';
@@ -990,6 +1171,10 @@ export class SpecManager {
         return path.join(path.dirname(taskFilePath), '.autocode', `task-completion-${lineNumber + 1}.json`);
     }
 
+    private createCompletionSignalToken(): string {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     private async prepareCompletionSignalFile(completionSignalPath: string): Promise<void> {
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(completionSignalPath)));
         try {
@@ -1003,9 +1188,10 @@ export class SpecManager {
         taskFilePath: string,
         taskDescription: string,
         lineNumber: number | undefined,
-        completionSignalPath: string | undefined
+        completionSignalPath: string | undefined,
+        completionSignalToken: string | undefined
     ): string {
-        if (lineNumber === undefined || !completionSignalPath) {
+        if (lineNumber === undefined || !completionSignalPath || !completionSignalToken) {
             return 'No completion signal file is available for this invocation. Finish with a clear summary; the user may mark the task manually.';
         }
 
@@ -1013,13 +1199,15 @@ export class SpecManager {
             status: 'ready_for_verification',
             taskFilePath,
             lineNumber,
-            taskDescription
+            taskDescription,
+            runId: completionSignalToken
         }, null, 2);
         const blockedPayload = JSON.stringify({
             status: 'blocked',
             taskFilePath,
             lineNumber,
             taskDescription,
+            runId: completionSignalToken,
             reason: 'Describe the blocker, failed command, or missing capability.'
         }, null, 2);
 
@@ -1028,6 +1216,7 @@ export class SpecManager {
             'The VS Code extension will run an independent model verification and will mark the task checkbox as completed only if verification passes.',
             'This file is mandatory for AutoCode automation. If you only summarize completion without writing this file, automatic verification and task status updates cannot run.',
             'Create the parent directory if needed, then write exactly this JSON object after your own implementation checks pass.',
+            'The runId value is unique for this task run. Do not reuse an older completion signal or change the runId.',
             'Do not edit the task checkbox yourself.',
             '',
             `Completion signal path: ${completionSignalPath}`,

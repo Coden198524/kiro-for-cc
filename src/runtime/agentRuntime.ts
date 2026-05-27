@@ -38,6 +38,8 @@ export interface AgentInvocationRequest {
     approvalPolicy?: AgentApprovalPolicy;
     sandboxMode?: AgentSandboxMode;
     bypassApprovalsAndSandbox?: boolean;
+    visibleTerminal?: boolean;
+    targetTerminal?: vscode.Terminal;
 }
 
 export interface AgentInvocationResult {

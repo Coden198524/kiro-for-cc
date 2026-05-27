@@ -13,7 +13,10 @@ describe('Prompt 快照测试', () => {
     const result = promptLoader.renderPrompt('create-spec', {
       description: 'User authentication with JWT',
       workspacePath: '/snapshot/test',
-      specBasePath: '.autocode/specs'
+      specBasePath: '.autocode/specs',
+      steeringPath: '.autocode/steering',
+      memoryContext: 'Snapshot memory context.',
+      suggestedFeatureName: 'user-authentication-jwt'
     });
 
     expect(result).toMatchSnapshot();

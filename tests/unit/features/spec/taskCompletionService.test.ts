@@ -65,6 +65,36 @@ describe('TaskCompletionService', () => {
         });
     });
 
+    test('reconciles only requested task line signals when line numbers are provided', async () => {
+        (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            if (uri.fsPath.endsWith('task-completion-3.json')) {
+                return Buffer.from(JSON.stringify({
+                    status: 'ready_for_verification',
+                    taskFilePath,
+                    lineNumber: 2,
+                    taskDescription: '1. First task'
+                }));
+            }
+
+            return Buffer.from(JSON.stringify({
+                status: 'ready_for_verification',
+                taskFilePath,
+                lineNumber: 6,
+                taskDescription: '2. Second task'
+            }));
+        });
+
+        const result = await service.reconcileTaskCompletionSignals(taskFilePath, { lineNumbers: [6] });
+
+        expect(result).toEqual({ detected: 1, verified: 1 });
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledTimes(1);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 6,
+            taskDescription: '2. Second task'
+        });
+    });
+
     test('falls back to loose signal parsing when JSON is malformed', async () => {
         (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
             ['task-completion-3.json', vscode.FileType.File]
@@ -87,6 +117,28 @@ describe('TaskCompletionService', () => {
         });
     });
 
+    test('parses completion signals with a UTF-8 BOM as valid JSON', async () => {
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['task-completion-3.json', vscode.FileType.File]
+        ]);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(`\uFEFF${JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        })}`));
+
+        const result = await service.reconcileTaskCompletionSignals(taskFilePath);
+
+        expect(result).toEqual({ detected: 1, verified: 1 });
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        });
+        expect(outputChannel.appendLine).not.toHaveBeenCalledWith(expect.stringContaining('Failed to parse completion signal JSON'));
+    });
+
     test('uses filename line number and current task line when payload omits description', async () => {
         (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
             ['task-completion-2.json', vscode.FileType.File]
@@ -94,7 +146,7 @@ describe('TaskCompletionService', () => {
         (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
             status: 'ready_for_verification'
         })));
-        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue({
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
             lineCount: 2,
             lineAt: jest.fn((lineNumber: number) => ({
                 text: lineNumber === 1 ? '- [-] 1. Fallback task' : '# Tasks'
@@ -108,6 +160,36 @@ describe('TaskCompletionService', () => {
             taskFilePath,
             lineNumber: 1,
             taskDescription: '1. Fallback task'
+        });
+    });
+
+    test('prefers the registered task file and signal filename over stale payload fields', async () => {
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['task-completion-3.json', vscode.FileType.File]
+        ]);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath: 'E:\\wrong\\spec\\tasks.md',
+            lineNumber: 99,
+            taskDescription: 'stale task description'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockImplementationOnce(async (uri: vscode.Uri) => {
+            expect(uri.fsPath).toBe(taskFilePath);
+            return {
+                lineCount: 3,
+                lineAt: jest.fn((lineNumber: number) => ({
+                    text: lineNumber === 2 ? '- [-] 1. Current task description' : '# Tasks'
+                }))
+            };
+        });
+
+        const result = await service.reconcileTaskCompletionSignals(taskFilePath);
+
+        expect(result).toEqual({ detected: 1, verified: 1 });
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. Current task description'
         });
     });
 
@@ -179,7 +261,7 @@ describe('TaskCompletionService', () => {
             taskFilePath,
             lineNumber: 2,
             taskDescription: '1. First task'
-        });
+        }, terminal);
         expect(watcherDispose).toHaveBeenCalled();
     });
 
@@ -226,8 +308,262 @@ describe('TaskCompletionService', () => {
             taskFilePath,
             lineNumber: 2,
             taskDescription: '1. First task'
-        });
+        }, terminal);
         expect(watcherDispose).toHaveBeenCalled();
+    });
+
+    test('verifies a single completion signal that already exists when registered', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 3,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 2 ? '- [-] 1. First task' : '# Tasks'
+            }))
+        });
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. First task'
+            },
+            signalPath
+        );
+
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(true);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        }, terminal);
+        expect(vscode.window.withProgress).toHaveBeenCalledWith(
+            expect.objectContaining({
+                location: vscode.ProgressLocation.Notification,
+                title: expect.stringContaining('AutoCode verifying task 3')
+            }),
+            expect.any(Function)
+        );
+    });
+
+    test('shows a warning when single-task completion verification does not pass', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+
+        verifier.verifyAndMarkDone.mockResolvedValue(false);
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 3,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 2 ? '- [-] 1. First task' : '# Tasks'
+            }))
+        });
+
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. First task'
+            },
+            `${signalDir}/task-completion-3.json`
+        );
+
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(false);
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('Task completion verification did not pass'));
+    });
+
+    test('ignores an existing completion signal with a stale runId', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task',
+            runId: 'old-run'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 3,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 2 ? '- [-] 1. First task' : '# Tasks'
+            }))
+        });
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. First task'
+            },
+            signalPath,
+            'current-run'
+        );
+        let resolved = false;
+        completion?.then(() => {
+            resolved = true;
+        });
+
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(resolved).toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+    });
+
+    test('accepts a completion signal without runId when it was written during the current run', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(100000));
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+        let createHandler: ((uri: vscode.Uri) => void) | undefined;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn((handler) => {
+                createHandler = handler;
+            }),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock)
+            .mockRejectedValueOnce(new Error('not written yet'))
+            .mockResolvedValue({
+                type: vscode.FileType.File,
+                ctime: 101000,
+                mtime: 101000,
+                size: 128
+            });
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 3,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 2 ? '- [-] 1. First task' : '# Tasks'
+            }))
+        });
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. First task'
+            },
+            signalPath,
+            'current-run'
+        );
+
+        await jest.advanceTimersByTimeAsync(0);
+        createHandler?.(vscode.Uri.file(signalPath));
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(true);
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        }, terminal);
+    });
+
+    test('ignores an old completion signal without runId when current run expects a token', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(100000));
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({
+            type: vscode.FileType.File,
+            ctime: 90000,
+            mtime: 90000,
+            size: 128
+        });
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task'
+        })));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. First task'
+            },
+            signalPath,
+            'current-run'
+        );
+        let resolved = false;
+        completion?.then(() => {
+            resolved = true;
+        });
+
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(resolved).toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
     });
 
     test('does not consume single-task verification on shell end before the signal exists', async () => {
@@ -281,10 +617,10 @@ describe('TaskCompletionService', () => {
             taskFilePath,
             lineNumber: 2,
             taskDescription: '1. First task'
-        });
+        }, terminal);
     });
 
-    test('falls back after shell end when no completion signal arrives', async () => {
+    test('keeps waiting after shell end when no completion signal arrives', async () => {
         jest.useFakeTimers();
         const terminal = vscode.window.createTerminal('task');
         const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
@@ -313,21 +649,60 @@ describe('TaskCompletionService', () => {
             },
             signalPath
         );
+        let resolved = false;
+        completion?.then(() => {
+            resolved = true;
+        });
 
         await shellEndHandler?.({ terminal });
         expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(10000);
 
-        await expect(completion).resolves.toBe(true);
-        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
-            taskFilePath,
-            lineNumber: 2,
-            taskDescription: '1. Fallback task'
-        });
+        expect(resolved).toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
     });
 
-    test('waits for a completion signal after terminal close before fallback verification', async () => {
+    test('resolves false after terminal close when no completion signal arrives', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+        let closeHandler: ((terminal: vscode.Terminal) => Promise<void>) | undefined;
+
+        (vscode.window.onDidCloseTerminal as jest.Mock).mockImplementation(handler => {
+            closeHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('not written yet'));
+        (vscode.workspace.fs.readFile as jest.Mock).mockRejectedValue(new Error('not written yet'));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '1. Missing signal task'
+            },
+            signalPath
+        );
+
+        await closeHandler?.(terminal);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(10000);
+
+        await expect(completion).resolves.toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+    });
+
+    test('waits for a completion signal after terminal close before pausing', async () => {
         jest.useFakeTimers();
         const terminal = vscode.window.createTerminal('task');
         const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
@@ -379,7 +754,7 @@ describe('TaskCompletionService', () => {
             taskFilePath,
             lineNumber: 2,
             taskDescription: '1. Signal task'
-        });
+        }, terminal);
 
         await jest.advanceTimersByTimeAsync(10000);
         expect(verifier.verifyAndMarkDone).toHaveBeenCalledTimes(1);

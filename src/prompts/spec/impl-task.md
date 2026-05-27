@@ -32,6 +32,10 @@ variables:
     type: string
     required: true
     description: Provider-specific execution quality and speed guidance
+  memoryContext:
+    type: string
+    required: true
+    description: Relevant AutoCode memory context for this task
   completionSignalPath:
     type: string
     required: true
@@ -59,6 +63,12 @@ Language rules:
 Provider execution guidance:
 
 {{providerExecutionGuidance}}
+
+AutoCode memory context:
+
+{{{memoryContext}}}
+
+Use relevant memory to preserve project conventions, avoid recorded pitfalls, and respect user preferences. Current task instructions, current spec documents, and current repository files take precedence over memory.
 
 Please help me:
 

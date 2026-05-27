@@ -68,6 +68,8 @@ describe('SpecManager', () => {
         });
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.delete as jest.Mock).mockRejectedValue(new Error('missing signal'));
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ type: vscode.FileType.File });
+        (vscode.window.showWarningMessage as jest.Mock).mockResolvedValue(undefined);
     });
 
     test('uses the spec document language for task implementation prompts', async () => {
@@ -88,15 +90,21 @@ describe('SpecManager', () => {
 
         const run = await specManager.implTask('/mock/workspace/.autocode/specs/demo/tasks.md', '1. 实现中文任务', false, 0);
 
+        expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Task 1: 实现中文任务'
+        }));
         expect(capturedPrompt).toContain('Language Preference: Chinese (中文)');
         expect(capturedPrompt).toContain('Use Chinese (中文) for all conversational responses');
         expect(capturedPrompt).toContain('从当前 spec 上下文开始执行这个任务');
         expect(capturedPrompt).toContain('Completion Signal Path:');
         expect(capturedPrompt).toContain('task-completion-1.json');
         expect(capturedPrompt).toContain('"status": "ready_for_verification"');
+        expect(capturedPrompt).toContain('"runId":');
         expect(capturedPrompt).toContain('"status": "blocked"');
         expect(capturedPrompt).toContain('This file is mandatory for AutoCode automation.');
+        expect(capturedPrompt).toContain('The runId value is unique for this task run.');
         expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-1.json');
+        expect(run?.completionSignalToken).toBeTruthy();
     });
 
     test('adds Codex quality and speed guidance to task implementation prompts', async () => {
@@ -113,6 +121,70 @@ describe('SpecManager', () => {
         expect(capturedPrompt).toContain('Codex quality and speed rules:');
         expect(capturedPrompt).toContain('Run the narrowest useful verification command');
         expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
+    });
+
+    test('passes a Chinese feature-name hint while asking the model to summarize', async () => {
+        let capturedPrompt = '';
+        const runtime = createRuntime(provider, prompt => {
+            capturedPrompt = prompt;
+        });
+        (vscode.window.showInputBox as jest.Mock).mockResolvedValue('添加用户认证');
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        await specManager.create();
+
+        expect(capturedPrompt).toContain('Rough feature_name hint: 用户认证');
+        expect(capturedPrompt).toContain('summarize the user');
+        expect(capturedPrompt).toContain('Treat this hint only as a fallback');
+        expect(capturedPrompt).not.toContain('Use this exact feature_name');
+        expect(capturedPrompt).toContain('the spec name MUST be Chinese rather than pinyin or English');
+        expect(capturedPrompt).not.toContain('yong-hu-ren-zheng');
+    });
+
+    test('offers project context initialization before creating a spec when context is missing', async () => {
+        const runtime = createRuntime(provider, () => undefined);
+        const initializeProjectContext = jest.fn().mockResolvedValue(undefined);
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('missing context'));
+        (vscode.window.showWarningMessage as jest.Mock).mockResolvedValue('Initialize Project Context');
+        (vscode.window.showInputBox as jest.Mock).mockResolvedValue('Build a dashboard');
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel, undefined, undefined, initializeProjectContext);
+
+        await specManager.create();
+
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+            expect.stringContaining('Project context has not been initialized.'),
+            'Initialize Project Context',
+            'Continue Without Context',
+            'Cancel'
+        );
+        expect(initializeProjectContext).toHaveBeenCalledTimes(1);
+        expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+        expect(runtime.invokeInteractive).not.toHaveBeenCalled();
+    });
+
+    test('can create a spec without project context when the user explicitly continues', async () => {
+        let capturedPrompt = '';
+        const runtime = createRuntime(provider, prompt => {
+            capturedPrompt = prompt;
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('missing context'));
+        (vscode.window.showWarningMessage as jest.Mock).mockResolvedValue('Continue Without Context');
+        (vscode.window.showInputBox as jest.Mock).mockResolvedValue('Build a dashboard');
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        await specManager.create();
+
+        expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
+            agentType: 'spec_orchestrator'
+        }));
+        expect(capturedPrompt).toContain('Project context path: .autocode/steering');
+        expect(capturedPrompt).toContain('Before creating requirements, ground the analysis');
     });
 
     test('verifies Codex project agents before creating a spec with agents', async () => {
@@ -200,7 +272,7 @@ describe('SpecManager', () => {
         const run = await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Task 2',
+            title: 'Task 1: First task',
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
@@ -208,6 +280,7 @@ describe('SpecManager', () => {
         expect(capturedPrompt).not.toContain('3. Resume task');
         expect(capturedPrompt).not.toContain('2. Done task');
         expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json');
+        expect(run?.completionSignalToken).toBeTruthy();
         expect(run?.lineNumber).toBe(1);
         expect(run?.taskDescription).toBe('1. First task');
     });
@@ -262,6 +335,10 @@ describe('SpecManager', () => {
 
         await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
 
+        expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
+            reuseTerminal: false,
+            approvalPolicy: 'never'
+        }));
         expect(capturedPrompt).toContain('Codex quality and speed rules:');
         expect(capturedPrompt).toContain('Run the narrowest useful verification command');
         expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
@@ -359,7 +436,7 @@ describe('SpecManager', () => {
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(2);
         expect(capturedRequests.map(request => request.reuseTerminal)).toEqual([false, false]);
         expect(capturedRequests.map(request => request.approvalPolicy)).toEqual(['never', 'never']);
-        expect(capturedRequests.map(request => request.title)).toEqual(['AutoCode - Task 2', 'AutoCode - Task 4']);
+        expect(capturedRequests.map(request => request.title)).toEqual(['Task 1: Renderer task', 'Task 2: Parser task']);
         expect(capturedRequests[0].prompt).toContain('Parallel execution safety rules:');
         expect(capturedRequests[0].prompt).toContain('src/render/renderer.ts');
         expect(capturedRequests[1].prompt).toContain('src/parser/parser.ts');
@@ -408,7 +485,7 @@ describe('SpecManager', () => {
 
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(2);
         expect(capturedRequests.map(request => request.approvalPolicy)).toEqual(['never', 'never']);
-        expect(capturedRequests.map(request => request.title)).toEqual(['AutoCode - Task 2', 'AutoCode - Task 8']);
+        expect(capturedRequests.map(request => request.title)).toEqual(['Task 1: Setup core scaffolding', 'Task 3: Implement independent adapter']);
         expect(capturedRequests[0].prompt).toContain('1. Setup core scaffolding');
         expect(capturedRequests[1].prompt).toContain('3. Implement independent adapter');
         expect(capturedRequests.map(request => request.prompt).join('\n')).not.toContain('2. Implement dependent feature');
@@ -459,7 +536,7 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('cycle'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Task 2',
+            title: 'Task 1: First task',
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
@@ -484,7 +561,7 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('fell back to sequential mode'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Task 2',
+            title: 'Task 1: Renderer task',
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
@@ -509,7 +586,7 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('no explicit file scope'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Task 2',
+            title: 'Task 1: Improve validation behavior',
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
@@ -537,7 +614,7 @@ describe('SpecManager', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('non-runnable incomplete task 1'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
         expect(runtime.invokeInteractive).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'AutoCode - Task 3',
+            title: 'Task 1.1: First child',
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));

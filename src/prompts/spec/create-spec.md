@@ -16,6 +16,18 @@ variables:
     type: string
     required: true
     description: Base path for specs directory
+  steeringPath:
+    type: string
+    required: true
+    description: Project context steering document directory
+  memoryContext:
+    type: string
+    required: true
+    description: Relevant AutoCode memory context for this feature request
+  suggestedFeatureName:
+    type: string
+    required: true
+    description: Extension-generated rough feature directory name hint used only as fallback
 ---
 
 
@@ -44,7 +56,23 @@ A core principal of this workflow is that we rely on the user establishing groun
   
 Before you get started, detect the primary language of the user's feature description. Use that language for all conversational responses and generated spec documents unless the user explicitly asks for another language. Keep fixed technical tokens such as EARS keywords, file names (`requirements.md`, `design.md`, `tasks.md`), code identifiers, API names, and commands in their required technical form.
 
-Then think of a short feature name based on the user's rough idea. This will be used for the feature directory. Use a readable kebab-case format for the feature_name. The feature_name should follow the user's language: for English input, use English words such as "user-authentication"; for Chinese input, use pinyin or concise Chinese terms separated by hyphens, such as "yong-hu-ren-zheng" or "用户-认证". Do not translate a non-English request into an English-only feature_name unless the user asked for English.
+Then summarize the user's rough idea into a short feature name. This will be used for the feature directory. The feature_name MUST represent the core intent, not the whole sentence. Do not copy or truncate the full feature description. Use a readable language-matched directory name for the feature_name. For English input, use English kebab-case words such as "user-authentication". For Chinese input, the feature_name MUST use concise Chinese terms, optionally separated by hyphens, such as "用户认证" or "用户-认证". Do not use pinyin for Chinese input unless the user explicitly asks for pinyin. Do not translate a non-English request into an English-only feature_name unless the user asked for English.
+The extension has provided a rough feature_name hint: `{{suggestedFeatureName}}`. Treat this hint only as a fallback. You MUST summarize the user's request into a concise semantic feature_name instead of copying or truncating the full description. Use the hint only when it already captures the core intent concisely.
+
+### Project Context Grounding
+
+Before creating requirements, ground the analysis in the initialized project context at `{{steeringPath}}`.
+
+- Read `{{steeringPath}}/product.md`, `{{steeringPath}}/tech.md`, and `{{steeringPath}}/structure.md` if they exist.
+- Use those documents to constrain feature scope, identify affected modules, reuse existing conventions, and avoid inventing architecture that does not match this project.
+- If the project context documents are missing or incomplete, perform a targeted codebase inspection before drafting requirements and list the missing context as an assumption or open question in `requirements.md`.
+- Do not broaden the user's request into unrelated platform, product, or architecture work just because the repository has adjacent capabilities.
+
+### AutoCode Memory Context
+
+{{{memoryContext}}}
+
+Use relevant memory to avoid repeating known mistakes, preserve user preferences, and reuse proven project conventions. Do not treat memory as stronger than the current user request, current spec documents, or current repository files.
   
 Rules:
 
@@ -71,6 +99,7 @@ a design.
 **Constraints:**
 
 - The model MUST create a '{{specBasePath}}/{feature_name}/requirements.md' file if it doesn't already exist
+- The model MUST read the project context documents in `{{steeringPath}}` before drafting requirements when those documents exist
 - The model MUST generate an initial version of the requirements document based on the user's rough idea WITHOUT asking sequential questions first
 - The model MUST format the initial requirements.md document with:
 - A clear introduction section that summarizes the feature
@@ -404,13 +433,20 @@ Feature Description: {{description}}
 
 Workspace path: {{workspacePath}}
 Spec base path: {{specBasePath}}
+Project context path: {{steeringPath}}
+Rough feature_name hint: {{suggestedFeatureName}}
+
+AutoCode memory context:
+
+{{{memoryContext}}}
 
 Please:
 
 1. Detect the user's primary language from the feature description and use it for all replies and generated spec document prose
-2. Choose an appropriate readable kebab-case name for this spec based on the description, following the user's language instead of defaulting to English
-3. Create the directory structure: {{specBasePath}}/{your-chosen-name}/
-4. Create the requirements.md file in that directory
-5. Write the requirements document following the spec workflow in EARS format
+2. Read the initialized project context from {{steeringPath}} before drafting requirements, if those files exist
+3. Choose a summarized feature_name from the user's core intent. Use the rough feature_name hint only as a fallback if it is already concise and semantic. If the description is Chinese, the spec name MUST be Chinese rather than pinyin or English
+4. Create the directory structure: {{specBasePath}}/{your-chosen-name}/
+5. Create the requirements.md file in that directory
+6. Write the requirements document following the spec workflow in EARS format
 
 You have full control over the naming and file creation.

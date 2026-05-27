@@ -54,6 +54,8 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                 ));
                 return items;
             }
+
+            items.push(...this.getActionItems());
             
             // Show all specs
             const specs = await this.specManager.getSpecList();
@@ -65,7 +67,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                 specName
             ));
             
-            return specItems;
+            return [...items, ...specItems];
         } else if (element.contextValue === 'spec') {
             // Show spec documents
             const specsPath = await this.specManager.getSpecBasePath();
@@ -119,6 +121,47 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
         
         return [];
     }
+
+    private getActionItems(): SpecItem[] {
+        return [
+            new SpecItem(
+                'Initialize Project Context',
+                vscode.TreeItemCollapsibleState.None,
+                'spec-action-init-context',
+                this.context,
+                undefined,
+                undefined,
+                {
+                    command: 'autocode.steering.generateInitial',
+                    title: 'Initialize Project Context'
+                }
+            ),
+            new SpecItem(
+                'Create New Spec',
+                vscode.TreeItemCollapsibleState.None,
+                'spec-action-create',
+                this.context,
+                undefined,
+                undefined,
+                {
+                    command: 'autocode.spec.create',
+                    title: 'Create New Spec'
+                }
+            ),
+            new SpecItem(
+                'Create Spec with Agents',
+                vscode.TreeItemCollapsibleState.None,
+                'spec-action-create-agents',
+                this.context,
+                undefined,
+                undefined,
+                {
+                    command: 'autocode.spec.createWithAgents',
+                    title: 'Create Spec with Agents'
+                }
+            )
+        ];
+    }
 }
 
 class SpecItem extends vscode.TreeItem {
@@ -137,6 +180,16 @@ class SpecItem extends vscode.TreeItem {
         if (contextValue === 'spec-loading') {
             this.iconPath = new vscode.ThemeIcon('sync~spin');
             this.tooltip = 'Loading specs...';
+        } else if (contextValue.startsWith('spec-action-')) {
+            this.tooltip = command?.title ?? label;
+
+            if (contextValue === 'spec-action-init-context') {
+                this.iconPath = new vscode.ThemeIcon('repo');
+            } else if (contextValue === 'spec-action-create-agents') {
+                this.iconPath = new vscode.ThemeIcon('sparkle');
+            } else {
+                this.iconPath = new vscode.ThemeIcon('plus');
+            }
         } else if (contextValue === 'spec') {
             this.iconPath = new vscode.ThemeIcon('package');
             this.tooltip = `Spec: ${label}`;

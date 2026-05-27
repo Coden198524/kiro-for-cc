@@ -1,80 +1,88 @@
 ---
 id: init-steering
-name: Initialize Steering
+name: Initialize Project Context
 version: 1.0.0
-description: Complete prompt for initializing steering documents
+description: Scan the repository and create project context steering documents
 variables:
   steeringPath:
     type: string
     required: true
-    description: Path where steering documents should be created
+    description: Path where project context steering documents should be created
 ---
 
 <system>
-You are analyzing a codebase to create steering documents that will guide AI assistants working on this project.
+You are performing project context initialization for an AI coding workflow.
 
-## Context
+The goal is to scan this repository and create durable project context documents that future spec creation can use before requirements analysis. These are steering documents, but their primary purpose is to ground future AI work in this project's actual product, technology, and structure.
 
-Steering documents will be injected into AI conversations with this wrapper:
-"I am providing you some additional guidance that you should follow for your entire execution. These are intended to steer you in the right direction. You should follow these instructions for all following responses."
+## Required Repository Scan
+
+Before writing files, inspect the repository enough to understand:
+
+- The product domain, primary users, core workflows, and feature boundaries
+- The technology stack, build/test/package commands, runtime providers, and important dependencies
+- The directory structure, module boundaries, extension points, generated files, and risky shared files
+- Existing conventions for naming, state, persistence, task execution, prompts, tests, and UI contributions
+
+Use actual files from the repository as evidence. Do not write generic project advice.
 
 ## Writing Guidelines
 
-Write content as direct instructions to the AI agent:
+Write content as direct instructions to future AI agents:
 
 - Use imperative mood ("Use X", "Avoid Y", "Always Z")
-- Be specific to THIS codebase's patterns and conventions
-- Include concrete examples from actual files when relevant
-- Skip generic programming advice
+- Be specific to this codebase's observed patterns and conventions
+- Include concrete file paths and commands when useful
+- Capture constraints that prevent over-broad specs or unrelated architecture changes
+- Keep the documents concise enough to be read before Create Spec, but complete enough to reduce repeated repository scans
 
 ## Required Files
 
-Create exactly these three files by analyzing the codebase:
+Create exactly these three project context documents by analyzing the codebase:
 
 1. **{{steeringPath}}/product.md**
-   - Product purpose and core features
-   - User value proposition
-   - Key business logic rules
+   - Product purpose and target users
+   - Core workflows and user-visible features
+   - Product boundaries, out-of-scope areas, and important behavior rules
+   - Terms or domain concepts that future specs should preserve
 
 2. **{{steeringPath}}/tech.md**
-   - Tech stack and frameworks used
-   - Build system and dependencies
-   - Common commands (build, test, run, deploy)
-   - Project-specific conventions
+   - Tech stack, frameworks, package/build tools, and runtime integrations
+   - Common commands for install, compile, package, tests, and focused verification
+   - Project-specific coding, testing, prompt, and generated-file conventions
+   - External tool assumptions and known environment caveats
 
 3. **{{steeringPath}}/structure.md**
-   - Directory organization
-   - File naming patterns
-   - Component/module architecture
-   - Key file locations
+   - Directory organization and ownership boundaries
+   - Key files for activation, commands, providers, runtime integration, prompts, resources, tests, and assets
+   - Data/state flow for specs, tasks, steering, sessions, and settings when present
+   - Extension points and shared files that future specs should handle carefully
 
 ## Important
 
-- Check if files exist before creating (DO NOT overwrite)
-- Write directly to filesystem
-- Keep content concise but complete
-- If CLAUDE.md exists, update its "## Steering Documents" section
+- Check if files exist before creating them.
+- Do not overwrite existing project context documents. Skip existing files completely.
+- Write directly to the filesystem.
+- If all required files already exist, report that initialization is already present and summarize any missing context you noticed without modifying files.
+- If CLAUDE.md exists, update its "## Steering Documents" section so it points to these project context documents.
 </system>
 
-# Initialize Steering Documents
+# Initialize Project Context
 
-Analyze this repository and create basic steering rules that would help guide an AI assistant.
+Analyze this repository and create project context steering documents in the `{{steeringPath}}` directory.
 
-Steering documents are markdown files that should be created in the '{{steeringPath}}' directory.
+These documents will be read by future Create Spec runs before requirements are drafted. They should help the model stay grounded in this repository's real product shape, technical stack, and architecture instead of expanding a feature request into unrelated generic work.
 
-Focus on project conventions, code style, architecture patterns, and any specific rules that should be followed when working with this codebase.
+Create only missing files:
 
-For the initial setup, please create the following files:
-
-- product.md: Short summary of the product, its purpose, key features, and user value proposition
-- tech.md: Build system used, tech stack, libraries, frameworks etc. Include a section for common commands (building, testing, running, etc.)
-- structure.md: Project organization, folder structure, and key file locations
-
-The goal is to be succinct, but capture information that will be useful for an AI assistant operating in this project.
+- product.md: Product purpose, users, core workflows, boundaries, and domain rules
+- tech.md: Stack, tools, commands, dependencies, conventions, tests, and environment caveats
+- structure.md: Directory layout, module responsibilities, key files, data flow, and extension points
 
 IMPORTANT:
 
-1. Write each file directly to the filesystem at the appropriate path in {{steeringPath}}/
-2. Check if any of these files already exist before creating them. If a file already exists, DO NOT modify or overwrite it - skip it completely
-3. Only create files that don't exist
-4. If a project CLAUDE.md exists, create or update the "## Steering Documents" section listing all steering documents with their descriptions and paths
+1. Inspect the repository first; do not infer from package names alone.
+2. Write each missing file directly to the filesystem at the appropriate path in `{{steeringPath}}/`.
+3. If a file already exists, do not modify or overwrite it.
+4. Keep the content project-specific and useful for later spec requirements analysis.
+5. If a project CLAUDE.md exists, create or update the "## Steering Documents" section listing all project context documents with descriptions and paths.

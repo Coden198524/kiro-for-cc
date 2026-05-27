@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { readAutoTaskQueueRecord } from '../features/spec/taskQueueController';
 import { hasChildSpecTasks, parseSpecTaskLine } from '../features/spec/taskStatus';
 import { ConfigManager } from '../utils/configManager';
 
@@ -15,7 +16,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
         });
     }
 
-    public provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
+    public async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
         const specDir = this.configManager.getPath('specs');
         const normalizedSpecDir = specDir.replace(/\\/g, '/');
         const normalizedFileName = document.fileName.replace(/\\/g, '/');
@@ -27,6 +28,25 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
 
         const codeLenses: vscode.CodeLens[] = [];
         const lines = document.getText().split(/\r?\n/);
+        const queueRecord = await readAutoTaskQueueRecord(document.uri);
+        if (queueRecord && queueRecord.status !== 'completed') {
+            const title = queueRecord.status === 'waiting_for_signal'
+                ? 'Check Auto Queue'
+                : 'Resume Auto Queue';
+            codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                title: `${title} (${formatQueueStatus(queueRecord.status)})`,
+                tooltip: queueRecord.pauseReason || queueRecord.lastEvent || 'Resume or reconcile the persisted auto task queue',
+                command: 'autocode.spec.resumeTaskQueue',
+                arguments: [document.uri]
+            }));
+            codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                title: 'Clear Auto Queue',
+                tooltip: 'Clear the persisted auto task queue state for this spec',
+                command: 'autocode.spec.clearTaskQueue',
+                arguments: [document.uri]
+            }));
+        }
+
         const runnableTasks = lines
             .map((line, lineNumber) => ({ lineNumber, task: parseSpecTaskLine(line) }))
             .filter(item => item.task && item.task.status !== 'completed' && !hasChildSpecTasks(lines, item.lineNumber));
@@ -61,7 +81,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
             if (task.status === 'completed') {
                 codeLenses.push(new vscode.CodeLens(range, {
                     title: 'View Session',
-                    tooltip: 'Open the saved AI session for this completed task',
+                    tooltip: 'Open the AI terminal or provider history for this completed task',
                     command: 'autocode.spec.viewTaskSession',
                     arguments: [document.uri, i, task.description]
                 }));
@@ -94,7 +114,7 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
 
             codeLenses.push(new vscode.CodeLens(range, {
                 title: 'View Session',
-                tooltip: 'Open the saved AI session for this in-progress task',
+                tooltip: 'Open the AI terminal or provider history for this in-progress task',
                 command: 'autocode.spec.viewTaskSession',
                 arguments: [document.uri, i, task.description]
             }));
@@ -106,4 +126,8 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
     public resolveCodeLens(codeLens: vscode.CodeLens, token: vscode.CancellationToken) {
         return codeLens;
     }
+}
+
+function formatQueueStatus(status: string): string {
+    return status.replace(/_/g, ' ');
 }

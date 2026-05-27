@@ -22,7 +22,15 @@ export interface AutoCodeSettings {
     };
     spec: {
         autoMarkTaskDone: boolean;
+        taskCompletionVerificationMode: 'fast' | 'strict';
         autoMarkTaskDoneMinConfidence: number;
+    };
+    memory: {
+        enabled: boolean;
+        autoWrite: boolean;
+        maxPromptItems: number;
+        includeUserPreferences: boolean;
+        embeddingProvider: 'none' | 'openai' | 'custom';
     };
     paths: {
         specs: string;
@@ -36,6 +44,7 @@ export interface AutoCodeSettings {
         mcp: { visible: boolean };
         hooks: { visible: boolean };
         settings: { visible: boolean };
+        memory: { visible: boolean };
     };
 }
 
@@ -189,7 +198,15 @@ export class ConfigManager {
             },
             spec: {
                 autoMarkTaskDone: true,
+                taskCompletionVerificationMode: 'fast',
                 autoMarkTaskDoneMinConfidence: 0.8
+            },
+            memory: {
+                enabled: true,
+                autoWrite: true,
+                maxPromptItems: 8,
+                includeUserPreferences: true,
+                embeddingProvider: 'none'
             },
             paths: { ...DEFAULT_PATHS },
             views: {
@@ -198,7 +215,8 @@ export class ConfigManager {
                 steering: { visible: DEFAULT_VIEW_VISIBILITY.steering },
                 mcp: { visible: DEFAULT_VIEW_VISIBILITY.mcp },
                 hooks: { visible: DEFAULT_VIEW_VISIBILITY.hooks },
-                settings: { visible: DEFAULT_VIEW_VISIBILITY.settings }
+                settings: { visible: DEFAULT_VIEW_VISIBILITY.settings },
+                memory: { visible: DEFAULT_VIEW_VISIBILITY.memory }
             }
         };
     }
@@ -247,6 +265,10 @@ export class ConfigManager {
                 ...defaults.spec,
                 ...(settings.spec ?? {})
             },
+            memory: {
+                ...defaults.memory,
+                ...(settings.memory ?? {})
+            },
             paths: {
                 ...defaults.paths,
                 ...(settings.paths ?? {})
@@ -275,6 +297,10 @@ export class ConfigManager {
                 settings: {
                     ...defaults.views.settings,
                     ...(viewSettings.settings ?? {})
+                },
+                memory: {
+                    ...defaults.views.memory,
+                    ...(viewSettings.memory ?? {})
                 }
             }
         };

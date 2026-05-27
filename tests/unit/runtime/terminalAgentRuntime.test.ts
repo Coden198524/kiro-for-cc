@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { TerminalAgentRuntime } from '../../../src/runtime/terminalAgentRuntime';
 import { AgentProviderConfig } from '../../../src/runtime/agentRuntime';
 import { ConfigManager } from '../../../src/utils/configManager';
@@ -12,6 +13,7 @@ jest.mock('../../../src/extension', () => ({
 jest.mock('fs', () => ({
     promises: {
         writeFile: jest.fn(),
+        readFile: jest.fn(),
         unlink: jest.fn()
     }
 }));
@@ -112,6 +114,51 @@ describe('TerminalAgentRuntime', () => {
         });
 
         expect(command).toBe(`${expectedPromptRead('/tmp/autocode-storage/prompt-12345.md')} | codex --dangerously-bypass-approvals-and-sandbox exec --model gpt-5.5 -`);
+    });
+
+    test('runs visible headless requests in a terminal and captures output for parsing', async () => {
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        configValues['providers.codex.args'] = ['--model', 'gpt-5.5'];
+        const terminal = {
+            name: 'Verification Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+        (fs.promises.readFile as jest.Mock)
+            .mockResolvedValueOnce('0')
+            .mockResolvedValueOnce('{"completed":true,"confidence":0.92}');
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            args: ['--model', 'gpt-5.5'],
+            capabilities: cliCapabilities()
+        });
+
+        const result = await runtime.invokeHeadless({
+            prompt: 'verify task',
+            title: 'AutoCode - Verify Task Completion',
+            approvalPolicy: 'never',
+            visibleTerminal: true
+        });
+
+        expect(vscode.window.createTerminal).toHaveBeenCalledWith(expect.objectContaining({
+            name: 'AutoCode - Verify Task Completion'
+        }));
+        expect(terminal.show).toHaveBeenCalled();
+        expect(terminal.sendText).toHaveBeenCalledTimes(1);
+        const sentCommand = (terminal.sendText as jest.Mock).mock.calls[0][0] as string;
+        expect(sentCommand).toContain(process.platform === 'win32' ? 'Get-Content -Raw -LiteralPath' : 'cat ');
+        expect(sentCommand).toContain('visible-background-prompt-');
+        expect(sentCommand).toContain('codex --ask-for-approval never --sandbox danger-full-access exec --model gpt-5.5 -');
+        expect(sentCommand).toContain(process.platform === 'win32' ? 'Tee-Object' : 'tee');
+        expect(result).toEqual({
+            exitCode: 0,
+            output: '{"completed":true,"confidence":0.92}'
+        });
     });
 
     test('builds custom provider command template', () => {
@@ -288,6 +335,41 @@ describe('TerminalAgentRuntime', () => {
 
         await jest.advanceTimersByTimeAsync(800);
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex --ask-for-approval never --sandbox danger-full-access', true);
+    });
+
+    test('sends interactive requests to a provided target terminal without opening a new terminal', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        const taskTerminal = {
+            name: 'Task Terminal',
+            sendText: jest.fn(),
+            show: jest.fn()
+        };
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+
+        const returnedTerminal = await runtime.invokeInteractive({
+            prompt: 'Verify in this terminal',
+            title: 'AutoCode - Verify Task Completion',
+            approvalPolicy: 'never',
+            targetTerminal: taskTerminal as any
+        });
+
+        expect(returnedTerminal).toBe(taskTerminal);
+        expect(vscode.window.createTerminal).not.toHaveBeenCalled();
+        expect(taskTerminal.show).toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(800);
+        expect(taskTerminal.sendText).toHaveBeenNthCalledWith(1, '\x1b[200~Verify in this terminal\x1b[201~', false);
+
+        await jest.advanceTimersByTimeAsync(1200);
+        expect(taskTerminal.sendText).toHaveBeenNthCalledWith(2, '', true);
     });
 
     test('does not reuse a normal Codex terminal for approval-disabled automation', async () => {

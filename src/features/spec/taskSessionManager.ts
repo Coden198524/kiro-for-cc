@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { AgentProviderConfig } from '../../runtime/agentRuntime';
+import { getProviderConfig, isAgentProviderId } from '../../runtime/providerRegistry';
+import { quoteCommand, quoteShellArg } from '../../runtime/agentCommandBuilder';
+import { ProviderSessionHistory, ProviderSessionHistoryMatch } from './providerSessionHistory';
+import { MemoryManager } from '../memory/memoryManager';
 
 export type TaskSessionStatus = 'inProgress' | 'completed';
 export type TaskInvocationMode = 'start' | 'resume';
@@ -13,6 +17,8 @@ export interface TaskInvocationRecord {
     providerName: string;
     model?: string;
     terminalName?: string;
+    providerSessionId?: string;
+    providerSessionPath?: string;
     promptSnapshotPath: string;
 }
 
@@ -47,7 +53,15 @@ export interface RecordTaskInvocationRequest {
 export class TaskSessionManager {
     private activeTerminals = new Map<string, vscode.Terminal>();
 
-    constructor(private outputChannel: vscode.OutputChannel) { }
+    constructor(
+        private outputChannel: vscode.OutputChannel,
+        private providerSessionHistory = new ProviderSessionHistory({ outputChannel }),
+        private memoryManager?: MemoryManager
+    ) {
+        vscode.window.onDidCloseTerminal(terminal => {
+            this.forgetTerminal(terminal);
+        });
+    }
 
     async recordInvocation(request: RecordTaskInvocationRequest): Promise<TaskSessionRecord> {
         const now = new Date().toISOString();
@@ -85,6 +99,16 @@ export class TaskSessionManager {
         }
 
         await this.writeStore(request.taskFilePath, store);
+        await this.memoryManager?.recordSessionInvocation({
+            taskFilePath: request.taskFilePath,
+            taskDescription: request.taskDescription,
+            lineNumber: request.lineNumber,
+            sessionId: session.id,
+            invocationId,
+            providerName: request.provider.displayName,
+            providerSessionId: invocation.providerSessionId,
+            promptSnapshotPath
+        });
         return session;
     }
 
@@ -112,6 +136,15 @@ export class TaskSessionManager {
             return;
         }
 
+        const latestInvocation = session.invocations[session.invocations.length - 1];
+        if (latestInvocation && this.openActiveTerminal(latestInvocation)) {
+            return;
+        }
+
+        if (latestInvocation && await this.openProviderHistoryTerminal(store, session, latestInvocation)) {
+            return;
+        }
+
         const content = await this.renderSessionDocument(session);
         const document = await vscode.workspace.openTextDocument({
             content,
@@ -135,6 +168,127 @@ export class TaskSessionManager {
             updatedAt: now,
             invocations: []
         };
+    }
+
+    private openActiveTerminal(invocation: TaskInvocationRecord): boolean {
+        const terminal = this.activeTerminals.get(invocation.id);
+        if (!terminal) {
+            return false;
+        }
+
+        if (terminal.exitStatus !== undefined) {
+            this.activeTerminals.delete(invocation.id);
+            return false;
+        }
+
+        terminal.show();
+        return true;
+    }
+
+    private forgetTerminal(terminal: vscode.Terminal): void {
+        for (const [invocationId, activeTerminal] of this.activeTerminals) {
+            if (activeTerminal === terminal) {
+                this.activeTerminals.delete(invocationId);
+            }
+        }
+    }
+
+    private async openProviderHistoryTerminal(
+        store: TaskSessionStore,
+        session: TaskSessionRecord,
+        invocation: TaskInvocationRecord
+    ): Promise<boolean> {
+        const existingProviderSessionId = invocation.providerSessionId;
+        const command = await this.buildProviderHistoryCommand(session, invocation);
+        if (!command) {
+            return false;
+        }
+
+        if (invocation.providerSessionId && invocation.providerSessionId !== existingProviderSessionId) {
+            await this.writeStore(session.taskFilePath, store);
+        }
+
+        const terminal = vscode.window.createTerminal({
+            name: `${invocation.providerName} Session - ${this.formatTaskTitle(session.taskDescription)}`,
+            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            location: { viewColumn: vscode.ViewColumn.Two }
+        });
+        terminal.show();
+        terminal.sendText(command, true);
+        return true;
+    }
+
+    private async buildProviderHistoryCommand(
+        session: TaskSessionRecord,
+        invocation: TaskInvocationRecord
+    ): Promise<string | undefined> {
+        if (!isAgentProviderId(invocation.providerId)) {
+            return undefined;
+        }
+
+        const provider = getProviderConfig(invocation.providerId);
+        const command = quoteCommand(provider.command, provider.displayName);
+        const providerSessionId = await this.resolveProviderSessionId(session, invocation);
+
+        if (provider.id === 'codex') {
+            const args = (provider.args ?? []).map(arg => quoteShellArg(arg)).join(' ');
+            const resumeTarget = providerSessionId
+                ? `resume ${quoteShellArg(providerSessionId)}`
+                : 'resume --last';
+            return [command, args, resumeTarget].filter(Boolean).join(' ');
+        }
+
+        if (provider.id === 'claude') {
+            const resumeTarget = providerSessionId
+                ? `--resume ${quoteShellArg(providerSessionId)}`
+                : '--continue';
+            return `${command} --permission-mode bypassPermissions ${resumeTarget}`;
+        }
+
+        return undefined;
+    }
+
+    private async resolveProviderSessionId(
+        session: TaskSessionRecord,
+        invocation: TaskInvocationRecord
+    ): Promise<string | undefined> {
+        if (invocation.providerSessionId) {
+            return invocation.providerSessionId;
+        }
+
+        if (!isAgentProviderId(invocation.providerId)) {
+            return undefined;
+        }
+
+        const match = await this.providerSessionHistory.findSession({
+            providerId: invocation.providerId,
+            taskFilePath: session.taskFilePath,
+            taskDescription: session.taskDescription,
+            promptSnapshotPath: invocation.promptSnapshotPath
+        });
+
+        if (!match) {
+            this.outputChannel.appendLine(`[TaskSession] No ${invocation.providerName} history match found for task: ${session.taskDescription}`);
+            return undefined;
+        }
+
+        this.recordProviderSessionMatch(invocation, match);
+        this.outputChannel.appendLine(`[TaskSession] Matched ${invocation.providerName} history session ${match.sessionId}: ${match.filePath}`);
+        return match.sessionId;
+    }
+
+    private recordProviderSessionMatch(invocation: TaskInvocationRecord, match: ProviderSessionHistoryMatch): void {
+        invocation.providerSessionId = match.sessionId;
+        invocation.providerSessionPath = match.filePath;
+    }
+
+    private formatTaskTitle(taskDescription: string): string {
+        const title = taskDescription.trim().replace(/\s+/g, ' ');
+        if (title.length <= 80) {
+            return title || 'Task';
+        }
+
+        return `${title.slice(0, 77)}...`;
     }
 
     private async renderSessionDocument(session: TaskSessionRecord): Promise<string> {

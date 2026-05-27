@@ -6,11 +6,13 @@ describe('TaskSessionManager', () => {
     const taskFilePath = '/mock/workspace/.autocode/specs/demo/tasks.md';
     let files: Map<string, Buffer>;
     let manager: TaskSessionManager;
+    let providerSessionHistory: { findSession: jest.Mock };
 
     beforeEach(() => {
         jest.clearAllMocks();
         files = new Map();
-        manager = new TaskSessionManager({ appendLine: jest.fn() } as any);
+        providerSessionHistory = { findSession: jest.fn().mockResolvedValue(undefined) };
+        manager = new TaskSessionManager({ appendLine: jest.fn() } as any, providerSessionHistory as any);
 
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
@@ -68,13 +70,170 @@ describe('TaskSessionManager', () => {
         expect(readStore().sessions[0].status).toBe('completed');
     });
 
-    test('shows saved session document with prompt preview', async () => {
+    test('shows the active provider terminal when it is still open', async () => {
+        const terminal = {
+            name: 'Task 2. Continue me',
+            show: jest.fn()
+        };
+
         await manager.recordInvocation({
             taskFilePath,
             lineNumber: 2,
             taskDescription: '2. Continue me',
             mode: 'resume',
             provider: provider(),
+            prompt: 'Resume the task',
+            terminal: terminal as any
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        expect(terminal.show).toHaveBeenCalled();
+        expect(vscode.window.createTerminal).not.toHaveBeenCalled();
+        expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    test('opens the Codex history session when the task terminal is closed', async () => {
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider(),
+            prompt: 'Resume the task'
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        const terminal = (vscode.window.createTerminal as jest.Mock).mock.results[0].value;
+        expect(vscode.window.createTerminal).toHaveBeenCalledWith(expect.objectContaining({
+            name: 'Codex Session - 2. Continue me'
+        }));
+        expect(terminal.show).toHaveBeenCalled();
+        expect(terminal.sendText).toHaveBeenCalledWith('codex resume --last', true);
+        expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    test('opens a matched Codex provider session by id and stores the match', async () => {
+        providerSessionHistory.findSession.mockResolvedValue({
+            sessionId: '019e605d-a4f0-7080-97a3-12dbe1d3799f',
+            filePath: '/mock/home/.codex/sessions/rollout.jsonl',
+            score: 300,
+            matchedBy: ['task description', 'completion signal path'],
+            updatedAt: 1
+        });
+
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider(),
+            prompt: 'Resume the task'
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        const terminal = (vscode.window.createTerminal as jest.Mock).mock.results[0].value;
+        expect(terminal.sendText).toHaveBeenCalledWith('codex resume 019e605d-a4f0-7080-97a3-12dbe1d3799f', true);
+        expect(readStore().sessions[0].invocations[0]).toMatchObject({
+            providerSessionId: '019e605d-a4f0-7080-97a3-12dbe1d3799f',
+            providerSessionPath: '/mock/home/.codex/sessions/rollout.jsonl'
+        });
+    });
+
+    test('opens provider history when a recorded task terminal has already exited', async () => {
+        const exitedTerminal = {
+            name: 'Task 2. Continue me',
+            exitStatus: { code: 0 },
+            show: jest.fn()
+        };
+
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider(),
+            prompt: 'Resume the task',
+            terminal: exitedTerminal as any
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        const terminal = (vscode.window.createTerminal as jest.Mock).mock.results[0].value;
+        expect(exitedTerminal.show).not.toHaveBeenCalled();
+        expect(terminal.show).toHaveBeenCalled();
+        expect(terminal.sendText).toHaveBeenCalledWith('codex resume --last', true);
+    });
+
+    test('opens the Claude history session when the task terminal is closed', async () => {
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider({
+                id: 'claude',
+                displayName: 'Claude Code',
+                command: 'claude'
+            }),
+            prompt: 'Resume the task'
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        const terminal = (vscode.window.createTerminal as jest.Mock).mock.results[0].value;
+        expect(vscode.window.createTerminal).toHaveBeenCalledWith(expect.objectContaining({
+            name: 'Claude Code Session - 2. Continue me'
+        }));
+        expect(terminal.show).toHaveBeenCalled();
+        expect(terminal.sendText).toHaveBeenCalledWith('claude --permission-mode bypassPermissions --continue', true);
+        expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    test('opens a matched Claude provider session by id', async () => {
+        providerSessionHistory.findSession.mockResolvedValue({
+            sessionId: 'fb2a3577-96ba-48e7-ad43-8e4e063cbb9a',
+            filePath: '/mock/home/.claude/projects/E--AITest/fb2a3577-96ba-48e7-ad43-8e4e063cbb9a.jsonl',
+            score: 300,
+            matchedBy: ['task description', 'completion signal path'],
+            updatedAt: 1
+        });
+
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider({
+                id: 'claude',
+                displayName: 'Claude Code',
+                command: 'claude'
+            }),
+            prompt: 'Resume the task'
+        });
+
+        await manager.showSession(taskFilePath, 2, '2. Continue me');
+
+        const terminal = (vscode.window.createTerminal as jest.Mock).mock.results[0].value;
+        expect(terminal.sendText).toHaveBeenCalledWith(
+            'claude --permission-mode bypassPermissions --resume fb2a3577-96ba-48e7-ad43-8e4e063cbb9a',
+            true
+        );
+    });
+
+    test('shows saved session document with prompt preview for providers without history support', async () => {
+        await manager.recordInvocation({
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '2. Continue me',
+            mode: 'resume',
+            provider: provider({
+                id: 'custom',
+                displayName: 'Custom Agent',
+                command: 'custom-agent'
+            }),
             prompt: 'Resume the task'
         });
 
@@ -105,8 +264,8 @@ describe('TaskSessionManager', () => {
                     id: 'invocation-1',
                     mode: 'start',
                     startedAt: '2026-01-01T00:00:00.000Z',
-                    providerId: 'codex',
-                    providerName: 'Codex',
+                    providerId: 'custom',
+                    providerName: 'Custom Agent',
                     promptSnapshotPath: legacyPromptPath
                 }]
             }]
@@ -129,7 +288,7 @@ describe('TaskSessionManager', () => {
         return JSON.parse(files.get(storePath)!.toString());
     }
 
-    function provider(): AgentProviderConfig {
+    function provider(overrides: Partial<AgentProviderConfig> = {}): AgentProviderConfig {
         return {
             id: 'codex',
             displayName: 'Codex',
@@ -144,7 +303,8 @@ describe('TaskSessionManager', () => {
                 extensionMcp: true,
                 headless: true,
                 interactiveSpecWorkflow: true
-            }
+            },
+            ...overrides
         };
     }
 });

@@ -26,7 +26,7 @@ A core principal of this workflow is that we rely on the user establishing groun
   
 Before you get started, detect the primary language of the user's feature description. Use that language for all conversational responses and generated spec documents unless the user explicitly asks for another language. Keep fixed technical tokens such as EARS keywords, file names (`requirements.md`, `design.md`, `tasks.md`), code identifiers, API names, and commands in their required technical form.
 
-Then think of a short feature name based on the user's rough idea. This will be used for the feature directory. Use a readable kebab-case format for the feature_name. The feature_name should follow the user's language: for English input, use English words such as "user-authentication"; for Chinese input, use pinyin or concise Chinese terms separated by hyphens, such as "yong-hu-ren-zheng" or "用户-认证". Do not translate a non-English request into an English-only feature_name unless the user asked for English.
+Then think of a short feature name based on the user's rough idea. This will be used for the feature directory. Use a readable language-matched directory name for the feature_name. The feature_name should follow the user's language: for English input, use English words such as "user-authentication"; for Chinese input, the feature_name MUST use concise Chinese terms, optionally separated by hyphens, such as "用户认证" or "用户-认证". Do not use pinyin for Chinese input unless the user explicitly asks for pinyin. Do not translate a non-English request into an English-only feature_name unless the user asked for English.
   
 Rules:
 
@@ -37,7 +37,7 @@ Rules:
 
 When the user describes a new feature: (user_input: feature description)
 
-1. Based on {user_input}, detect the user's primary language and choose a feature_name that follows that language (readable kebab-case format, e.g. "user-authentication", "yong-hu-ren-zheng", or "用户-认证")
+1. Based on {user_input}, detect the user's primary language and choose a feature_name that follows that language (readable language-matched directory name; English example "user-authentication"; Chinese example "用户认证" or "用户-认证"; do not use pinyin unless explicitly requested)
 2. Use TodoWrite to create the complete workflow tasks:
    - [ ] Requirements Document
    - [ ] Design Document
@@ -153,7 +153,7 @@ Note:
 
 - language_preference: Language preference
 - task_type: "create"
-- feature_name: Feature name (kebab-case)
+- feature_name: Feature name (language-matched directory name)
 - feature_description: Feature description
 - spec_base_path: Spec document base path
 - output_suffix: Output file suffix (optional, such as "_v1", "_v2", "_v3", required for parallel execution)
@@ -184,7 +184,7 @@ Note:
 
 - language_preference: Language preference
 - task_type: "create"
-- feature_name: Feature name (kebab-case)
+- feature_name: Feature name (language-matched directory name)
 - spec_base_path: Spec document base path
 - output_suffix: Output file suffix (optional, such as "_v1", "_v2", "_v3", required for parallel execution)
 

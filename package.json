@@ -49,6 +49,11 @@
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.steering.visible"
         },
         {
+          "id": "autocode.views.memoryExplorer",
+          "name": "Memory",
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.memory.visible"
+        },
+        {
           "id": "autocode.views.mcpServerStatus",
           "name": "MCP Servers",
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.mcp.visible"
@@ -73,7 +78,7 @@
       },
       {
         "view": "autocode.views.specExplorer",
-        "contents": "Build complex features with structured planning\n\n[$(plus) Create New Spec](command:autocode.spec.create)\n\n[$(sparkle) Create New Spec With Agents](command:autocode.spec.createWithAgents)"
+        "contents": "Build complex features with structured planning\n\n[$(repo) Initialize Project Context](command:autocode.steering.generateInitial)\n\n[$(plus) Create New Spec](command:autocode.spec.create)\n\n[$(sparkle) Create New Spec With Agents](command:autocode.spec.createWithAgents)"
       },
       {
         "view": "autocode.views.hooksStatus",
@@ -81,7 +86,11 @@
       },
       {
         "view": "autocode.views.steeringExplorer",
-        "contents": "[$(globe) Create User Rule](command:autocode.steering.createUserRule)\n\n[$(root-folder) Create Project Rule](command:autocode.steering.createProjectRule)"
+        "contents": "[$(repo) Initialize Project Context](command:autocode.steering.generateInitial)\n\n[$(globe) Create User Rule](command:autocode.steering.createUserRule)\n\n[$(root-folder) Create Project Rule](command:autocode.steering.createProjectRule)"
+      },
+      {
+        "view": "autocode.views.memoryExplorer",
+        "contents": "Remember reusable project facts and user preferences\n\n[$(add) Add Project Memory](command:autocode.memory.createProjectMemory)\n\n[$(account) Add User Preference](command:autocode.memory.createUserPreference)"
       },
       {
         "view": "autocode.views.mcpServerStatus",
@@ -109,7 +118,7 @@
       },
       {
         "command": "autocode.steering.generateInitial",
-        "title": "Init Steering",
+        "title": "Initialize Project Context",
         "category": "AutoCode",
         "icon": "$(sparkle)"
       },
@@ -259,9 +268,57 @@
         "category": "AutoCode"
       },
       {
+        "command": "autocode.spec.resumeTaskQueue",
+        "title": "Resume Auto Task Queue",
+        "category": "AutoCode",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "autocode.spec.clearTaskQueue",
+        "title": "Clear Auto Task Queue",
+        "category": "AutoCode",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "autocode.spec.viewTaskSession",
         "title": "View Spec Task AI Session",
         "category": "AutoCode"
+      },
+      {
+        "command": "autocode.memory.createProjectMemory",
+        "title": "Add Project Memory",
+        "category": "AutoCode",
+        "icon": "$(add)"
+      },
+      {
+        "command": "autocode.memory.createUserPreference",
+        "title": "Add User Preference",
+        "category": "AutoCode",
+        "icon": "$(account)"
+      },
+      {
+        "command": "autocode.memory.openProjectMemory",
+        "title": "Open Project Memory",
+        "category": "AutoCode",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "autocode.memory.openSource",
+        "title": "Open Memory Source",
+        "category": "AutoCode",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "autocode.memory.forget",
+        "title": "Forget Memory",
+        "category": "AutoCode",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "autocode.memory.refresh",
+        "title": "Refresh Memory",
+        "category": "AutoCode",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -312,6 +369,21 @@
           "group": "navigation@3"
         },
         {
+          "command": "autocode.memory.createProjectMemory",
+          "when": "view == autocode.views.memoryExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "autocode.memory.createUserPreference",
+          "when": "view == autocode.views.memoryExplorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "autocode.memory.refresh",
+          "when": "view == autocode.views.memoryExplorer",
+          "group": "navigation@3"
+        },
+        {
           "command": "autocode.mcp.refresh",
           "when": "view == autocode.views.mcpServerStatus",
           "group": "navigation"
@@ -342,11 +414,29 @@
           "command": "autocode.steering.delete",
           "when": "view == autocode.views.steeringExplorer && viewItem == steering-document",
           "group": "7_modification"
+        },
+        {
+          "command": "autocode.memory.openSource",
+          "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
+          "group": "inline"
+        },
+        {
+          "command": "autocode.memory.forget",
+          "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
+          "group": "7_modification"
         }
       ],
       "commandPalette": [
         {
           "command": "autocode.spec.create"
+        },
+        {
+          "command": "autocode.spec.resumeTaskQueue",
+          "when": "resourceFilename == tasks.md"
+        },
+        {
+          "command": "autocode.spec.clearTaskQueue",
+          "when": "resourceFilename == tasks.md"
         },
         {
           "command": "autocode.steering.create",
@@ -522,14 +612,59 @@
         "autocode.spec.autoMarkTaskDone": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically mark a spec task done after the active agent completes and a follow-up model verification confirms completion."
+          "description": "Automatically mark a spec task done after the active agent writes a completion signal."
+        },
+        "autocode.spec.taskCompletionVerificationMode": {
+          "type": "string",
+          "default": "fast",
+          "enum": [
+            "fast",
+            "strict"
+          ],
+          "enumDescriptions": [
+            "Trust the current task run's completion signal and mark the task done immediately.",
+            "Run a visible follow-up model verification before marking the task done."
+          ],
+          "description": "Controls how AutoCode verifies task completion signals before marking tasks done."
         },
         "autocode.spec.autoMarkTaskDoneMinConfidence": {
           "type": "number",
           "default": 0.8,
           "minimum": 0,
           "maximum": 1,
-          "description": "Minimum verification confidence required before automatically marking a spec task done."
+          "description": "Minimum model verification confidence required in strict task completion verification mode."
+        },
+        "autocode.memory.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable AutoCode project, spec, task, session, and user preference memory."
+        },
+        "autocode.memory.autoWrite": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically write task completion and session memories after AutoCode workflow events."
+        },
+        "autocode.memory.maxPromptItems": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum relevant memories injected into agent prompts."
+        },
+        "autocode.memory.includeUserPreferences": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include user preference memories in prompt memory retrieval."
+        },
+        "autocode.memory.embeddingProvider": {
+          "type": "string",
+          "default": "none",
+          "enum": [
+            "none",
+            "openai",
+            "custom"
+          ],
+          "description": "Optional future embedding provider for semantic memory search. The current implementation uses local keyword search when set to none."
         },
         "autocode.autoRefreshSpecs": {
           "type": "boolean",
@@ -570,6 +705,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Model view"
+        },
+        "autocode.views.memory.visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Memory view"
         }
       }
     }
