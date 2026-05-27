@@ -127,7 +127,8 @@ export async function activate(context: vscode.ExtensionContext) {
         specExplorer,
         taskSessionManager,
         taskCompletionService,
-        outputChannel
+        outputChannel,
+        recoverTaskQueuesOnStartup: true
     });
     registerSteeringCommands({
         context,

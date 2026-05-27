@@ -101,11 +101,16 @@ describe('SpecTaskCodeLensProvider', () => {
         const commands = lenses.map(lens => (lens as any).command);
 
         expect(commands[0]).toEqual(expect.objectContaining({
-            title: 'Resume Auto Queue (paused)',
+            title: 'Resume Auto Queue (paused, 1 task)',
             command: 'autocode.spec.resumeTaskQueue',
             arguments: [document.uri]
         }));
         expect(commands[1]).toEqual(expect.objectContaining({
+            title: 'Cancel Auto Queue',
+            command: 'autocode.spec.cancelTaskQueue',
+            arguments: [document.uri]
+        }));
+        expect(commands[2]).toEqual(expect.objectContaining({
             title: 'Clear Auto Queue',
             command: 'autocode.spec.clearTaskQueue',
             arguments: [document.uri]

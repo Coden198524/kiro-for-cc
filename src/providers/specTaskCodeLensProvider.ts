@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readAutoTaskQueueRecord } from '../features/spec/taskQueueController';
+import { getAutoTaskQueueSummary, readAutoTaskQueueRecord } from '../features/spec/taskQueueController';
 import { hasChildSpecTasks, parseSpecTaskLine } from '../features/spec/taskStatus';
 import { ConfigManager } from '../utils/configManager';
 
@@ -30,13 +30,23 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
         const lines = document.getText().split(/\r?\n/);
         const queueRecord = await readAutoTaskQueueRecord(document.uri);
         if (queueRecord && queueRecord.status !== 'completed') {
+            const summary = getAutoTaskQueueSummary(queueRecord);
             const title = queueRecord.status === 'waiting_for_signal'
                 ? 'Check Auto Queue'
                 : 'Resume Auto Queue';
             codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
-                title: `${title} (${formatQueueStatus(queueRecord.status)})`,
-                tooltip: queueRecord.pauseReason || queueRecord.lastEvent || 'Resume or reconcile the persisted auto task queue',
+                title: `${title} (${summary.statusText}, ${summary.taskCount} task${summary.taskCount === 1 ? '' : 's'}${summary.stale ? ', stale' : ''})`,
+                tooltip: [
+                    queueRecord.pauseReason || queueRecord.lastEvent || 'Resume or reconcile the persisted auto task queue',
+                    summary.currentTaskDescription ? `Current: ${summary.currentTaskDescription}` : undefined
+                ].filter(Boolean).join('\n'),
                 command: 'autocode.spec.resumeTaskQueue',
+                arguments: [document.uri]
+            }));
+            codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                title: 'Cancel Auto Queue',
+                tooltip: 'Cancel the persisted auto task queue and return queued in-progress tasks to pending when possible',
+                command: 'autocode.spec.cancelTaskQueue',
                 arguments: [document.uri]
             }));
             codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
@@ -126,8 +136,4 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
     public resolveCodeLens(codeLens: vscode.CodeLens, token: vscode.CancellationToken) {
         return codeLens;
     }
-}
-
-function formatQueueStatus(status: string): string {
-    return status.replace(/_/g, ' ');
 }

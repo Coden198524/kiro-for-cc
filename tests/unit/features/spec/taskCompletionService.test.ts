@@ -95,6 +95,59 @@ describe('TaskCompletionService', () => {
         });
     });
 
+    test('reconciles a drifted signal file against the current task line', async () => {
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['task-completion-3.json', vscode.FileType.File]
+        ]);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: 'stale task description',
+            runId: 'run-1'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 5,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 4 ? '- [-] 1. Drifted task' : '# Tasks'
+            }))
+        });
+
+        const result = await service.reconcileTaskCompletionSignals(taskFilePath, {
+            lineNumbers: [4],
+            expectedRunIdsByLineNumber: { 4: 'run-1' },
+            taskLineNumbersBySignalLineNumber: { 2: 4 }
+        });
+
+        expect(result).toEqual({ detected: 1, verified: 1 });
+        expect(verifier.verifyAndMarkDone).toHaveBeenCalledWith({
+            taskFilePath,
+            lineNumber: 4,
+            taskDescription: '1. Drifted task'
+        });
+    });
+
+    test('ignores reconciled signals with a mismatched expected run id', async () => {
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
+            ['task-completion-3.json', vscode.FileType.File]
+        ]);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task',
+            runId: 'old-run'
+        })));
+
+        const result = await service.reconcileTaskCompletionSignals(taskFilePath, {
+            lineNumbers: [2],
+            expectedRunIdsByLineNumber: { 2: 'current-run' }
+        });
+
+        expect(result).toEqual({ detected: 1, verified: 0 });
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+    });
+
     test('falls back to loose signal parsing when JSON is malformed', async () => {
         (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
             ['task-completion-3.json', vscode.FileType.File]

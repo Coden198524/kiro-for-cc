@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { SpecManager } from '../features/spec/specManager';
+import { findRecoverableAutoTaskQueues } from '../features/spec/taskQueueController';
 
 export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<SpecItem | undefined | null | void> = new vscode.EventEmitter<SpecItem | undefined | null | void>();
@@ -55,7 +56,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                 return items;
             }
 
-            items.push(...this.getActionItems());
+            items.push(...await this.getActionItems());
             
             // Show all specs
             const specs = await this.specManager.getSpecList();
@@ -122,8 +123,8 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
         return [];
     }
 
-    private getActionItems(): SpecItem[] {
-        return [
+    private async getActionItems(): Promise<SpecItem[]> {
+        const items = [
             new SpecItem(
                 'Initialize Project Context',
                 vscode.TreeItemCollapsibleState.None,
@@ -161,6 +162,35 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                 }
             )
         ];
+
+        const recoverableQueueCount = await this.getRecoverableQueueCount();
+        if (recoverableQueueCount > 0) {
+            items.push(new SpecItem(
+                `Interrupted Auto Queues (${recoverableQueueCount})`,
+                vscode.TreeItemCollapsibleState.None,
+                'spec-action-task-queues',
+                this.context,
+                undefined,
+                undefined,
+                {
+                    command: 'autocode.spec.showTaskQueues',
+                    title: 'Review Auto Task Queues'
+                }
+            ));
+        }
+
+        return items;
+    }
+
+    private async getRecoverableQueueCount(): Promise<number> {
+        try {
+            const specBasePath = await this.specManager.getSpecBasePath();
+            const queues = await findRecoverableAutoTaskQueues(vscode.workspace.workspaceFolders, specBasePath);
+            return queues.length;
+        } catch (error) {
+            this.outputChannel.appendLine(`[SpecExplorer] Failed to inspect auto task queues: ${error}`);
+            return 0;
+        }
     }
 }
 
@@ -187,6 +217,9 @@ class SpecItem extends vscode.TreeItem {
                 this.iconPath = new vscode.ThemeIcon('repo');
             } else if (contextValue === 'spec-action-create-agents') {
                 this.iconPath = new vscode.ThemeIcon('sparkle');
+            } else if (contextValue === 'spec-action-task-queues') {
+                this.iconPath = new vscode.ThemeIcon('debug-continue');
+                this.description = 'recover';
             } else {
                 this.iconPath = new vscode.ThemeIcon('plus');
             }

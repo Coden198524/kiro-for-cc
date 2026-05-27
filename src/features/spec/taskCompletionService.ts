@@ -15,6 +15,7 @@ interface TaskCompletionSignalPayload {
 interface CompletionSignalValidationOptions {
     expectedRunId?: string;
     minModifiedAt?: number;
+    lineNumberOverride?: number;
 }
 
 export interface TaskCompletionReconcileResult {
@@ -24,6 +25,9 @@ export interface TaskCompletionReconcileResult {
 
 export interface TaskCompletionReconcileOptions {
     lineNumbers?: readonly number[];
+    expectedRunIdsByLineNumber?: Record<number, string | undefined>;
+    taskLineNumbersBySignalLineNumber?: Record<number, number | undefined>;
+    minModifiedAt?: number;
 }
 
 export class TaskCompletionService {
@@ -359,12 +363,21 @@ export class TaskCompletionService {
 
         const signalPaths = this.filterCompletionSignalPaths(
             await this.listCompletionSignalPaths(taskFilePath),
-            options.lineNumbers
+            options.lineNumbers,
+            options.taskLineNumbersBySignalLineNumber
         );
         let verified = 0;
 
         for (const signalPath of signalPaths) {
-            const signalResult = await this.resolveSignalResult(signalPath, taskFilePath);
+            const signalLineNumber = this.parseCompletionSignalLineNumber(signalPath);
+            const taskLineNumber = signalLineNumber === undefined
+                ? undefined
+                : options.taskLineNumbersBySignalLineNumber?.[signalLineNumber] ?? signalLineNumber;
+            const signalResult = await this.resolveSignalResult(signalPath, taskFilePath, {
+                expectedRunId: taskLineNumber === undefined ? undefined : options.expectedRunIdsByLineNumber?.[taskLineNumber],
+                minModifiedAt: options.minModifiedAt,
+                lineNumberOverride: taskLineNumber
+            });
             if (!signalResult || signalResult.status === 'blocked') {
                 continue;
             }
@@ -381,7 +394,11 @@ export class TaskCompletionService {
         };
     }
 
-    private filterCompletionSignalPaths(signalPaths: string[], lineNumbers: readonly number[] | undefined): string[] {
+    private filterCompletionSignalPaths(
+        signalPaths: string[],
+        lineNumbers: readonly number[] | undefined,
+        taskLineNumbersBySignalLineNumber: Record<number, number | undefined> | undefined
+    ): string[] {
         if (!lineNumbers || lineNumbers.length === 0) {
             return signalPaths;
         }
@@ -389,7 +406,12 @@ export class TaskCompletionService {
         const allowedLineNumbers = new Set(lineNumbers);
         return signalPaths.filter(signalPath => {
             const lineNumber = this.parseCompletionSignalLineNumber(signalPath);
-            return lineNumber !== undefined && allowedLineNumbers.has(lineNumber);
+            if (lineNumber === undefined) {
+                return false;
+            }
+
+            const taskLineNumber = taskLineNumbersBySignalLineNumber?.[lineNumber] ?? lineNumber;
+            return allowedLineNumbers.has(lineNumber) || allowedLineNumbers.has(taskLineNumber);
         });
     }
 
@@ -440,7 +462,8 @@ export class TaskCompletionService {
             return undefined;
         }
 
-        const lineNumber = this.parseCompletionSignalLineNumber(completionSignalPath) ??
+        const lineNumber = validation.lineNumberOverride ??
+            this.parseCompletionSignalLineNumber(completionSignalPath) ??
             (typeof signalPayload.lineNumber === 'number' ? signalPayload.lineNumber : undefined);
         if (lineNumber === undefined) {
             this.outputChannel.appendLine(`[Task Complete] Could not infer task line from signal path: ${completionSignalPath}`);
