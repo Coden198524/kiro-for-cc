@@ -18,7 +18,8 @@ describe('registerIterationCommands', () => {
             openRecord: jest.fn(),
             openPrompt: jest.fn(),
             openSummary: jest.fn(),
-            buildSpecDescription: jest.fn(async () => 'spec seed')
+            buildSpecDescription: jest.fn(async () => 'spec seed'),
+            continue: jest.fn(async () => ({ id: 'iteration-2' }))
         };
         iterationExplorer = {
             refresh: jest.fn()
@@ -81,5 +82,24 @@ describe('registerIterationCommands', () => {
 
         expect(iterationManager.buildSpecDescription).toHaveBeenCalledWith(record);
         expect(createSpecFromDescription).toHaveBeenCalledWith('spec seed');
+    });
+
+    test('continues a selected recent iteration and refreshes explorer', async () => {
+        const record = {
+            id: 'iteration-1',
+            title: 'Ask / Analyze: queue question',
+            mode: 'ask',
+            startedAt: '2026-05-27T00:00:00.000Z'
+        };
+        iterationManager.listRecent.mockResolvedValue([record]);
+        (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({
+            label: record.title,
+            record
+        });
+
+        await commands.get('autocode.iteration.continue')!();
+
+        expect(iterationManager.continue).toHaveBeenCalledWith(record);
+        expect(iterationExplorer.refresh).toHaveBeenCalledTimes(1);
     });
 });

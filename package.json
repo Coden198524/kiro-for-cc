@@ -34,6 +34,11 @@
     "views": {
       "autocode": [
         {
+          "id": "autocode.views.currentWork",
+          "name": "Current Work",
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.currentWork.visible"
+        },
+        {
           "id": "autocode.views.specExplorer",
           "name": "Specs",
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.specs.visible"
@@ -79,7 +84,11 @@
     "viewsWelcome": [
       {
         "view": "autocode.views.overview",
-        "contents": "Switch the active model provider and model ID\n\n[$(server-environment) Switch Provider](command:autocode.model.selectProvider)\n[$(symbol-key) Set Model](command:autocode.model.setModel)\n[$(gear) Open Settings](command:autocode.settings.open)"
+        "contents": "Switch the active model provider and model ID\n\n[$(server-environment) Switch Provider](command:autocode.model.selectProvider)\n[$(symbol-key) Set Model](command:autocode.model.setModel)\n[$(rocket) Development Speed](command:autocode.settings.selectDevelopmentSpeedPreset)\n[$(globe) UI Language](command:autocode.settings.setUiLanguage)\n[$(gear) Open Settings](command:autocode.settings.open)"
+      },
+      {
+        "view": "autocode.views.currentWork",
+        "contents": "Inspect active queues and verification state\n\n[$(rocket) Development Speed](command:autocode.settings.selectDevelopmentSpeedPreset)\n\n[$(list-tree) Review Task Queues](command:autocode.spec.showTaskQueues)"
       },
       {
         "view": "autocode.views.specExplorer",
@@ -204,6 +213,24 @@
         "icon": "$(gear)"
       },
       {
+        "command": "autocode.settings.selectDevelopmentSpeedPreset",
+        "title": "Development Speed Preset",
+        "category": "AutoCode",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "autocode.settings.setUiLanguage",
+        "title": "Set UI Language",
+        "category": "AutoCode",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "autocode.currentWork.refresh",
+        "title": "Refresh Current Work",
+        "category": "AutoCode",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "autocode.model.selectProvider",
         "title": "Switch Model Provider",
         "category": "AutoCode",
@@ -301,6 +328,12 @@
         "category": "AutoCode"
       },
       {
+        "command": "autocode.spec.runFinalVerification",
+        "title": "Run Final Verification",
+        "category": "AutoCode",
+        "icon": "$(beaker)"
+      },
+      {
         "command": "autocode.spec.showTaskQueues",
         "title": "Review Auto Task Queues",
         "category": "AutoCode",
@@ -396,6 +429,12 @@
         "icon": "$(markdown)"
       },
       {
+        "command": "autocode.iteration.continue",
+        "title": "Continue Iteration",
+        "category": "AutoCode",
+        "icon": "$(debug-continue)"
+      },
+      {
         "command": "autocode.iteration.convertToSpec",
         "title": "Convert Iteration to Spec",
         "category": "AutoCode",
@@ -404,6 +443,16 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "autocode.settings.selectDevelopmentSpeedPreset",
+          "when": "view == autocode.views.currentWork",
+          "group": "navigation@1"
+        },
+        {
+          "command": "autocode.currentWork.refresh",
+          "when": "view == autocode.views.currentWork",
+          "group": "navigation@2"
+        },
         {
           "command": "autocode.model.selectProvider",
           "when": "view == autocode.views.overview",
@@ -527,6 +576,11 @@
           "group": "inline"
         },
         {
+          "command": "autocode.iteration.continue",
+          "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
+          "group": "inline@2"
+        },
+        {
           "command": "autocode.iteration.openPrompt",
           "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
           "group": "2_open"
@@ -540,6 +594,11 @@
           "command": "autocode.iteration.convertToSpec",
           "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
           "group": "3_convert"
+        },
+        {
+          "command": "autocode.spec.runFinalVerification",
+          "when": "view == autocode.views.specExplorer && viewItem == spec-document-tasks",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -567,8 +626,28 @@
           "when": "workspaceFolderCount > 0"
         },
         {
+          "command": "autocode.iteration.continue",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.settings.selectDevelopmentSpeedPreset",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.settings.setUiLanguage",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.currentWork.refresh",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
           "command": "autocode.spec.showTaskQueues",
           "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.spec.runFinalVerification",
+          "when": "resourceFilename == tasks.md"
         },
         {
           "command": "autocode.spec.resumeTaskQueue",
@@ -817,6 +896,26 @@
           "maximum": 1,
           "description": "Minimum model verification confidence required in strict task completion verification mode."
         },
+        "autocode.spec.deferTaskVerification": {
+          "type": "boolean",
+          "default": false,
+          "description": "Defer per-task verification in Spec mode. Agents should still add or update tests, but skip running test/build/lint verification commands and leave final verification to a later unified test pass."
+        },
+        "autocode.ui.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "zh-CN"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code display language.",
+            "Use English for AutoCode UI text.",
+            "Use Simplified Chinese for AutoCode UI text."
+          ],
+          "description": "Controls AutoCode UI language for dynamic extension views and prompts."
+        },
         "autocode.memory.enabled": {
           "type": "boolean",
           "default": true,
@@ -863,6 +962,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Specs view"
+        },
+        "autocode.views.currentWork.visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Current Work view"
         },
         "autocode.views.agents.visible": {
           "type": "boolean",

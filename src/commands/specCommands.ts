@@ -13,9 +13,11 @@ import {
     TaskQueueController
 } from '../features/spec/taskQueueController';
 import { AutoTaskQueueRunner } from '../features/spec/autoTaskQueueRunner';
+import { FinalVerificationManager } from '../features/spec/finalVerificationManager';
 import { TaskQueueRecoveryInspector } from '../features/spec/taskQueueRecovery';
 import { TaskSessionManager } from '../features/spec/taskSessionManager';
 import { markTaskLinesInProgress, markTaskLinesPending, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
+import { CurrentWorkProvider } from '../providers/currentWorkProvider';
 import { SpecExplorerProvider } from '../providers/specExplorerProvider';
 
 export interface RegisterSpecCommandsOptions {
@@ -24,6 +26,7 @@ export interface RegisterSpecCommandsOptions {
     specExplorer: SpecExplorerProvider;
     taskSessionManager: TaskSessionManager;
     taskCompletionService: TaskCompletionService;
+    currentWorkProvider?: CurrentWorkProvider;
     outputChannel: vscode.OutputChannel;
     recoverTaskQueuesOnStartup?: boolean;
 }
@@ -35,6 +38,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         specExplorer,
         taskSessionManager,
         taskCompletionService,
+        currentWorkProvider,
         outputChannel,
         recoverTaskQueuesOnStartup = false
     } = options;
@@ -48,9 +52,19 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         recoveryInspector: taskQueueRecovery,
         outputChannel
     });
+    const finalVerificationManager = new FinalVerificationManager(outputChannel);
+    const refreshQueueViews = (): void => {
+        specExplorer.refresh();
+        currentWorkProvider?.refresh();
+    };
 
-    const resolveTasksDocumentUri = (documentUri?: vscode.Uri): vscode.Uri | undefined => {
-        const activeDocumentUri = documentUri ?? vscode.window.activeTextEditor?.document.uri;
+    const resolveTasksDocumentUri = (documentUri?: vscode.Uri | { resourceUri?: vscode.Uri }): vscode.Uri | undefined => {
+        const argumentUri = isUriLike(documentUri)
+            ? documentUri
+            : isUriLike(documentUri?.resourceUri)
+                ? documentUri.resourceUri
+                : undefined;
+        const activeDocumentUri = argumentUri ?? vscode.window.activeTextEditor?.document.uri;
         if (!activeDocumentUri || !activeDocumentUri.fsPath.endsWith('tasks.md')) {
             vscode.window.showWarningMessage('Open a spec tasks.md file before managing the auto task queue.');
             return undefined;
@@ -74,6 +88,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         if (record.status === 'completed') {
             await taskQueueController.clear(activeDocumentUri);
             vscode.window.showInformationMessage('Auto task queue is already completed.');
+            refreshQueueViews();
             return;
         }
 
@@ -84,6 +99,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 record.commandId,
                 `${inspection.unresolvedTasks.length} queued task(s) could not be found in tasks.md.`
             );
+            refreshQueueViews();
             vscode.window.showWarningMessage('Auto task queue paused because one or more queued tasks could not be found after tasks.md changed. Open tasks.md and resolve the queue manually.');
             return;
         }
@@ -95,6 +111,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         if (inspection.resolvedTasks.length > 0 && inspection.pendingLineNumbers.length === 0) {
             await taskQueueController.clear(activeDocumentUri);
             outputChannel.appendLine('[Task Execute] Queued task(s) are already completed; continuing with the next task.');
+            refreshQueueViews();
             await vscode.commands.executeCommand(record.commandId, activeDocumentUri);
             return;
         }
@@ -105,6 +122,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 record.commandId,
                 'Queue waited too long for completion signal.'
             );
+            refreshQueueViews();
             vscode.window.showWarningMessage('Auto task queue paused because it waited too long for a completion signal. Review the task terminal, then resume or cancel the queue.');
             return;
         }
@@ -133,10 +151,11 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 })
             );
             if (result.verified >= queuedLineNumbers.length) {
-                await taskQueueController.clear(activeDocumentUri);
-                outputChannel.appendLine(`[Task Execute] Resuming auto task queue after reconciling ${result.verified}/${result.detected} completion signal(s).`);
-                await vscode.commands.executeCommand(record.commandId, activeDocumentUri);
-                return;
+            await taskQueueController.clear(activeDocumentUri);
+            outputChannel.appendLine(`[Task Execute] Resuming auto task queue after reconciling ${result.verified}/${result.detected} completion signal(s).`);
+            refreshQueueViews();
+            await vscode.commands.executeCommand(record.commandId, activeDocumentUri);
+            return;
             }
 
             if (record.status === 'waiting_for_signal') {
@@ -148,6 +167,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         if (record.status === 'paused') {
             await taskQueueController.clear(activeDocumentUri);
             outputChannel.appendLine(`[Task Execute] Resuming paused auto task queue: ${record.pauseReason ?? record.lastEvent ?? 'no pause reason recorded'}`);
+            refreshQueueViews();
             await vscode.commands.executeCommand(record.commandId, activeDocumentUri);
             return;
         }
@@ -162,6 +182,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         }
 
         await taskQueueController.clear(activeDocumentUri);
+        refreshQueueViews();
         vscode.window.showInformationMessage('Auto task queue state cleared for this spec.');
     };
 
@@ -197,6 +218,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             : taskQueueRecovery.getQueuedLineNumbers(record);
         await markTaskLinesPending(activeDocumentUri, queuedLineNumbers);
         await taskQueueController.clear(activeDocumentUri);
+        refreshQueueViews();
         vscode.window.showInformationMessage('Auto task queue cancelled. Queued in-progress tasks were returned to pending when possible.');
     };
 
@@ -206,6 +228,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
     ): Promise<boolean> => {
         try {
             await taskQueueController.start(documentUri, commandId);
+            refreshQueueViews();
             return true;
         } catch (error) {
             if (!(error instanceof AutoTaskQueueStartBlockedError)) {
@@ -236,6 +259,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             if (action === 'Start New') {
                 await cancelAutoTaskQueue(documentUri);
                 await taskQueueController.start(documentUri, commandId, { force: true });
+                refreshQueueViews();
                 return true;
             }
 
@@ -257,6 +281,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
             if (action === 'Clear') {
                 await taskQueueController.clear(documentUri);
+                refreshQueueViews();
                 vscode.window.showInformationMessage('Auto task queue state cleared for this spec.');
             }
 
@@ -313,6 +338,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
         if (action === 'Clear') {
             await taskQueueController.clear(selectedQueue.documentUri);
+            refreshQueueViews();
             vscode.window.showInformationMessage(`Auto task queue cleared for ${selectedQueue.specName}.`);
         }
     };
@@ -468,6 +494,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 if (run?.failedLineNumbers?.length) {
                     await markTaskLinesPending(documentUri, run.failedLineNumbers);
                     await taskQueueController.pause(documentUri, commandId, `${run.failedLineNumbers.length} task(s) failed to start.`, run.failedLineNumbers);
+                    refreshQueueViews();
                 }
 
                 if (run && await taskQueueRunner.registerBatchTaskContinuation(documentUri, run, commandId)) {
@@ -478,6 +505,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 await taskQueueController.pause(documentUri, commandId, `Failed to start auto task queue: ${error}`, changedLineNumbers);
+                refreshQueueViews();
                 outputChannel.appendLine(`[Task Execute] Failed to start auto task queue: ${error}`);
                 vscode.window.showErrorMessage(`Failed to start auto task queue: ${error}`);
             }
@@ -506,6 +534,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                     vscode.window.showWarningMessage(`${failedStartLineNumbers.length} parallel task(s) failed to start and were returned to pending.`);
                     if (!run?.parallelRuns?.length) {
                         await taskQueueController.pause(documentUri, commandId, `${failedStartLineNumbers.length} parallel task(s) failed to start.`, failedStartLineNumbers);
+                        refreshQueueViews();
                         return;
                     }
                 }
@@ -518,6 +547,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                         completionSignalToken: parallelRun.completionSignalToken
                     }));
                     const queueRecord = await taskQueueController.waitForBatch(documentUri, commandId, batchTasks);
+                    refreshQueueViews();
                     const completionResults = run.parallelRuns
                         .map(parallelRun => ({
                             lineNumber: parallelRun.lineNumber,
@@ -547,6 +577,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                         }
                         await markTaskLinesPending(documentUri, unmonitoredLineNumbers);
                         await taskQueueController.pause(documentUri, commandId, 'Automatic parallel task verification is disabled for one or more launched tasks.', unmonitoredLineNumbers);
+                        refreshQueueViews();
                         vscode.window.showWarningMessage('Auto task queue paused because automatic parallel task verification is disabled for one or more launched tasks.');
                         return;
                     }
@@ -563,6 +594,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                             await markTaskLinesPending(documentUri, failedLineNumbers);
                             vscode.window.showWarningMessage(`${failedLineNumbers.length} parallel task(s) were not verified as complete and were returned to pending.`);
                             await taskQueueController.pause(documentUri, commandId, `${failedLineNumbers.length} parallel task(s) were not verified as complete.`, failedLineNumbers);
+                            refreshQueueViews();
                             return;
                         }
 
@@ -574,11 +606,13 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                                     `${failedStartLineNumbers.length} parallel task(s) failed to start; launched task(s) were verified.`,
                                     failedStartLineNumbers
                                 );
+                                refreshQueueViews();
                                 vscode.window.showWarningMessage('Auto task queue paused after launched parallel tasks completed because one or more tasks failed to start.');
                                 return;
                             }
 
                             await taskQueueController.clear(documentUri);
+                            refreshQueueViews();
                             await vscode.commands.executeCommand(commandId, documentUri);
                         }
                     }).catch(error => {
@@ -598,6 +632,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 await taskQueueController.pause(documentUri, commandId, `Failed to start parallel tasks: ${error}`, changedLineNumbers);
+                refreshQueueViews();
                 outputChannel.appendLine(`[Task Execute] Failed to start parallel tasks: ${error}`);
                 vscode.window.showErrorMessage(`Failed to start parallel tasks: ${error}`);
             }
@@ -611,6 +646,14 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
             const result = await taskCompletionService.reconcileTaskCompletionSignals(activeDocumentUri.fsPath);
             vscode.window.showInformationMessage(`Task completion reconciliation finished: ${result.verified}/${result.detected} verified.`);
+        }),
+        vscode.commands.registerCommand('autocode.spec.runFinalVerification', async (documentUri?: vscode.Uri) => {
+            const activeDocumentUri = resolveTasksDocumentUri(documentUri);
+            if (!activeDocumentUri) {
+                return;
+            }
+
+            await finalVerificationManager.run(activeDocumentUri);
         }),
         vscode.commands.registerCommand('autocode.spec.showTaskQueues', showTaskQueues),
         vscode.commands.registerCommand('autocode.spec.resumeTaskQueue', resumeAutoTaskQueue),
@@ -631,6 +674,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             for (const parent of result.parentTasks) {
                 await taskSessionManager.markCompleted(documentUri.fsPath, parent.lineNumber, parent.description);
             }
+            refreshQueueViews();
             vscode.window.showInformationMessage(`Task marked done: ${task.description}`);
             if (!await taskQueueRunner.continueAutoTaskQueue(documentUri, lineNumber, 'manual Mark Done')) {
                 await taskQueueRunner.continueBatchAutoTaskQueueIfReady(documentUri, lineNumber, 'manual Mark Done');
@@ -666,6 +710,10 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
 function formatQueueStatus(status: string): string {
     return status.replace(/_/g, ' ');
+}
+
+function isUriLike(value: unknown): value is vscode.Uri {
+    return Boolean(value && typeof (value as vscode.Uri).fsPath === 'string');
 }
 
 function formatAutoTaskQueueDiagnostics(diagnostics: AutoTaskQueueDiagnostics): string {

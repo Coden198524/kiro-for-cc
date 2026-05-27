@@ -70,6 +70,11 @@ describe('SpecManager', () => {
         (vscode.workspace.fs.delete as jest.Mock).mockRejectedValue(new Error('missing signal'));
         (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue({ type: vscode.FileType.File });
         (vscode.window.showWarningMessage as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
+            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+            inspect: jest.fn(() => undefined),
+            update: jest.fn()
+        });
     });
 
     test('uses the spec document language for task implementation prompts', async () => {
@@ -343,6 +348,37 @@ describe('SpecManager', () => {
         expect(capturedPrompt).toContain('Run the narrowest useful verification command');
         expect(capturedPrompt).toContain('Write the completion signal only after implementation and verification are complete.');
         expect(capturedPrompt).not.toContain('Reuse context across the listed tasks');
+    });
+
+    test('defers per-task verification while still requiring test-case updates when configured', async () => {
+        let capturedPrompt = '';
+        (vscode.workspace.getConfiguration as jest.Mock).mockReturnValue({
+            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+            inspect: jest.fn((section: string) => section === 'spec.deferTaskVerification'
+                ? { workspaceValue: true }
+                : undefined),
+            update: jest.fn()
+        });
+        const runtime = createRuntime(codexProvider, prompt => {
+            capturedPrompt = prompt;
+        });
+        const document = createTaskDocument([
+            '# Implementation Plan',
+            '- [ ] 1. First task'
+        ]);
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(document);
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        await specManager.implAllTasks('/mock/workspace/.autocode/specs/demo/tasks.md');
+
+        expect(capturedPrompt).toContain('Add or update focused automated tests');
+        expect(capturedPrompt).toContain('Do not run test, build, lint, typecheck, or other verification commands for this task');
+        expect(capturedPrompt).toContain('Per-task verification command execution is intentionally deferred by AutoCode settings.');
+        expect(capturedPrompt).toContain('Final verification should happen later in a unified test pass.');
+        expect(capturedPrompt).not.toContain('Run the narrowest useful verification command');
+        expect(capturedPrompt).not.toContain('Write the completion signal only after implementation and verification are complete.');
     });
 
     test('orders sequential all-task execution by dependency metadata when file order is not topological', async () => {

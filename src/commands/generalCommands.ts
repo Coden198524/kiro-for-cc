@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SettingsManager } from '../features/settings/settingsManager';
+import { CurrentWorkProvider } from '../providers/currentWorkProvider';
 import { HooksExplorerProvider } from '../providers/hooksExplorerProvider';
 import { MCPExplorerProvider } from '../providers/mcpExplorerProvider';
 import { OverviewProvider } from '../providers/overviewProvider';
@@ -10,6 +11,7 @@ export interface RegisterGeneralCommandsOptions {
     hooksExplorer: HooksExplorerProvider;
     mcpExplorer: MCPExplorerProvider;
     overviewProvider: OverviewProvider;
+    currentWorkProvider?: CurrentWorkProvider;
     updateChecker: UpdateChecker;
     settingsManager: SettingsManager;
     outputChannel: vscode.OutputChannel;
@@ -21,6 +23,7 @@ export function registerGeneralCommands(options: RegisterGeneralCommandsOptions)
         hooksExplorer,
         mcpExplorer,
         overviewProvider,
+        currentWorkProvider,
         updateChecker,
         settingsManager,
         outputChannel
@@ -55,6 +58,20 @@ export function registerGeneralCommands(options: RegisterGeneralCommandsOptions)
             if (await settingsManager.clearAgentModel()) {
                 overviewProvider.refresh();
             }
+        }),
+        vscode.commands.registerCommand('autocode.settings.selectDevelopmentSpeedPreset', async () => {
+            if (await settingsManager.selectDevelopmentSpeedPreset()) {
+                currentWorkProvider?.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.settings.setUiLanguage', async () => {
+            if (await settingsManager.selectUiLanguage()) {
+                overviewProvider.refresh();
+                currentWorkProvider?.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.currentWork.refresh', () => {
+            currentWorkProvider?.refresh();
         }),
         vscode.commands.registerCommand('autocode.checkForUpdates', async () => {
             outputChannel.appendLine('Manual update check requested');

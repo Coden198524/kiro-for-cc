@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { IterationManager, IterationMode, IterationRecord } from '../features/iteration/iterationManager';
 import { IterationExplorerProvider } from '../providers/iterationExplorerProvider';
+import { localize } from '../utils/localization';
 
 export interface RegisterIterationCommandsOptions {
     context: vscode.ExtensionContext;
@@ -58,9 +59,23 @@ export function registerIterationCommands(options: RegisterIterationCommandsOpti
         vscode.commands.registerCommand('autocode.iteration.openSummary', async (record?: IterationRecord) => {
             await openRecordFile(record, item => iterationManager.openSummary(item));
         }),
+        vscode.commands.registerCommand('autocode.iteration.continue', async (record?: IterationRecord) => {
+            const selected = record ?? await selectRecentIteration(iterationManager);
+            if (!selected) {
+                return;
+            }
+
+            const continuedRecord = await iterationManager.continue(selected);
+            if (continuedRecord) {
+                iterationExplorer.refresh();
+            }
+        }),
         vscode.commands.registerCommand('autocode.iteration.convertToSpec', async (record?: IterationRecord) => {
             if (!createSpecFromDescription) {
-                vscode.window.showWarningMessage('Convert Iteration to Spec is unavailable in this AutoCode session.');
+                vscode.window.showWarningMessage(localize(
+                    'Convert Iteration to Spec is unavailable in this AutoCode session.',
+                    '当前 AutoCode 会话无法把迭代转换为 Spec。'
+                ));
                 return;
             }
 
@@ -78,7 +93,10 @@ export function registerIterationCommands(options: RegisterIterationCommandsOpti
 async function selectRecentIteration(iterationManager: IterationManager): Promise<IterationRecord | undefined> {
     const records = await iterationManager.listRecent(20);
     if (records.length === 0) {
-        vscode.window.showInformationMessage('No recent iteration sessions were found.');
+        vscode.window.showInformationMessage(localize(
+            'No recent iteration sessions were found.',
+            '没有找到最近的迭代会话。'
+        ));
         return undefined;
     }
 
@@ -88,7 +106,7 @@ async function selectRecentIteration(iterationManager: IterationManager): Promis
         detail: record.startedAt,
         record
     })), {
-        placeHolder: 'Select an iteration session'
+        placeHolder: localize('Select an iteration session', '选择迭代会话')
     });
 
     return selected?.record;

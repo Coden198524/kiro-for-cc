@@ -8,6 +8,7 @@ import { ConfigManager } from '../../utils/configManager';
 import { NotificationUtils } from '../../utils/notificationUtils';
 import { SpecDescriptionInput } from '../spec/specDescriptionInput';
 import { MemoryManager } from '../memory/memoryManager';
+import { localize } from '../../utils/localization';
 
 const execFileAsync = promisify(execFile);
 
@@ -187,20 +188,52 @@ export class IterationManager {
 
     async buildSpecDescription(record: IterationRecord): Promise<string> {
         const summary = await this.readOptionalText(record.summaryPath);
+        const prompt = await this.readOptionalText(record.promptPath);
         return [
             'Create a full AutoCode Spec from this lightweight iteration.',
             '',
             `Iteration mode: ${this.getModeLabel(record.mode)}`,
             `Started: ${record.startedAt}`,
+            `Iteration record: ${record.recordPath}`,
+            `Prompt file: ${record.promptPath}`,
+            `Summary file: ${record.summaryPath}`,
             record.activeFilePath ? `Active file: ${record.activeFilePath}` : undefined,
             '',
             'Original iteration request:',
             '',
             record.description,
             summary ? ['', 'Iteration summary:', '', summary] : undefined,
+            !summary && prompt ? ['', 'Iteration prompt excerpt:', '', this.truncate(prompt, 6000)] : undefined,
             '',
-            'Use the iteration request and summary as source context, then produce requirements, design, and tasks through the normal Spec workflow.'
+            'Use the iteration request, saved prompt, and summary as source context. Re-check the current repository state before finalizing requirements, design, and tasks through the normal Spec workflow.'
         ].flat().filter((line): line is string => line !== undefined).join('\n');
+    }
+
+    async buildContinuationDescription(record: IterationRecord): Promise<string> {
+        const summary = await this.readOptionalText(record.summaryPath);
+        return [
+            'Continue this previous AutoCode iteration.',
+            '',
+            `Previous mode: ${this.getModeLabel(record.mode)}`,
+            `Started: ${record.startedAt}`,
+            `Iteration record: ${record.recordPath}`,
+            `Prompt file: ${record.promptPath}`,
+            record.activeFilePath ? `Previous active file: ${record.activeFilePath}` : undefined,
+            '',
+            'Original request:',
+            '',
+            record.description,
+            summary ? ['', 'Previous summary:', '', summary] : undefined,
+            '',
+            'Before continuing, inspect the current worktree and relevant files. Avoid repeating completed work, preserve unrelated user changes, and continue from the current repository state.'
+        ].flat().filter((line): line is string => line !== undefined).join('\n');
+    }
+
+    async continue(record: IterationRecord): Promise<IterationRecord | undefined> {
+        return this.start({
+            mode: record.mode,
+            description: await this.buildContinuationDescription(record)
+        });
     }
 
     private async openFile(filePath: string): Promise<void> {
@@ -220,22 +253,31 @@ export class IterationManager {
     private async pickMode(): Promise<IterationMode | undefined> {
         const selected = await vscode.window.showQuickPick([
             {
-                label: 'Ask / Analyze',
-                description: 'Read code, diagnostics, logs, or failures without changing files by default',
+                label: this.getModeLabel('ask'),
+                description: localize(
+                    'Read code, diagnostics, logs, or failures without changing files by default',
+                    '默认只阅读代码、诊断、日志或失败信息，不修改文件'
+                ),
                 mode: 'ask' as const
             },
             {
-                label: 'Edit / Fix',
-                description: 'Make a focused code change and run narrow verification',
+                label: this.getModeLabel('edit'),
+                description: localize(
+                    'Make a focused code change and run narrow verification',
+                    '进行聚焦代码修改，并运行最小必要验证'
+                ),
                 mode: 'edit' as const
             },
             {
-                label: 'Generate Document',
-                description: 'Draft or update documentation from project context',
+                label: this.getModeLabel('document'),
+                description: localize(
+                    'Draft or update documentation from project context',
+                    '基于项目上下文生成或更新文档'
+                ),
                 mode: 'document' as const
             },
         ], {
-            placeHolder: 'Choose an iteration mode'
+            placeHolder: localize('Choose an iteration mode', '选择迭代模式')
         });
 
         return selected?.mode;
@@ -243,9 +285,15 @@ export class IterationManager {
 
     private async promptForDescription(mode: IterationMode): Promise<string | undefined> {
         return SpecDescriptionInput.prompt({
-            title: `Start Iteration: ${this.getModeLabel(mode)}`,
-            prompt: 'Describe what you want to ask, analyze, change, or document. Multi-line notes, logs, examples, and constraints are supported.',
-            placeholder: 'Paste the issue, question, desired change, error output, or document request...'
+            title: localize(`Start Iteration: ${this.getModeLabel(mode)}`, `启动迭代：${this.getModeLabel(mode)}`),
+            prompt: localize(
+                'Describe what you want to ask, analyze, change, or document. Multi-line notes, logs, examples, and constraints are supported.',
+                '描述你想询问、分析、修改或生成文档的内容。支持多行说明、日志、示例和约束。'
+            ),
+            placeholder: localize(
+                'Paste the issue, question, desired change, error output, or document request...',
+                '粘贴问题、期望修改、错误输出或文档需求...'
+            )
         });
     }
 
@@ -387,11 +435,11 @@ export class IterationManager {
     private getModeLabel(mode: IterationMode): string {
         switch (mode) {
             case 'ask':
-                return 'Ask / Analyze';
+                return localize('Ask / Analyze', '询问 / 分析');
             case 'edit':
-                return 'Edit / Fix';
+                return localize('Edit / Fix', '编辑 / 修复');
             case 'document':
-                return 'Generate Document';
+                return localize('Generate Document', '生成文档');
         }
     }
 

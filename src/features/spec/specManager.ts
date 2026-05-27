@@ -10,6 +10,7 @@ import { analyzeTaskPlanQuality, formatTaskPlanQualityIssue } from './taskPlanQu
 import { AgentManager, CodexAgentsReadyResult } from '../agents/agentManager';
 import { SpecDescriptionInput } from './specDescriptionInput';
 import { MemoryManager } from '../memory/memoryManager';
+import { getRuntimeValue } from '../../runtime/runtimeSettings';
 
 export type SpecDocumentType = 'requirements' | 'design' | 'tasks';
 
@@ -1140,6 +1141,29 @@ export class SpecManager {
     }
 
     private getProviderTaskExecutionGuidance(): string {
+        if (this.shouldDeferTaskVerification()) {
+            if (this.agentRuntime.provider.id === 'codex') {
+                return [
+                    'Codex quality and speed rules:',
+                    '- Inspect the current worktree and the smallest relevant set of files before editing; avoid broad repository scans when targeted search is enough.',
+                    '- Keep edits scoped to the requested task and preserve unrelated user changes.',
+                    '- Prefer existing project helpers, scripts, and test patterns instead of introducing new abstractions.',
+                    '- Add or update focused automated tests for the behavior you change when tests are relevant.',
+                    '- Do not run test, build, lint, typecheck, or other verification commands for this task. Per-task verification is intentionally deferred by AutoCode settings.',
+                    '- In your final summary, list the verification commands that should be run later in the unified final test pass.',
+                    '- Write the completion signal after implementation and test-case updates are complete, even though command execution verification is deferred.',
+                    '- If the task is blocked or you cannot add the expected test coverage, write the blocked signal instead of signaling completion.'
+                ].join('\n');
+            }
+
+            return [
+                'Keep changes scoped to the requested task.',
+                'Add or update focused automated tests when tests are relevant.',
+                'Do not run test, build, lint, typecheck, or other verification commands for this task because per-task verification is intentionally deferred by AutoCode settings.',
+                'List the verification commands that should be run later in the unified final test pass before signaling completion.'
+            ].join('\n');
+        }
+
         if (this.agentRuntime.provider.id === 'codex') {
             return [
                 'Codex quality and speed rules:',
@@ -1179,6 +1203,17 @@ export class SpecManager {
     private getParallelTaskExecutionGuidance(fileScopes?: string[]): string {
         if (!fileScopes || fileScopes.length === 0) {
             return '';
+        }
+
+        if (this.shouldDeferTaskVerification()) {
+            return [
+                'Parallel execution safety rules:',
+                '- This task was launched alongside other spec tasks after static file-scope analysis.',
+                `- Treat these paths as the allowed write scope for this task: ${fileScopes.join(', ')}.`,
+                '- Do not edit files outside that scope. If the task requires another file, stop and report the conflict instead of continuing.',
+                '- Do not run verification commands from this parallel task. Verification is deferred to a later unified test pass.',
+                '- Write the ready-for-verification signal only after the implementation and relevant test-case updates are complete within that scope. If blocked, write the blocked signal instead.'
+            ].join('\n');
         }
 
         return [
@@ -1234,6 +1269,26 @@ export class SpecManager {
             reason: 'Describe the blocker, failed command, or missing capability.'
         }, null, 2);
 
+        if (this.shouldDeferTaskVerification()) {
+            return [
+                'When you believe this task is fully implemented and relevant test cases have been added or updated, create or overwrite the completion signal file with the JSON object below.',
+                'Per-task verification command execution is intentionally deferred by AutoCode settings. Do not run test, build, lint, typecheck, or other verification commands for this task.',
+                'The VS Code extension will accept this completion signal for task automation. Final verification should happen later in a unified test pass.',
+                'This file is mandatory for AutoCode automation. If you only summarize completion without writing this file, automatic task status updates cannot run.',
+                'Create the parent directory if needed, then write exactly this JSON object after implementation and test-case updates are complete.',
+                'The runId value is unique for this task run. Do not reuse an older completion signal or change the runId.',
+                'Do not edit the task checkbox yourself.',
+                '',
+                `Completion signal path: ${completionSignalPath}`,
+                '',
+                payload,
+                '',
+                'If you are blocked and cannot complete the implementation or required test-case updates, create or overwrite the same signal file with this JSON object instead. Do not use blocked for completed work.',
+                '',
+                blockedPayload
+            ].join('\n');
+        }
+
         return [
             'When you believe this task is fully implemented, create or overwrite the completion signal file with the JSON object below.',
             'The VS Code extension will run an independent model verification and will mark the task checkbox as completed only if verification passes.',
@@ -1250,6 +1305,10 @@ export class SpecManager {
             '',
             blockedPayload
         ].join('\n');
+    }
+
+    private shouldDeferTaskVerification(): boolean {
+        return getRuntimeValue<boolean>('spec.deferTaskVerification', false);
     }
 
     private async detectTaskLanguagePreference(taskFilePath: string, taskDescription: string): Promise<string> {

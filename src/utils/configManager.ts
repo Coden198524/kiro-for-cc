@@ -24,6 +24,10 @@ export interface AutoCodeSettings {
         autoMarkTaskDone: boolean;
         taskCompletionVerificationMode: 'fast' | 'strict';
         autoMarkTaskDoneMinConfidence: number;
+        deferTaskVerification: boolean;
+    };
+    ui: {
+        language: 'auto' | 'en' | 'zh-CN';
     };
     memory: {
         enabled: boolean;
@@ -40,6 +44,7 @@ export interface AutoCodeSettings {
         settings: string;
     };
     views: {
+        currentWork: { visible: boolean };
         specs: { visible: boolean };
         agents: { visible: boolean };
         steering: { visible: boolean };
@@ -202,7 +207,11 @@ export class ConfigManager {
             spec: {
                 autoMarkTaskDone: true,
                 taskCompletionVerificationMode: 'fast',
-                autoMarkTaskDoneMinConfidence: 0.8
+                autoMarkTaskDoneMinConfidence: 0.8,
+                deferTaskVerification: false
+            },
+            ui: {
+                language: 'auto'
             },
             memory: {
                 enabled: true,
@@ -215,6 +224,7 @@ export class ConfigManager {
             terminalReadyTimeoutMs: 3000,
             paths: { ...DEFAULT_PATHS },
             views: {
+                currentWork: { visible: DEFAULT_VIEW_VISIBILITY.currentWork },
                 specs: { visible: DEFAULT_VIEW_VISIBILITY.specs },
                 agents: { visible: DEFAULT_VIEW_VISIBILITY.agents },
                 steering: { visible: DEFAULT_VIEW_VISIBILITY.steering },
@@ -271,6 +281,10 @@ export class ConfigManager {
                 ...defaults.spec,
                 ...(settings.spec ?? {})
             },
+            ui: {
+                ...defaults.ui,
+                ...(settings.ui ?? {})
+            },
             memory: {
                 ...defaults.memory,
                 ...(settings.memory ?? {})
@@ -280,6 +294,10 @@ export class ConfigManager {
                 ...(settings.paths ?? {})
             },
             views: {
+                currentWork: {
+                    ...defaults.views.currentWork,
+                    ...(viewSettings.currentWork ?? {})
+                },
                 specs: {
                     ...defaults.views.specs,
                     ...(viewSettings.specs ?? {})

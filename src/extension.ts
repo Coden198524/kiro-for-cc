@@ -6,6 +6,7 @@ import { SteeringExplorerProvider } from './providers/steeringExplorerProvider';
 import { HooksExplorerProvider } from './providers/hooksExplorerProvider';
 import { MCPExplorerProvider } from './providers/mcpExplorerProvider';
 import { OverviewProvider } from './providers/overviewProvider';
+import { CurrentWorkProvider } from './providers/currentWorkProvider';
 import { AgentsExplorerProvider } from './providers/agentsExplorerProvider';
 import { MemoryExplorerProvider } from './providers/memoryExplorerProvider';
 import { IterationExplorerProvider } from './providers/iterationExplorerProvider';
@@ -101,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register tree data providers
     const overviewProvider = new OverviewProvider(context);
+    const currentWorkProvider = new CurrentWorkProvider(outputChannel);
     const specExplorer = new SpecExplorerProvider(context, outputChannel);
     const steeringExplorer = new SteeringExplorerProvider(context);
     const memoryExplorer = new MemoryExplorerProvider(memoryManager);
@@ -115,6 +117,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.registerTreeDataProvider('autocode.views.overview', overviewProvider),
+        vscode.window.registerTreeDataProvider('autocode.views.currentWork', currentWorkProvider),
         vscode.window.registerTreeDataProvider('autocode.views.specExplorer', specExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.agentsExplorer', agentsExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.steeringExplorer', steeringExplorer),
@@ -134,6 +137,7 @@ export async function activate(context: vscode.ExtensionContext) {
         specExplorer,
         taskSessionManager,
         taskCompletionService,
+        currentWorkProvider,
         outputChannel,
         recoverTaskQueuesOnStartup: true
     });
@@ -163,6 +167,7 @@ export async function activate(context: vscode.ExtensionContext) {
         hooksExplorer,
         mcpExplorer,
         overviewProvider,
+        currentWorkProvider,
         updateChecker,
         settingsManager,
         outputChannel

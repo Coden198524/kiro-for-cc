@@ -97,6 +97,11 @@ export class TaskCompletionVerifier {
     }
 
     private getVerificationMode(): TaskCompletionVerificationMode {
+        if (getRuntimeValue<boolean>('spec.deferTaskVerification', false)) {
+            this.outputChannel.appendLine('[TaskVerifier] Strict completion verification is bypassed because spec.deferTaskVerification is enabled.');
+            return 'fast';
+        }
+
         const mode = getRuntimeValue<string>('spec.taskCompletionVerificationMode', 'fast');
         return mode === 'strict' ? 'strict' : 'fast';
     }

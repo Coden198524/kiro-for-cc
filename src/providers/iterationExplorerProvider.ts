@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { IterationManager, IterationMode, IterationRecord } from '../features/iteration/iterationManager';
+import { localize } from '../utils/localization';
 
 type IterationTreeItemKind = 'action' | 'record';
 
@@ -23,10 +24,10 @@ export class IterationExplorerProvider implements vscode.TreeDataProvider<Iterat
         }
 
         const actionItems = [
-            this.createActionItem('Start Iteration', 'autocode.iteration.start', 'sparkle'),
-            this.createActionItem('Ask / Analyze', 'autocode.iteration.ask', 'comment-discussion'),
-            this.createActionItem('Edit / Fix', 'autocode.iteration.edit', 'tools'),
-            this.createActionItem('Generate Document', 'autocode.iteration.document', 'book')
+            this.createActionItem(localize('Start Iteration', '启动迭代'), 'autocode.iteration.start', 'sparkle'),
+            this.createActionItem(localize('Ask / Analyze', '询问 / 分析'), 'autocode.iteration.ask', 'comment-discussion'),
+            this.createActionItem(localize('Edit / Fix', '编辑 / 修复'), 'autocode.iteration.edit', 'tools'),
+            this.createActionItem(localize('Generate Document', '生成文档'), 'autocode.iteration.document', 'book')
         ];
         const records = await this.iterationManager.listRecent(8);
         const recordItems = records.map(record => this.createRecordItem(record));
@@ -34,7 +35,7 @@ export class IterationExplorerProvider implements vscode.TreeDataProvider<Iterat
         if (recordItems.length === 0) {
             return [
                 ...actionItems,
-                new IterationTreeItem('No recent iterations', vscode.TreeItemCollapsibleState.None, 'action')
+                new IterationTreeItem(localize('No recent iterations', '没有最近的迭代'), vscode.TreeItemCollapsibleState.None, 'action')
             ];
         }
 
@@ -66,7 +67,7 @@ export class IterationExplorerProvider implements vscode.TreeDataProvider<Iterat
         item.iconPath = new vscode.ThemeIcon(this.getModeIcon(record.mode));
         item.command = {
             command: 'autocode.iteration.openSummary',
-            title: 'Open Iteration Summary',
+            title: localize('Open Iteration Summary', '打开迭代摘要'),
             arguments: [record]
         };
         return item;
@@ -75,11 +76,11 @@ export class IterationExplorerProvider implements vscode.TreeDataProvider<Iterat
     private formatMode(mode: IterationMode): string {
         switch (mode) {
             case 'ask':
-                return 'Ask';
+                return localize('Ask', '询问');
             case 'edit':
-                return 'Edit';
+                return localize('Edit', '编辑');
             case 'document':
-                return 'Document';
+                return localize('Document', '文档');
         }
     }
 

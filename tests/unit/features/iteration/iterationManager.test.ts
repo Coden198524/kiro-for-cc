@@ -158,6 +158,20 @@ describe('IterationManager', () => {
         expect(description).toContain('convert');
         expect(description).toContain('Iteration summary:');
         expect(description).toContain('queue design changes');
+        expect(description).toContain('Prompt file:');
+    });
+
+    test('continues a previous iteration using saved summary context', async () => {
+        const record = createRecord('continue', '2026-05-27T00:00:00.000Z');
+        files.set(record.summaryPath, Buffer.from('Previous run identified a narrow queue bug.'));
+        const manager = new IterationManager(runtime, vscode.window.createOutputChannel('test'));
+
+        const continued = await manager.continue(record as any);
+
+        expect(continued?.mode).toBe('ask');
+        expect(runtime.invokeInteractive).toHaveBeenCalled();
+        expect(capturedPrompt).toContain('Continue this previous AutoCode iteration.');
+        expect(capturedPrompt).toContain('Previous run identified a narrow queue bug.');
     });
 });
 

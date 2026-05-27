@@ -82,7 +82,11 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
         } else if (element.contextValue === 'spec') {
             // Show spec documents
             const specsPath = await this.specManager.getSpecBasePath();
-            const specPath = `${specsPath}/${element.specName}`;
+            const displaySpecPath = `${specsPath}/${element.specName}`;
+            const workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            const absoluteSpecPath = path.isAbsolute(specsPath)
+                ? path.join(specsPath, element.specName!)
+                : path.join(workspacePath, specsPath, element.specName!);
             
             return [
                 new SpecItem(
@@ -97,7 +101,10 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                         title: 'Open Requirements',
                         arguments: [element.specName]
                     },
-                    `${specPath}/requirements.md`
+                    `${displaySpecPath}/requirements.md`,
+                    undefined,
+                    undefined,
+                    vscode.Uri.file(path.join(absoluteSpecPath, 'requirements.md'))
                 ),
                 new SpecItem(
                     'design',
@@ -111,7 +118,10 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                         title: 'Open Design',
                         arguments: [element.specName]
                     },
-                    `${specPath}/design.md`
+                    `${displaySpecPath}/design.md`,
+                    undefined,
+                    undefined,
+                    vscode.Uri.file(path.join(absoluteSpecPath, 'design.md'))
                 ),
                 new SpecItem(
                     'tasks',
@@ -125,7 +135,10 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                         title: 'Open Tasks',
                         arguments: [element.specName]
                     },
-                    `${specPath}/tasks.md`
+                    `${displaySpecPath}/tasks.md`,
+                    undefined,
+                    undefined,
+                    vscode.Uri.file(path.join(absoluteSpecPath, 'tasks.md'))
                 )
             ];
         }
@@ -289,9 +302,13 @@ class SpecItem extends vscode.TreeItem {
         public readonly command?: vscode.Command,
         private readonly filePath?: string,
         public readonly queue?: AutoTaskQueueRecoveryRecord,
-        private readonly detailDescription?: string
+        private readonly detailDescription?: string,
+        public readonly resourceUri?: vscode.Uri
     ) {
         super(label, collapsibleState);
+        if (resourceUri) {
+            this.resourceUri = resourceUri;
+        }
         
         if (contextValue === 'spec-loading') {
             this.iconPath = new vscode.ThemeIcon('sync~spin');

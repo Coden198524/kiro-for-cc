@@ -11,12 +11,14 @@ describe('TaskCompletionVerifier', () => {
     let documentLines: string[];
     let saved = false;
     let verificationMode: 'fast' | 'strict';
+    let deferTaskVerification = false;
 
     beforeEach(() => {
         jest.clearAllMocks();
         documentLines = ['- [-] 1. Implement feature'];
         saved = false;
         verificationMode = 'fast';
+        deferTaskVerification = false;
 
         (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(async () => ({
             lineCount: documentLines.length,
@@ -42,6 +44,9 @@ describe('TaskCompletionVerifier', () => {
                 }
                 if (section === 'spec.taskCompletionVerificationMode') {
                     return { workspaceValue: verificationMode };
+                }
+                if (section === 'spec.deferTaskVerification') {
+                    return { workspaceValue: deferTaskVerification };
                 }
                 return undefined;
             }),
@@ -107,6 +112,23 @@ describe('TaskCompletionVerifier', () => {
             approvalPolicy: 'never',
             visibleTerminal: true
         }));
+        expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
+    });
+
+    test('bypasses strict completion verification when per-task verification is deferred', async () => {
+        verificationMode = 'strict';
+        deferTaskVerification = true;
+
+        const result = await verifier.verifyAndMarkDone({
+            taskFilePath,
+            lineNumber: 0,
+            taskDescription: '1. Implement feature'
+        });
+
+        expect(result).toBe(true);
+        expect(documentLines[0]).toBe('- [x] 1. Implement feature');
+        expect(runtime.invokeHeadless).not.toHaveBeenCalled();
+        expect(runtime.invokeInteractive).not.toHaveBeenCalled();
         expect(taskSessionManager.markCompleted).toHaveBeenCalledWith(taskFilePath, 0, '1. Implement feature');
     });
 

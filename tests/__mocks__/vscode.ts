@@ -66,6 +66,14 @@ export const window = {
   })
 };
 
+export const env = {
+  language: 'en',
+  clipboard: {
+    writeText: jest.fn()
+  },
+  openExternal: jest.fn()
+};
+
 export const workspace = {
   fs: {
     readFile: jest.fn(),

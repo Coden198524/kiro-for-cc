@@ -38,7 +38,11 @@ export const DEFAULT_CONFIG = {
     spec: {
         autoMarkTaskDone: true,
         taskCompletionVerificationMode: 'fast',
-        autoMarkTaskDoneMinConfidence: 0.8
+        autoMarkTaskDoneMinConfidence: 0.8,
+        deferTaskVerification: false
+    },
+    ui: {
+        language: 'auto'
     },
     memory: {
         enabled: true,
@@ -53,6 +57,7 @@ export const DEFAULT_CONFIG = {
         settings: '.autocode/settings'
     },
     views: {
+        currentWork: true,
         specs: true,
         agents: true,
         steering: true,

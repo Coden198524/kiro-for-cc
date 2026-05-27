@@ -73,4 +73,29 @@ describe('SettingsManager model selection', () => {
         expect(update).toHaveBeenCalledWith('agent.model', '', vscode.ConfigurationTarget.Workspace);
         expect(JSON.parse(writeFilePayload ?? '{}').agent.model).toBe('');
     });
+
+    test('applies development speed presets to VS Code and project settings', async () => {
+        expect(await manager.applyDevelopmentSpeedPreset('fast')).toBe(true);
+
+        expect(update).toHaveBeenCalledWith('spec.deferTaskVerification', true, vscode.ConfigurationTarget.Workspace);
+        expect(update).toHaveBeenCalledWith('spec.taskCompletionVerificationMode', 'fast', vscode.ConfigurationTarget.Workspace);
+        expect(update).toHaveBeenCalledWith('spec.autoMarkTaskDone', true, vscode.ConfigurationTarget.Workspace);
+        expect(JSON.parse(writeFilePayload ?? '{}').spec).toEqual(expect.objectContaining({
+            deferTaskVerification: true,
+            taskCompletionVerificationMode: 'fast',
+            autoMarkTaskDone: true
+        }));
+    });
+
+    test('selects UI language and persists it', async () => {
+        (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({
+            label: '中文',
+            language: 'zh-CN'
+        });
+
+        expect(await manager.selectUiLanguage()).toBe(true);
+
+        expect(update).toHaveBeenCalledWith('ui.language', 'zh-CN', vscode.ConfigurationTarget.Workspace);
+        expect(JSON.parse(writeFilePayload ?? '{}').ui.language).toBe('zh-CN');
+    });
 });
