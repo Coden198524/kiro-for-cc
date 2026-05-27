@@ -318,6 +318,49 @@ describe('TaskCompletionService', () => {
         expect(watcherDispose).toHaveBeenCalled();
     });
 
+    test('ignores a batch completion signal with a mismatched registered run id', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('tasks');
+        let closeHandler: ((terminal: vscode.Terminal) => Promise<void>) | undefined;
+
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('missing signal'));
+        (vscode.window.onDidCloseTerminal as jest.Mock).mockImplementation((handler) => {
+            closeHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '1. First task',
+            runId: 'old-run'
+        })));
+
+        const signalPath = `${signalDir}/task-completion-3.json`;
+        const completion = service.registerTaskCompletionSignals(
+            { subscriptions: [] } as unknown as vscode.ExtensionContext,
+            terminal,
+            taskFilePath,
+            [signalPath],
+            {
+                expectedRunIdsBySignalPath: {
+                    [signalPath]: 'current-run'
+                }
+            }
+        );
+
+        await closeHandler?.(terminal);
+        await jest.advanceTimersByTimeAsync(10000);
+
+        await expect(completion).resolves.toBe(false);
+        expect(verifier.verifyAndMarkDone).not.toHaveBeenCalled();
+    });
+
     test('polls for a single completion signal when file watcher events are missed', async () => {
         jest.useFakeTimers();
         const terminal = vscode.window.createTerminal('task');

@@ -30,6 +30,11 @@ export interface TaskCompletionReconcileOptions {
     minModifiedAt?: number;
 }
 
+export interface TaskCompletionSignalRegistrationOptions {
+    expectedRunIdsBySignalPath?: Record<string, string | undefined>;
+    expectedRunIdsByLineNumber?: Record<number, string | undefined>;
+}
+
 export class TaskCompletionService {
     private static readonly SIGNAL_POLL_INTERVAL_MS = 2000;
     private static readonly SIGNAL_POLL_TIMEOUT_MS = 30 * 60 * 1000;
@@ -228,7 +233,8 @@ export class TaskCompletionService {
         context: vscode.ExtensionContext,
         terminal: vscode.Terminal,
         taskFilePath: string,
-        completionSignalPaths: string[]
+        completionSignalPaths: string[],
+        options: TaskCompletionSignalRegistrationOptions = {}
     ): Promise<boolean> | undefined {
         if (!this.verifier.isEnabled()) {
             this.outputChannel.appendLine('[Task Complete] Auto mark task done is disabled; not registering batch completion signals.');
@@ -241,6 +247,7 @@ export class TaskCompletionService {
             return Promise.resolve(true);
         }
 
+        const minSignalModifiedAt = Date.now() - 2000;
         const disposables: vscode.Disposable[] = [];
         const verificationResults = new Map<string, boolean>();
         let completionResolved = false;
@@ -282,7 +289,11 @@ export class TaskCompletionService {
                 return verificationResults.get(completionSignalPath);
             }
 
-            const signalResult = await this.resolveSignalResult(completionSignalPath, taskFilePath);
+            const expectedRunId = this.getExpectedRunIdForSignal(completionSignalPath, options);
+            const signalResult = await this.resolveSignalResult(completionSignalPath, taskFilePath, {
+                expectedRunId,
+                minModifiedAt: expectedRunId ? minSignalModifiedAt : undefined
+            });
             if (!signalResult) {
                 return undefined;
             }
@@ -526,6 +537,28 @@ export class TaskCompletionService {
         }
 
         return Number(match[1]) - 1;
+    }
+
+    private getExpectedRunIdForSignal(
+        completionSignalPath: string,
+        options: TaskCompletionSignalRegistrationOptions
+    ): string | undefined {
+        const normalizedPath = this.normalizeFsPath(completionSignalPath);
+        const byPath = options.expectedRunIdsBySignalPath;
+        if (byPath) {
+            const directValue = byPath[completionSignalPath];
+            if (directValue) {
+                return directValue;
+            }
+
+            const matchedKey = Object.keys(byPath).find(key => this.normalizeFsPath(key) === normalizedPath);
+            if (matchedKey && byPath[matchedKey]) {
+                return byPath[matchedKey];
+            }
+        }
+
+        const lineNumber = this.parseCompletionSignalLineNumber(completionSignalPath);
+        return lineNumber === undefined ? undefined : options.expectedRunIdsByLineNumber?.[lineNumber];
     }
 
     private async readTaskDescription(taskFilePath: string, lineNumber: number): Promise<string | undefined> {

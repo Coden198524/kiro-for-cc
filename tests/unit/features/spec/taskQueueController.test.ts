@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {
     AutoTaskQueueStartBlockedError,
     findRecoverableAutoTaskQueues,
+    getAutoTaskQueueDiagnostics,
     getAutoTaskQueueSummary,
     TaskQueueController
 } from '../../../../src/features/spec/taskQueueController';
@@ -144,6 +145,35 @@ describe('TaskQueueController', () => {
             .toBeUndefined();
     });
 
+    test('pauses a partial batch with only the unresolved task retained', async () => {
+        const batchTasks = [
+            {
+                lineNumber: 1,
+                taskDescription: '1. First task',
+                completionSignalPath: 'signal-1',
+                completionSignalToken: 'run-1'
+            },
+            {
+                lineNumber: 4,
+                taskDescription: '2. Failed task',
+                completionSignalPath: 'signal-2',
+                completionSignalToken: 'run-2'
+            }
+        ];
+        await controller.start(documentUri, 'autocode.spec.implAllTasksParallel');
+        await controller.waitForBatch(documentUri, 'autocode.spec.implAllTasksParallel', batchTasks);
+
+        await controller.pause(documentUri, 'autocode.spec.implAllTasksParallel', 'One task failed.', [4]);
+
+        const record = JSON.parse(files.get(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'))!.toString());
+        expect(record).toEqual(expect.objectContaining({
+            status: 'paused',
+            pauseReason: 'One task failed.'
+        }));
+        expect(record.currentTask).toBeUndefined();
+        expect(record.batchTasks).toEqual([batchTasks[1]]);
+    });
+
     test('does not consume stale cached single-task state after another controller clears the queue', async () => {
         await controller.start(documentUri, 'autocode.spec.implAllTasks');
         await controller.waitForTask(documentUri, 'autocode.spec.implAllTasks', {
@@ -219,6 +249,45 @@ describe('TaskQueueController', () => {
             expect.any(Buffer)
         );
         expect(files.has(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.lock'))).toBe(false);
+    });
+
+    test('reports queue diagnostics with run id, queued task, and lock state', async () => {
+        const now = Date.parse('2026-05-27T00:10:00.000Z');
+        const statePath = normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json');
+        const lockPath = normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.lock');
+        files.set(statePath, Buffer.from(JSON.stringify({
+            version: 1,
+            queueRunId: 'queue-current',
+            taskFilePath: documentUri.fsPath,
+            commandId: 'autocode.spec.implAllTasks',
+            status: 'waiting_for_signal',
+            startedAt: '2026-05-27T00:00:00.000Z',
+            updatedAt: '2026-05-27T00:09:00.000Z',
+            currentTask: {
+                lineNumber: 1,
+                taskDescription: '1. Waiting task',
+                completionSignalPath: 'signal-1',
+                completionSignalToken: 'run-1'
+            }
+        })));
+        files.set(lockPath, Buffer.from(JSON.stringify({
+            owner: 'queue-lock-owner',
+            createdAt: '2026-05-27T00:09:30.000Z'
+        })));
+
+        const diagnostics = await getAutoTaskQueueDiagnostics(documentUri, now);
+
+        expect(diagnostics.record?.queueRunId).toBe('queue-current');
+        expect(diagnostics.summary).toEqual(expect.objectContaining({
+            statusText: 'waiting for signal',
+            taskCount: 1,
+            currentTaskDescription: '1. Waiting task'
+        }));
+        expect(diagnostics.lock).toEqual(expect.objectContaining({
+            status: 'active',
+            owner: 'queue-lock-owner',
+            ageMs: 30000
+        }));
     });
 
     test('summarizes stale waiting queues', async () => {

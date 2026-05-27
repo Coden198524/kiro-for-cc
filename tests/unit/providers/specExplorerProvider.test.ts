@@ -46,7 +46,7 @@ describe('SpecExplorerProvider', () => {
         expect(children[2].iconPath).toEqual(new vscode.ThemeIcon('sparkle'));
     });
 
-    test('shows recoverable auto task queue action when persisted queues exist', async () => {
+    test('shows active auto task queue status and details when persisted queues exist', async () => {
         const provider = new SpecExplorerProvider(
             { subscriptions: [] } as unknown as vscode.ExtensionContext,
             vscode.window.createOutputChannel('test')
@@ -65,10 +65,17 @@ describe('SpecExplorerProvider', () => {
             status: 'paused',
             startedAt: '2026-05-27T00:00:00.000Z',
             updatedAt: '2026-05-27T00:00:00.000Z',
-            currentTask: {
-                lineNumber: 1,
-                taskDescription: '1. Paused task'
-            }
+            batchTasks: [
+                {
+                    lineNumber: 1,
+                    taskDescription: '1. Paused task'
+                },
+                {
+                    lineNumber: 4,
+                    taskDescription: '2. Failed task'
+                }
+            ],
+            pauseReason: 'One or more tasks failed verification.'
         })));
 
         const children = await provider.getChildren();
@@ -77,11 +84,28 @@ describe('SpecExplorerProvider', () => {
             'Initialize Project Context',
             'Create New Spec',
             'Create Spec with Agents',
-            'Interrupted Auto Queues (1)',
+            'Auto Task Queues (1)',
             'demo-spec'
         ]);
         expect(children[3].command?.command).toBe('autocode.spec.showTaskQueues');
-        expect(children[3].iconPath).toEqual(new vscode.ThemeIcon('debug-continue'));
-        expect(children[3].description).toBe('recover');
+        expect(children[3].iconPath).toEqual(new vscode.ThemeIcon('list-tree'));
+        expect(children[3].description).toBe('active');
+
+        const queueItems = await provider.getChildren(children[3] as any);
+        expect(queueItems).toHaveLength(1);
+        expect(queueItems[0].label).toBe('demo-spec');
+        expect(queueItems[0].description).toBe('paused - 2 task(s) - 2 pending/failed');
+        expect(queueItems[0].iconPath).toEqual(new vscode.ThemeIcon('debug-pause'));
+        expect(queueItems[0].command?.command).toBe('autocode.spec.showTaskQueueDetails');
+
+        const detailItems = await provider.getChildren(queueItems[0] as any);
+        expect(detailItems.map(item => item.label)).toEqual(expect.arrayContaining([
+            'Status: paused',
+            'Queued tasks: 2',
+            'Current batch: 2 task(s)',
+            'Pause reason: One or more tasks failed verification.',
+            'Pending/failed 2: 1. Paused task',
+            'Pending/failed 5: 2. Failed task'
+        ]));
     });
 });

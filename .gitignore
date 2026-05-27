@@ -3,6 +3,7 @@ dist/
 out/
 *.vsix
 .vscode-test/
+.vscode-test-workspace/
 *.log
 .DS_Store
 .env

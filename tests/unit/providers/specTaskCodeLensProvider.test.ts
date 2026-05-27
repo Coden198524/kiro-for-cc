@@ -106,11 +106,16 @@ describe('SpecTaskCodeLensProvider', () => {
             arguments: [document.uri]
         }));
         expect(commands[1]).toEqual(expect.objectContaining({
+            title: 'Queue Details',
+            command: 'autocode.spec.showTaskQueueDetails',
+            arguments: [document.uri]
+        }));
+        expect(commands[2]).toEqual(expect.objectContaining({
             title: 'Cancel Auto Queue',
             command: 'autocode.spec.cancelTaskQueue',
             arguments: [document.uri]
         }));
-        expect(commands[2]).toEqual(expect.objectContaining({
+        expect(commands[3]).toEqual(expect.objectContaining({
             title: 'Clear Auto Queue',
             command: 'autocode.spec.clearTaskQueue',
             arguments: [document.uri]

@@ -240,7 +240,8 @@ describe('registerSpecCommands task execution', () => {
             ]);
             return {
                 terminal,
-                completionSignalPaths: ['signal-1']
+                completionSignalPaths: ['signal-1'],
+                completionSignalTokens: ['run-1']
             };
         });
         taskCompletionService.registerTaskCompletionSignals.mockReturnValue(Promise.resolve(true));
@@ -254,7 +255,12 @@ describe('registerSpecCommands task execution', () => {
             expect.anything(),
             terminal,
             documentUri.fsPath,
-            ['signal-1']
+            ['signal-1'],
+            {
+                expectedRunIdsBySignalPath: {
+                    'signal-1': 'run-1'
+                }
+            }
         );
         expect(vscode.commands.executeCommand).toHaveBeenCalledWith('autocode.spec.implAllTasks', documentUri);
     });
@@ -395,6 +401,7 @@ describe('registerSpecCommands task execution', () => {
             expect.stringContaining('demo'),
             'Resume',
             'Open Tasks',
+            'Details',
             'Cancel',
             'Clear'
         );
@@ -409,6 +416,45 @@ describe('registerSpecCommands task execution', () => {
         expect(vscode.workspace.fs.delete).toHaveBeenCalledWith(expect.objectContaining({
             fsPath: expect.stringContaining('task-queue.json')
         }));
+    });
+
+    test('opens auto queue diagnostics with queue and lock details', async () => {
+        const queueRecord = {
+            version: 1,
+            queueRunId: 'queue-current',
+            taskFilePath: documentUri.fsPath,
+            commandId: 'autocode.spec.implAllTasks',
+            status: 'waiting_for_signal',
+            startedAt: '2026-05-27T00:00:00.000Z',
+            updatedAt: '2026-05-27T00:05:00.000Z',
+            currentTask: {
+                lineNumber: 1,
+                taskDescription: '1. Waiting task',
+                completionSignalPath: '/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json',
+                completionSignalToken: 'run-1'
+            }
+        };
+        files.set(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'), Buffer.from(JSON.stringify(queueRecord)));
+        files.set(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.lock'), Buffer.from(JSON.stringify({
+            owner: 'queue-lock-owner',
+            createdAt: new Date().toISOString()
+        })));
+        const diagnosticDocument = { uri: vscode.Uri.file('/mock/diagnostics.md') };
+        (vscode.workspace.openTextDocument as jest.Mock).mockImplementationOnce(async (options: { content: string; language: string }) => {
+            expect(options.language).toBe('markdown');
+            expect(options.content).toContain('# Auto Task Queue Details');
+            expect(options.content).toContain('- Run ID: queue-current');
+            expect(options.content).toContain('| current | 2 | 1. Waiting task |');
+            expect(options.content).toContain('- Status: active');
+            expect(options.content).toContain('- Owner: queue-lock-owner');
+            return diagnosticDocument;
+        });
+
+        const showDetails = commands.get('autocode.spec.showTaskQueueDetails');
+        expect(showDetails).toBeDefined();
+        await showDetails!(documentUri);
+
+        expect(vscode.window.showTextDocument).toHaveBeenCalledWith(diagnosticDocument);
     });
 
     test('does not resume a waiting auto queue until queued completion signals verify', async () => {
@@ -475,6 +521,7 @@ describe('registerSpecCommands task execution', () => {
             'Resume',
             'Start New',
             'Open Tasks',
+            'Details',
             'Cancel Queue',
             'Clear'
         );
@@ -895,6 +942,7 @@ describe('registerSpecCommands task execution', () => {
             status: 'paused',
             pauseReason: expect.stringContaining('failed to start')
         }));
+        expect(getLastQueueWrite().batchTasks).toBeUndefined();
     });
 
     test('returns failed parallel tasks to pending and does not continue the batch', async () => {
@@ -926,6 +974,12 @@ describe('registerSpecCommands task execution', () => {
         expect(markTaskLinesPending).toHaveBeenCalledWith(documentUri, [4]);
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('parallel task(s) were not verified'));
+        expect(getLastQueueWrite().batchTasks).toEqual([
+            expect.objectContaining({
+                lineNumber: 4,
+                completionSignalToken: 'run-2'
+            })
+        ]);
     });
 
     test('pauses parallel queue when automatic verification is disabled for one launched task', async () => {
@@ -959,6 +1013,12 @@ describe('registerSpecCommands task execution', () => {
             status: 'paused',
             pauseReason: expect.stringContaining('disabled for one or more launched tasks')
         }));
+        expect(getLastQueueWrite().batchTasks).toEqual([
+            expect.objectContaining({
+                lineNumber: 4,
+                completionSignalToken: 'run-2'
+            })
+        ]);
     });
 
     test('pauses parallel queue when automatic verification is disabled for every launched task', async () => {

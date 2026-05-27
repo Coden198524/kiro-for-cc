@@ -3,9 +3,11 @@ import { SpecManager } from '../features/spec/specManager';
 import { TaskCompletionService } from '../features/spec/taskCompletionService';
 import {
     AutoTaskQueueCommandId,
+    AutoTaskQueueDiagnostics,
     AutoTaskQueueRecoveryRecord,
     AutoTaskQueueStartBlockedError,
     findRecoverableAutoTaskQueues,
+    getAutoTaskQueueDiagnostics,
     getAutoTaskQueueSummary,
     isAutoTaskQueueStale,
     TaskQueueController
@@ -163,6 +165,20 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         vscode.window.showInformationMessage('Auto task queue state cleared for this spec.');
     };
 
+    const showTaskQueueDetails = async (documentUri?: vscode.Uri): Promise<void> => {
+        const activeDocumentUri = resolveTasksDocumentUri(documentUri);
+        if (!activeDocumentUri) {
+            return;
+        }
+
+        const diagnostics = await getAutoTaskQueueDiagnostics(activeDocumentUri);
+        const document = await vscode.workspace.openTextDocument({
+            language: 'markdown',
+            content: formatAutoTaskQueueDiagnostics(diagnostics)
+        });
+        await vscode.window.showTextDocument(document);
+    };
+
     const cancelAutoTaskQueue = async (documentUri?: vscode.Uri): Promise<void> => {
         const activeDocumentUri = resolveTasksDocumentUri(documentUri);
         if (!activeDocumentUri) {
@@ -207,6 +223,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 'Resume',
                 'Start New',
                 'Open Tasks',
+                'Details',
                 'Cancel Queue',
                 'Clear'
             );
@@ -225,6 +242,11 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             if (action === 'Open Tasks') {
                 const document = await vscode.workspace.openTextDocument(documentUri);
                 await vscode.window.showTextDocument(document);
+                return false;
+            }
+
+            if (action === 'Details') {
+                await showTaskQueueDetails(documentUri);
                 return false;
             }
 
@@ -263,6 +285,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             `Auto task queue for ${selectedQueue.specName} is ${formatQueueStatus(selectedQueue.record.status)}.`,
             'Resume',
             'Open Tasks',
+            'Details',
             'Cancel',
             'Clear'
         );
@@ -275,6 +298,11 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         if (action === 'Open Tasks') {
             const document = await vscode.workspace.openTextDocument(selectedQueue.documentUri);
             await vscode.window.showTextDocument(document);
+            return;
+        }
+
+        if (action === 'Details') {
+            await showTaskQueueDetails(selectedQueue.documentUri);
             return;
         }
 
@@ -543,7 +571,8 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                                 await taskQueueController.pause(
                                     documentUri,
                                     commandId,
-                                    `${failedStartLineNumbers.length} parallel task(s) failed to start; launched task(s) were verified.`
+                                    `${failedStartLineNumbers.length} parallel task(s) failed to start; launched task(s) were verified.`,
+                                    failedStartLineNumbers
                                 );
                                 vscode.window.showWarningMessage('Auto task queue paused after launched parallel tasks completed because one or more tasks failed to start.');
                                 return;
@@ -585,6 +614,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         }),
         vscode.commands.registerCommand('autocode.spec.showTaskQueues', showTaskQueues),
         vscode.commands.registerCommand('autocode.spec.resumeTaskQueue', resumeAutoTaskQueue),
+        vscode.commands.registerCommand('autocode.spec.showTaskQueueDetails', showTaskQueueDetails),
         vscode.commands.registerCommand('autocode.spec.clearTaskQueue', clearAutoTaskQueue),
         vscode.commands.registerCommand('autocode.spec.cancelTaskQueue', cancelAutoTaskQueue),
         vscode.commands.registerCommand('autocode.spec.markTaskDone', async (documentUri: vscode.Uri, lineNumber: number) => {
@@ -636,4 +666,67 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
 
 function formatQueueStatus(status: string): string {
     return status.replace(/_/g, ' ');
+}
+
+function formatAutoTaskQueueDiagnostics(diagnostics: AutoTaskQueueDiagnostics): string {
+    const lines = [
+        '# Auto Task Queue Details',
+        '',
+        `- Task file: ${diagnostics.taskFilePath}`,
+        `- State file: ${diagnostics.statePath}`,
+        `- Lock file: ${diagnostics.lock.path}`,
+        ''
+    ];
+
+    if (!diagnostics.record || !diagnostics.summary) {
+        lines.push('## Queue', '', 'No persisted auto task queue was found.', '');
+    } else {
+        const record = diagnostics.record;
+        lines.push(...[
+            '## Queue',
+            '',
+            `- Run ID: ${record.queueRunId}`,
+            `- Command: ${record.commandId}`,
+            `- Status: ${diagnostics.summary.statusText}`,
+            `- Started: ${record.startedAt}`,
+            `- Updated: ${record.updatedAt}`,
+            `- Stale: ${diagnostics.summary.stale ? 'yes' : 'no'}`,
+            record.pauseReason ? `- Pause reason: ${record.pauseReason}` : undefined,
+            record.lastEvent ? `- Last event: ${record.lastEvent}` : undefined,
+            ''
+        ].filter((line): line is string => line !== undefined));
+
+        const queuedTasks = [
+            ...(record.currentTask ? [{ type: 'current', ...record.currentTask }] : []),
+            ...(record.batchTasks ?? []).map(task => ({ type: 'batch', ...task }))
+        ];
+        if (queuedTasks.length > 0) {
+            lines.push(
+                '## Queued Tasks',
+                '',
+                '| Type | Line | Description | Signal | Run Token |',
+                '| --- | ---: | --- | --- | --- |'
+            );
+            for (const task of queuedTasks) {
+                lines.push(`| ${task.type} | ${task.lineNumber + 1} | ${escapeMarkdownTableCell(task.taskDescription)} | ${escapeMarkdownTableCell(task.completionSignalPath ?? '')} | ${escapeMarkdownTableCell(task.completionSignalToken ?? '')} |`);
+            }
+            lines.push('');
+        }
+    }
+
+    lines.push(...[
+        '## Lock',
+        '',
+        `- Status: ${diagnostics.lock.status}`,
+        diagnostics.lock.owner ? `- Owner: ${diagnostics.lock.owner}` : undefined,
+        diagnostics.lock.createdAt ? `- Created: ${diagnostics.lock.createdAt}` : undefined,
+        diagnostics.lock.ageMs !== undefined ? `- Age: ${Math.round(diagnostics.lock.ageMs / 1000)}s` : undefined,
+        ''
+    ].filter((line): line is string => line !== undefined));
+
+    return lines.join('\n');
+}
+
+function escapeMarkdownTableCell(value: string): string {
+    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }

@@ -127,14 +127,20 @@ export class AutoTaskQueueRunner {
         const batchTasks: AutoTaskQueueTaskState[] = run.completionSignalPaths.map((signalPath, index) => ({
             lineNumber: this.options.recoveryInspector.parseCompletionSignalLineNumber(signalPath) ?? index,
             taskDescription: `Batch task ${index + 1}`,
-            completionSignalPath: signalPath
+            completionSignalPath: signalPath,
+            completionSignalToken: run.completionSignalTokens?.[index]
         }));
         const queueRecord = await taskQueueController.waitForBatch(documentUri, commandId, batchTasks);
 
-        const completion = taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
+        const expectedRunIdsBySignalPath = this.getExpectedRunIdsBySignalPath(batchTasks);
+        const completion = Object.keys(expectedRunIdsBySignalPath).length > 0
+            ? taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths, {
+                expectedRunIdsBySignalPath
+            })
+            : taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
         if (!completion) {
             outputChannel.appendLine('[Task Execute] Auto task queue will not continue because automatic batch task verification is disabled.');
-            await taskQueueController.pause(documentUri, commandId, 'Automatic batch task verification is disabled.');
+            await taskQueueController.pause(documentUri, commandId, 'Automatic batch task verification is disabled.', batchTasks.map(task => task.lineNumber));
             return true;
         }
 
@@ -150,15 +156,27 @@ export class AutoTaskQueueRunner {
                 return;
             }
 
-            await taskQueueController.pause(documentUri, commandId, 'One or more batch tasks were not verified as complete.');
+            await markTaskLinesPending(documentUri, batchTasks.map(task => task.lineNumber));
+            await taskQueueController.pause(documentUri, commandId, 'One or more batch tasks were not verified as complete.', batchTasks.map(task => task.lineNumber));
             vscode.window.showWarningMessage('Auto task queue paused because one or more batch tasks were not verified as complete.');
         }).catch(error => {
             outputChannel.appendLine(`[Task Execute] Failed to continue auto task queue after batch verification: ${error}`);
-            taskQueueController.pause(documentUri, commandId, `Failed to continue queue after batch verification: ${error}`).catch(queueError => {
+            taskQueueController.pause(documentUri, commandId, `Failed to continue queue after batch verification: ${error}`, batchTasks.map(task => task.lineNumber)).catch(queueError => {
                 outputChannel.appendLine(`[Task Queue] Failed to pause batch queue state: ${queueError}`);
             });
         });
 
         return true;
+    }
+
+    private getExpectedRunIdsBySignalPath(tasks: readonly AutoTaskQueueTaskState[]): Record<string, string> {
+        const expectedRunIdsBySignalPath: Record<string, string> = {};
+        for (const task of tasks) {
+            if (task.completionSignalPath && task.completionSignalToken) {
+                expectedRunIdsBySignalPath[task.completionSignalPath] = task.completionSignalToken;
+            }
+        }
+
+        return expectedRunIdsBySignalPath;
     }
 }

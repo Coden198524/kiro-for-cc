@@ -18,6 +18,16 @@ export interface TaskPlanQualityReport {
     issues: TaskPlanQualityIssue[];
 }
 
+export interface TaskPlanQualityAnalysisOptions {
+    requirementsText?: string;
+    designText?: string;
+}
+
+interface RequirementIndex {
+    ids: Set<string>;
+    lineNumbersById: Map<string, number>;
+}
+
 interface TaskPlanEntry {
     lineNumber: number;
     taskId?: string;
@@ -28,6 +38,28 @@ interface TaskPlanEntry {
 }
 
 const REQUIRED_LEAF_METADATA = ['files', 'depends on', 'requirements', 'verify', 'done when'];
+const KNOWN_VERIFY_COMMANDS = new Set([
+    'npm',
+    'pnpm',
+    'yarn',
+    'npx',
+    'node',
+    'dotnet',
+    'go',
+    'cargo',
+    'python',
+    'python3',
+    'pytest',
+    'vitest',
+    'jest',
+    'tsc',
+    'webpack',
+    'vsce',
+    'mvn',
+    'gradle',
+    'make',
+    'cmake'
+]);
 const METADATA_KEY_ALIASES: Record<string, string> = {
     dependencies: 'depends on',
     depends: 'depends on',
@@ -55,12 +87,17 @@ const METADATA_KEY_ALIASES: Record<string, string> = {
     完成标准: 'done when'
 };
 
-export function analyzeTaskPlanQuality(lines: readonly string[]): TaskPlanQualityReport {
+export function analyzeTaskPlanQuality(
+    lines: readonly string[],
+    options: TaskPlanQualityAnalysisOptions = {}
+): TaskPlanQualityReport {
     const tasks = collectTasks(lines);
     const leafTasks = tasks.filter(task => task.isLeaf);
     const issues: TaskPlanQualityIssue[] = [];
     const taskIds = new Map<string, TaskPlanEntry>();
     const parentTaskIds = new Set(tasks.filter(task => !task.isLeaf).map(task => task.taskId).filter((taskId): taskId is string => Boolean(taskId)));
+    const requirementIndex = buildRequirementIndex(options.requirementsText);
+    const referencedRequirementIds = new Set<string>();
 
     for (const task of tasks) {
         if (!task.taskId) {
@@ -89,6 +126,26 @@ export function analyzeTaskPlanQuality(lines: readonly string[]): TaskPlanQualit
             issues.push(issue('error', task, 'Leaf task _Files:_ metadata must list at least one concrete file or directory scope.'));
         }
 
+        const requirementRefs = parseRequirementMetadata(task.metadata.get('requirements'));
+        if (task.metadata.has('requirements') && requirementRefs.length === 0) {
+            issues.push(issue('error', task, 'Leaf task _Requirements:_ metadata must list at least one requirement id.'));
+        }
+
+        for (const requirementId of requirementRefs) {
+            referencedRequirementIds.add(requirementId);
+            if (requirementIndex.ids.size > 0 && !requirementIndex.ids.has(requirementId)) {
+                issues.push(issue('error', task, `Task ${task.taskId} references requirement ${requirementId}, but it was not found in requirements.md.`));
+            }
+        }
+
+        const verifyValue = task.metadata.get('verify');
+        if (task.metadata.has('verify')) {
+            const verifyIssue = getVerifyCommandIssue(verifyValue);
+            if (verifyIssue) {
+                issues.push(issue(verifyIssue.severity, task, verifyIssue.message));
+            }
+        }
+
         const dependencies = parseDependencyMetadata(task.metadata.get('depends on'));
         for (const dependency of dependencies) {
             if (dependency === task.taskId) {
@@ -98,6 +155,23 @@ export function analyzeTaskPlanQuality(lines: readonly string[]): TaskPlanQualit
             } else if (parentTaskIds.has(dependency)) {
                 issues.push(issue('warning', task, `Task ${task.taskId} depends on parent task ${dependency}; depend on leaf task ids instead.`));
             }
+        }
+    }
+
+    if (options.requirementsText?.trim() && requirementIndex.ids.size === 0) {
+        issues.push({
+            severity: 'warning',
+            message: 'requirements.md did not expose parseable requirement ids, so task requirement references could not be cross-checked.'
+        });
+    }
+
+    for (const requirementId of requirementIndex.ids) {
+        if (!referencedRequirementIds.has(requirementId)) {
+            issues.push({
+                severity: 'warning',
+                lineNumber: requirementIndex.lineNumbersById.get(requirementId),
+                message: `Requirement ${requirementId} from requirements.md is not covered by any leaf task.`
+            });
         }
     }
 
@@ -212,6 +286,75 @@ function parseDependencyMetadata(value: string | undefined): string[] {
     return [...normalized.matchAll(/\b\d+(?:\.\d+)*\b/g)]
         .map(match => match[0])
         .filter((dependency, index, all) => all.indexOf(dependency) === index);
+}
+
+function parseRequirementMetadata(value: string | undefined): string[] {
+    const normalized = (value ?? '').trim();
+    if (!normalized || isEmptyMetadataValue(normalized)) {
+        return [];
+    }
+
+    return uniqueMatches(normalized, /\b\d+(?:\.\d+)+\b/g);
+}
+
+function buildRequirementIndex(requirementsText: string | undefined): RequirementIndex {
+    const ids = new Set<string>();
+    const lineNumbersById = new Map<string, number>();
+    const lines = (requirementsText ?? '').split(/\r?\n/);
+
+    for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
+        const line = lines[lineNumber];
+        const matches = [
+            ...uniqueMatches(line, /(?:Requirement|Req\.?|需求|需求项)\s*[#:：-]?\s*(\d+(?:\.\d+)+)/gi),
+            ...uniqueMatches(line, /^\s*(?:[-*]\s*)?(?:\*\*)?(\d+(?:\.\d+)+)(?:\*\*)?(?:\s|[.)：:~-])/g),
+            ...uniqueMatches(line, /(?:^|\s)(\d+(?:\.\d+)+)\s*[：:~-]/g)
+        ];
+
+        for (const requirementId of matches) {
+            ids.add(requirementId);
+            if (!lineNumbersById.has(requirementId)) {
+                lineNumbersById.set(requirementId, lineNumber);
+            }
+        }
+    }
+
+    return { ids, lineNumbersById };
+}
+
+function uniqueMatches(text: string, pattern: RegExp): string[] {
+    return [...text.matchAll(pattern)]
+        .map(match => match[1] ?? match[0])
+        .filter(Boolean)
+        .filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function getVerifyCommandIssue(value: string | undefined): { severity: TaskPlanQualitySeverity; message: string } | undefined {
+    const normalized = (value ?? '').trim();
+    if (!normalized || isEmptyMetadataValue(normalized) || /^(todo|tbd|待定|暂无|无)$/i.test(normalized)) {
+        return {
+            severity: 'error',
+            message: 'Leaf task _Verify:_ metadata must include a concrete command or explicit manual check.'
+        };
+    }
+
+    if (/\b(manual|manually|inspect|review|open vscode|unity test runner|手动|人工|检查|验证)\b/i.test(normalized)) {
+        return undefined;
+    }
+
+    const firstCommand = normalized.match(/^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?([A-Za-z0-9_.\\/-]+)/)?.[1];
+    const commandName = firstCommand?.replace(/\\/g, '/').split('/').pop()?.toLowerCase();
+    if (commandName && KNOWN_VERIFY_COMMANDS.has(commandName.replace(/\.(?:cmd|bat|ps1|exe)$/i, ''))) {
+        return undefined;
+    }
+
+    if (/[|&;]/.test(normalized) && /\b(test|build|check|verify|compile|lint)\b/i.test(normalized)) {
+        return undefined;
+    }
+
+    return {
+        severity: 'warning',
+        message: 'Leaf task _Verify:_ metadata should name a concrete verification command, script, or explicit manual check.'
+    };
 }
 
 function findDependencyCycle(leafTasks: readonly TaskPlanEntry[], taskIds: Map<string, TaskPlanEntry>): string[] | undefined {

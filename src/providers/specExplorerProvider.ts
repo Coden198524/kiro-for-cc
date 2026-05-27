@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { SpecManager } from '../features/spec/specManager';
-import { findRecoverableAutoTaskQueues } from '../features/spec/taskQueueController';
+import {
+    AutoTaskQueueRecoveryRecord,
+    AutoTaskQueueTaskState,
+    findRecoverableAutoTaskQueues,
+    getAutoTaskQueueSummary
+} from '../features/spec/taskQueueController';
 
 export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<SpecItem | undefined | null | void> = new vscode.EventEmitter<SpecItem | undefined | null | void>();
@@ -57,6 +62,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
             }
 
             items.push(...await this.getActionItems());
+            items.push(...await this.getQueueStatusItems());
             
             // Show all specs
             const specs = await this.specManager.getSpecList();
@@ -69,6 +75,10 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
             ));
             
             return [...items, ...specItems];
+        } else if (element.contextValue === 'spec-task-queue-group') {
+            return this.getQueueItems();
+        } else if (element.contextValue === 'spec-task-queue' && element.queue) {
+            return this.getQueueDetailItems(element.queue);
         } else if (element.contextValue === 'spec') {
             // Show spec documents
             const specsPath = await this.specManager.getSpecBasePath();
@@ -124,7 +134,7 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
     }
 
     private async getActionItems(): Promise<SpecItem[]> {
-        const items = [
+        return [
             new SpecItem(
                 'Initialize Project Context',
                 vscode.TreeItemCollapsibleState.None,
@@ -162,13 +172,19 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                 }
             )
         ];
+    }
 
-        const recoverableQueueCount = await this.getRecoverableQueueCount();
-        if (recoverableQueueCount > 0) {
-            items.push(new SpecItem(
-                `Interrupted Auto Queues (${recoverableQueueCount})`,
-                vscode.TreeItemCollapsibleState.None,
-                'spec-action-task-queues',
+    private async getQueueStatusItems(): Promise<SpecItem[]> {
+        const queues = await this.getRecoverableQueues();
+        if (queues.length === 0) {
+            return [];
+        }
+
+        return [
+            new SpecItem(
+                `Auto Task Queues (${queues.length})`,
+                vscode.TreeItemCollapsibleState.Expanded,
+                'spec-task-queue-group',
                 this.context,
                 undefined,
                 undefined,
@@ -176,20 +192,88 @@ export class SpecExplorerProvider implements vscode.TreeDataProvider<SpecItem> {
                     command: 'autocode.spec.showTaskQueues',
                     title: 'Review Auto Task Queues'
                 }
-            ));
-        }
-
-        return items;
+            )
+        ];
     }
 
-    private async getRecoverableQueueCount(): Promise<number> {
+    private async getQueueItems(): Promise<SpecItem[]> {
+        const queues = await this.getRecoverableQueues();
+        return queues.map(queue => {
+            const summary = getAutoTaskQueueSummary(queue.record);
+            const queuedTasks = getQueuedTasks(queue.record);
+            const failedCount = queue.record.status === 'paused' ? queuedTasks.length : 0;
+            const detail = [
+                `${formatQueueStatus(queue.record.status)}`,
+                `${summary.taskCount} task(s)`,
+                failedCount > 0 ? `${failedCount} pending/failed` : undefined
+            ].filter(Boolean).join(' - ');
+
+            return new SpecItem(
+                queue.specName,
+                vscode.TreeItemCollapsibleState.Expanded,
+                'spec-task-queue',
+                this.context,
+                queue.specName,
+                undefined,
+                {
+                    command: 'autocode.spec.showTaskQueueDetails',
+                    title: 'Show Auto Task Queue Details',
+                    arguments: [queue.documentUri]
+                },
+                undefined,
+                queue,
+                detail
+            );
+        });
+    }
+
+    private getQueueDetailItems(queue: AutoTaskQueueRecoveryRecord): SpecItem[] {
+        const record = queue.record;
+        const queuedTasks = getQueuedTasks(record);
+        const details = [
+            this.createQueueDetailItem(`Status: ${formatQueueStatus(record.status)}`, record.pauseReason ? 'paused' : undefined),
+            this.createQueueDetailItem(`Command: ${record.commandId}`),
+            this.createQueueDetailItem(`Queued tasks: ${queuedTasks.length}`),
+            record.batchTasks?.length ? this.createQueueDetailItem(`Current batch: ${record.batchTasks.length} task(s)`) : undefined,
+            record.pauseReason ? this.createQueueDetailItem(`Pause reason: ${record.pauseReason}`) : undefined,
+            record.lastEvent ? this.createQueueDetailItem(`Last event: ${record.lastEvent}`) : undefined
+        ].filter((item): item is SpecItem => Boolean(item));
+
+        const taskDetails = queuedTasks.map(task => this.createQueueTaskItem(record.status, task));
+        return [...details, ...taskDetails];
+    }
+
+    private createQueueDetailItem(label: string, description?: string): SpecItem {
+        return new SpecItem(
+            label,
+            vscode.TreeItemCollapsibleState.None,
+            'spec-task-queue-detail',
+            this.context,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            description
+        );
+    }
+
+    private createQueueTaskItem(status: string, task: AutoTaskQueueTaskState): SpecItem {
+        const prefix = status === 'paused'
+            ? 'Pending/failed'
+            : status === 'waiting_for_signal'
+                ? 'Waiting'
+                : 'Task';
+        return this.createQueueDetailItem(`${prefix} ${task.lineNumber + 1}: ${task.taskDescription}`);
+    }
+
+    private async getRecoverableQueues(): Promise<AutoTaskQueueRecoveryRecord[]> {
         try {
             const specBasePath = await this.specManager.getSpecBasePath();
-            const queues = await findRecoverableAutoTaskQueues(vscode.workspace.workspaceFolders, specBasePath);
-            return queues.length;
+            return await findRecoverableAutoTaskQueues(vscode.workspace.workspaceFolders, specBasePath);
         } catch (error) {
             this.outputChannel.appendLine(`[SpecExplorer] Failed to inspect auto task queues: ${error}`);
-            return 0;
+            return [];
         }
     }
 }
@@ -203,7 +287,9 @@ class SpecItem extends vscode.TreeItem {
         public readonly specName?: string,
         public readonly documentType?: string,
         public readonly command?: vscode.Command,
-        private readonly filePath?: string
+        private readonly filePath?: string,
+        public readonly queue?: AutoTaskQueueRecoveryRecord,
+        private readonly detailDescription?: string
     ) {
         super(label, collapsibleState);
         
@@ -217,12 +303,21 @@ class SpecItem extends vscode.TreeItem {
                 this.iconPath = new vscode.ThemeIcon('repo');
             } else if (contextValue === 'spec-action-create-agents') {
                 this.iconPath = new vscode.ThemeIcon('sparkle');
-            } else if (contextValue === 'spec-action-task-queues') {
-                this.iconPath = new vscode.ThemeIcon('debug-continue');
-                this.description = 'recover';
             } else {
                 this.iconPath = new vscode.ThemeIcon('plus');
             }
+        } else if (contextValue === 'spec-task-queue-group') {
+            this.iconPath = new vscode.ThemeIcon('list-tree');
+            this.description = 'active';
+            this.tooltip = 'Active AutoCode task queues';
+        } else if (contextValue === 'spec-task-queue') {
+            this.iconPath = getQueueStatusIcon(queue?.record.status);
+            this.description = detailDescription;
+            this.tooltip = queue ? formatQueueTooltip(queue) : label;
+        } else if (contextValue === 'spec-task-queue-detail') {
+            this.iconPath = new vscode.ThemeIcon('debug-stackframe-dot');
+            this.description = detailDescription;
+            this.tooltip = label;
         } else if (contextValue === 'spec') {
             this.iconPath = new vscode.ThemeIcon('package');
             this.tooltip = `Spec: ${label}`;
@@ -253,4 +348,44 @@ class SpecItem extends vscode.TreeItem {
             }
         }
     }
+}
+
+function getQueuedTasks(record: AutoTaskQueueRecoveryRecord['record']): AutoTaskQueueTaskState[] {
+    return [
+        ...(record.currentTask ? [record.currentTask] : []),
+        ...(record.batchTasks ?? [])
+    ];
+}
+
+function formatQueueStatus(status: string): string {
+    return status.replace(/_/g, ' ');
+}
+
+function getQueueStatusIcon(status: string | undefined): vscode.ThemeIcon {
+    if (status === 'paused') {
+        return new vscode.ThemeIcon('debug-pause');
+    }
+
+    if (status === 'waiting_for_signal') {
+        return new vscode.ThemeIcon('watch');
+    }
+
+    if (status === 'running') {
+        return new vscode.ThemeIcon('debug-start');
+    }
+
+    return new vscode.ThemeIcon('list-tree');
+}
+
+function formatQueueTooltip(queue: AutoTaskQueueRecoveryRecord): string {
+    const record = queue.record;
+    const queuedTasks = getQueuedTasks(record);
+    return [
+        `Spec: ${queue.specName}`,
+        `Status: ${formatQueueStatus(record.status)}`,
+        `Queued tasks: ${queuedTasks.length}`,
+        record.batchTasks?.length ? `Current batch: ${record.batchTasks.length}` : undefined,
+        record.pauseReason ? `Pause reason: ${record.pauseReason}` : undefined,
+        record.lastEvent ? `Last event: ${record.lastEvent}` : undefined
+    ].filter(Boolean).join('\n');
 }

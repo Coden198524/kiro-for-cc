@@ -61,6 +61,22 @@ export interface AutoTaskQueueSummary {
     stale: boolean;
 }
 
+export interface AutoTaskQueueLockSummary {
+    path: string;
+    status: 'absent' | 'active' | 'stale';
+    owner?: string;
+    createdAt?: string;
+    ageMs?: number;
+}
+
+export interface AutoTaskQueueDiagnostics {
+    taskFilePath: string;
+    statePath: string;
+    lock: AutoTaskQueueLockSummary;
+    record?: AutoTaskQueueRecord;
+    summary?: AutoTaskQueueSummary;
+}
+
 export class AutoTaskQueueStartBlockedError extends Error {
     constructor(
         public readonly reason: AutoTaskQueueStartBlockedReason,
@@ -90,6 +106,22 @@ export async function readAutoTaskQueueRecord(documentUri: vscode.Uri): Promise<
     } catch {
         return undefined;
     }
+}
+
+export async function getAutoTaskQueueDiagnostics(
+    documentUri: vscode.Uri,
+    now = Date.now()
+): Promise<AutoTaskQueueDiagnostics> {
+    const record = await readAutoTaskQueueRecord(documentUri);
+    const lockPath = getAutoTaskQueueLockPath(documentUri);
+    const lock = await readAutoTaskQueueLock(vscode.Uri.file(lockPath));
+    return {
+        taskFilePath: documentUri.fsPath,
+        statePath: getAutoTaskQueueStatePath(documentUri),
+        lock: summarizeAutoTaskQueueLock(lockPath, lock, now),
+        record,
+        summary: record ? getAutoTaskQueueSummary(record, now) : undefined
+    };
 }
 
 export async function findRecoverableAutoTaskQueues(
@@ -266,9 +298,7 @@ export class TaskQueueController {
     ): Promise<void> {
         await this.withFileLock(documentUri, async () => {
             const existing = await this.getPersistedRecord(documentUri, commandId);
-            const currentTask = existing?.currentTask && (lineNumbers.length === 0 || lineNumbers.includes(existing.currentTask.lineNumber))
-                ? existing.currentTask
-                : existing?.currentTask;
+            const pausedTasks = this.getPausedQueueTasks(existing, lineNumbers);
             await this.writeRecord(documentUri, {
                 version: 1,
                 queueRunId: existing?.queueRunId ?? createQueueRunId(),
@@ -277,8 +307,8 @@ export class TaskQueueController {
                 status: 'paused',
                 startedAt: existing?.startedAt ?? new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                currentTask,
-                batchTasks: existing?.batchTasks,
+                currentTask: pausedTasks.currentTask,
+                batchTasks: pausedTasks.batchTasks,
                 lastEvent: reason,
                 pauseReason: reason
             }, existing);
@@ -475,6 +505,29 @@ export class TaskQueueController {
         }
     }
 
+    private getPausedQueueTasks(
+        existing: AutoTaskQueueRecord | undefined,
+        lineNumbers: readonly number[]
+    ): { currentTask?: AutoTaskQueueTaskState; batchTasks?: AutoTaskQueueTaskState[] } {
+        if (!existing || lineNumbers.length === 0) {
+            return {
+                currentTask: existing?.currentTask,
+                batchTasks: existing?.batchTasks
+            };
+        }
+
+        const pausedLineNumbers = new Set(lineNumbers);
+        const currentTask = existing.currentTask && pausedLineNumbers.has(existing.currentTask.lineNumber)
+            ? existing.currentTask
+            : undefined;
+        const batchTasks = existing.batchTasks?.filter(task => pausedLineNumbers.has(task.lineNumber));
+
+        return {
+            currentTask,
+            batchTasks: batchTasks && batchTasks.length > 0 ? batchTasks : undefined
+        };
+    }
+
     private async withStartLock<T>(documentUri: vscode.Uri, action: () => Promise<T>): Promise<T> {
         const key = this.getQueueKey(documentUri);
         const previous = TaskQueueController.startLocks.get(key) ?? Promise.resolve();
@@ -631,6 +684,31 @@ async function deleteAutoTaskQueueLock(lockUri: vscode.Uri): Promise<void> {
 function isAutoTaskQueueLockStale(record: AutoTaskQueueLockRecord, now = Date.now()): boolean {
     const createdAt = Date.parse(record.createdAt);
     return !Number.isFinite(createdAt) || now - createdAt > AUTO_TASK_QUEUE_LOCK_STALE_MS;
+}
+
+function summarizeAutoTaskQueueLock(
+    lockPath: string,
+    record: AutoTaskQueueLockRecord | undefined,
+    now: number
+): AutoTaskQueueLockSummary {
+    if (!record) {
+        return {
+            path: lockPath,
+            status: 'absent'
+        };
+    }
+
+    const createdAt = Date.parse(record.createdAt);
+    const ageMs = Number.isFinite(createdAt)
+        ? Math.max(0, now - createdAt)
+        : undefined;
+    return {
+        path: lockPath,
+        status: isAutoTaskQueueLockStale(record, now) ? 'stale' : 'active',
+        owner: record.owner,
+        createdAt: record.createdAt,
+        ageMs
+    };
 }
 
 function getQueueRunId(record: Partial<AutoTaskQueueRecord>, documentUri: vscode.Uri): string {

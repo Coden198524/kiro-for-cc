@@ -27,6 +27,7 @@ export interface TaskImplementationRun {
     completionSignalPath?: string;
     completionSignalToken?: string;
     completionSignalPaths?: string[];
+    completionSignalTokens?: string[];
     parallelRuns?: ParallelTaskImplementationRun[];
     failedLineNumbers?: number[];
     fallbackToSequential?: boolean;
@@ -390,6 +391,7 @@ export class SpecManager {
                 mode,
                 provider: this.agentRuntime.provider,
                 prompt,
+                runId: completionSignalToken,
                 terminal
             });
         }
@@ -643,7 +645,11 @@ export class SpecManager {
         }
 
         const document = await vscode.workspace.openTextDocument(vscode.Uri.file(taskFilePath));
-        const report = analyzeTaskPlanQuality(this.getDocumentLines(document));
+        const specDir = path.dirname(taskFilePath);
+        const report = analyzeTaskPlanQuality(this.getDocumentLines(document), {
+            requirementsText: await this.readTextIfExists(path.join(specDir, 'requirements.md')),
+            designText: await this.readTextIfExists(path.join(specDir, 'design.md'))
+        });
         if (report.issueCount === 0) {
             this.reportedTaskPlanQualityPaths.add(normalizedPath);
             return;
@@ -1342,13 +1348,14 @@ export class SpecManager {
         });
 
         // Auto-cleanup after timeout
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             if (!disposed) {
                 this.outputChannel.appendLine(`[SpecManager] Watcher timeout - cleaning up`);
                 this.disposeWatcher(disposable, watcher);
                 disposed = true;
             }
         }, 60000); // 60 seconds timeout
+        timeout.unref?.();
     }
 
     /**

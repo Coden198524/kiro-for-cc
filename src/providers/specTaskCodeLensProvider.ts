@@ -12,8 +12,12 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
         this.configManager = ConfigManager.getInstance();
         this.configManager.loadSettings();
         vscode.workspace.onDidChangeConfiguration((_) => {
-            this._onDidChangeCodeLenses.fire();
+            this.refresh();
         });
+    }
+
+    public refresh(): void {
+        this._onDidChangeCodeLenses.fire();
     }
 
     public async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
@@ -41,6 +45,12 @@ export class SpecTaskCodeLensProvider implements vscode.CodeLensProvider {
                     summary.currentTaskDescription ? `Current: ${summary.currentTaskDescription}` : undefined
                 ].filter(Boolean).join('\n'),
                 command: 'autocode.spec.resumeTaskQueue',
+                arguments: [document.uri]
+            }));
+            codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+                title: 'Queue Details',
+                tooltip: 'Open queue diagnostics with run id, queued tasks, completion signals, and lock state',
+                command: 'autocode.spec.showTaskQueueDetails',
                 arguments: [document.uri]
             }));
             codeLenses.push(new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {

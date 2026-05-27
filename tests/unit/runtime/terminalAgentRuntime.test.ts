@@ -14,6 +14,8 @@ jest.mock('fs', () => ({
     promises: {
         writeFile: jest.fn(),
         readFile: jest.fn(),
+        readdir: jest.fn(),
+        stat: jest.fn(),
         unlink: jest.fn()
     }
 }));
@@ -27,6 +29,9 @@ describe('TerminalAgentRuntime', () => {
         jest.clearAllMocks();
         configValues = {};
         (ConfigManager as any).instance = undefined;
+        (fs.promises.readdir as jest.Mock).mockRejectedValue(new Error('missing directory'));
+        (fs.promises.stat as jest.Mock).mockRejectedValue(new Error('missing file'));
+        (fs.promises.unlink as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.Uri as any).file = (filePath: string) => ({
             fsPath: filePath,
@@ -64,6 +69,8 @@ describe('TerminalAgentRuntime', () => {
     afterEach(() => {
         jest.useRealTimers();
         jest.restoreAllMocks();
+        delete (vscode.window as any).onDidChangeTerminalShellIntegration;
+        delete (vscode.window as any).onDidStartTerminalShellExecution;
     });
 
     test('builds Claude permission bypass command', () => {
@@ -338,6 +345,52 @@ describe('TerminalAgentRuntime', () => {
 
         jest.advanceTimersByTime(1);
         expect(terminal.sendText).toHaveBeenNthCalledWith(3, '', true);
+    });
+
+    test('waits for observable shell readiness before launching an interactive Codex command', async () => {
+        jest.useFakeTimers();
+        configValues['agent.provider'] = 'codex';
+        configValues['providers.codex.command'] = 'codex';
+        let shellReadyHandler: ((event: { terminal: vscode.Terminal }) => void) | undefined;
+        let shellStartHandler: ((event: { terminal: vscode.Terminal }) => void) | undefined;
+        (vscode.window as any).onDidChangeTerminalShellIntegration = jest.fn(handler => {
+            shellReadyHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        (vscode.window as any).onDidStartTerminalShellExecution = jest.fn(handler => {
+            shellStartHandler = handler;
+            return { dispose: jest.fn() };
+        });
+        const terminal = {
+            name: 'Mock Terminal',
+            sendText: jest.fn(),
+            show: jest.fn(),
+            shellIntegration: undefined
+        };
+        (vscode.window.createTerminal as jest.Mock).mockReturnValue(terminal);
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+
+        await runtime.invokeInteractive({
+            prompt: 'Feature Description: observable readiness',
+            title: 'AutoCode - Creating Spec'
+        });
+
+        await jest.advanceTimersByTimeAsync(800);
+        expect(terminal.sendText).not.toHaveBeenCalledWith('codex', true);
+
+        shellReadyHandler?.({ terminal: terminal as any });
+        await flushPromises();
+        expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex', true);
+
+        shellStartHandler?.({ terminal: terminal as any });
+        await jest.advanceTimersByTimeAsync(1500);
+        expect(terminal.sendText.mock.calls[1][0]).toContain('interactive-prompt-');
     });
 
     test('starts auto Codex interactive terminal with approval disabled', async () => {
@@ -663,8 +716,45 @@ describe('TerminalAgentRuntime', () => {
         expect((runtime as any).convertPathIfWSL(promptPath)).toBe(expected);
     });
 
+    test('cleans up expired runtime prompt files on startup', async () => {
+        configValues['promptFileRetentionDays'] = 1;
+        const oldPrompt = '/mock/workspace/.autocode/runtime-prompts/interactive-prompt-old.md';
+        const freshPrompt = '/mock/workspace/.autocode/runtime-prompts/interactive-prompt-fresh.md';
+        (fs.promises.readdir as jest.Mock).mockImplementation(async (directoryPath: string) => {
+            if (directoryPath.replace(/\\/g, '/') === '/mock/workspace/.autocode/runtime-prompts') {
+                return ['interactive-prompt-old.md', 'interactive-prompt-fresh.md', 'notes.txt'];
+            }
+
+            throw new Error(`unexpected directory ${directoryPath}`);
+        });
+        (fs.promises.stat as jest.Mock).mockImplementation(async (filePath: string) => ({
+            mtimeMs: filePath.replace(/\\/g, '/') === oldPrompt
+                ? Date.now() - 2 * 24 * 60 * 60 * 1000
+                : Date.now()
+        }));
+
+        const runtime = createRuntime({
+            id: 'codex',
+            displayName: 'Codex',
+            command: 'codex',
+            capabilities: cliCapabilities()
+        });
+        await (runtime as any).cleanupExpiredPromptFiles();
+
+        const deletedPaths = (fs.promises.unlink as jest.Mock).mock.calls
+            .map(call => String(call[0]).replace(/\\/g, '/'));
+        expect(deletedPaths).toContain(oldPrompt);
+        expect(deletedPaths).not.toContain(freshPrompt);
+    });
+
     function createRuntime(provider: AgentProviderConfig): TerminalAgentRuntime {
         return new TerminalAgentRuntime(context, outputChannel, provider);
+    }
+
+    async function flushPromises(): Promise<void> {
+        for (let index = 0; index < 8; index++) {
+            await Promise.resolve();
+        }
     }
 
     function expectedPromptArg(promptFilePath: string): string {

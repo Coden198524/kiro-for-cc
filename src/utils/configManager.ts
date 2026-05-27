@@ -32,6 +32,8 @@ export interface AutoCodeSettings {
         includeUserPreferences: boolean;
         embeddingProvider: 'none' | 'openai' | 'custom';
     };
+    promptFileRetentionDays: number;
+    terminalReadyTimeoutMs: number;
     paths: {
         specs: string;
         steering: string;
@@ -208,6 +210,8 @@ export class ConfigManager {
                 includeUserPreferences: true,
                 embeddingProvider: 'none'
             },
+            promptFileRetentionDays: 7,
+            terminalReadyTimeoutMs: 3000,
             paths: { ...DEFAULT_PATHS },
             views: {
                 specs: { visible: DEFAULT_VIEW_VISIBILITY.specs },

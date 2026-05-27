@@ -3,8 +3,10 @@ import * as path from 'path';
 import { AgentProviderConfig } from '../../runtime/agentRuntime';
 import { getProviderConfig, isAgentProviderId } from '../../runtime/providerRegistry';
 import { quoteCommand, quoteShellArg } from '../../runtime/agentCommandBuilder';
+import { getRuntimeValue } from '../../runtime/runtimeSettings';
 import { ProviderSessionHistory, ProviderSessionHistoryMatch } from './providerSessionHistory';
 import { MemoryManager } from '../memory/memoryManager';
+import { ConfigManager } from '../../utils/configManager';
 
 export type TaskSessionStatus = 'inProgress' | 'completed';
 export type TaskInvocationMode = 'start' | 'resume';
@@ -19,6 +21,7 @@ export interface TaskInvocationRecord {
     terminalName?: string;
     providerSessionId?: string;
     providerSessionPath?: string;
+    runId?: string;
     promptSnapshotPath: string;
 }
 
@@ -47,6 +50,7 @@ export interface RecordTaskInvocationRequest {
     mode: TaskInvocationMode;
     provider: AgentProviderConfig;
     prompt: string;
+    runId?: string;
     terminal?: vscode.Terminal;
 }
 
@@ -60,6 +64,9 @@ export class TaskSessionManager {
     ) {
         vscode.window.onDidCloseTerminal(terminal => {
             this.forgetTerminal(terminal);
+        });
+        this.cleanupExpiredSessionPromptFiles().catch(error => {
+            this.outputChannel.appendLine(`[TaskSession] Failed to cleanup expired prompt snapshots: ${error}`);
         });
     }
 
@@ -90,6 +97,7 @@ export class TaskSessionManager {
             providerName: request.provider.displayName,
             model: request.provider.model,
             terminalName: request.terminal?.name,
+            runId: request.runId,
             promptSnapshotPath
         };
 
@@ -306,6 +314,7 @@ export class TaskSessionManager {
             `- Provider: ${invocation.providerName}`,
             `- Model: ${invocation.model || '(default)'}`,
             `- Terminal: ${invocation.terminalName || '(not recorded)'}`,
+            `- Run ID: ${invocation.runId || '(not recorded)'}`,
             `- Prompt Snapshot: ${invocation.promptSnapshotPath}`
         ].join('\n')).join('\n\n');
 
@@ -383,6 +392,95 @@ export class TaskSessionManager {
         const promptPath = path.join(promptDir, `${sessionId}-${invocationId}.md`);
         await vscode.workspace.fs.writeFile(vscode.Uri.file(promptPath), Buffer.from(prompt));
         return promptPath;
+    }
+
+    private async cleanupExpiredSessionPromptFiles(): Promise<void> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders?.length) {
+            return;
+        }
+
+        const retentionMs = this.getPromptFileRetentionMs();
+        const now = Date.now();
+        const configManager = ConfigManager.getInstance();
+        await configManager.loadSettings();
+        const specBasePath = configManager.getPath('specs');
+
+        for (const workspaceFolder of workspaceFolders) {
+            const specsRoot = path.isAbsolute(specBasePath)
+                ? specBasePath
+                : path.join(workspaceFolder.uri.fsPath, specBasePath);
+            await this.cleanupSessionPromptRoot(specsRoot, retentionMs, now);
+        }
+    }
+
+    private async cleanupSessionPromptRoot(specsRoot: string, retentionMs: number, now: number): Promise<void> {
+        let specEntries: [string, vscode.FileType][];
+        try {
+            specEntries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(specsRoot));
+        } catch {
+            return;
+        }
+
+        if (!Array.isArray(specEntries)) {
+            return;
+        }
+
+        for (const [specName, type] of specEntries) {
+            if (type !== vscode.FileType.Directory) {
+                continue;
+            }
+
+            await this.cleanupExpiredFilesInDirectory(
+                path.join(specsRoot, specName, '.autocode', 'session-prompts'),
+                /\.md$/i,
+                retentionMs,
+                now
+            );
+        }
+    }
+
+    private async cleanupExpiredFilesInDirectory(
+        directoryPath: string,
+        fileNamePattern: RegExp,
+        retentionMs: number,
+        now: number
+    ): Promise<void> {
+        let entries: [string, vscode.FileType][];
+        try {
+            entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(directoryPath));
+        } catch {
+            return;
+        }
+
+        if (!Array.isArray(entries)) {
+            return;
+        }
+
+        for (const [fileName, type] of entries) {
+            if (type !== vscode.FileType.File || !fileNamePattern.test(fileName)) {
+                continue;
+            }
+
+            const fileUri = vscode.Uri.file(path.join(directoryPath, fileName));
+            try {
+                const stat = await vscode.workspace.fs.stat(fileUri);
+                if (typeof stat.mtime === 'number' && now - stat.mtime > retentionMs) {
+                    await vscode.workspace.fs.delete(fileUri);
+                    this.outputChannel.appendLine(`[TaskSession] Cleaned up expired prompt snapshot: ${fileUri.fsPath}`);
+                }
+            } catch (error) {
+                this.outputChannel.appendLine(`[TaskSession] Failed to cleanup prompt snapshot ${fileUri.fsPath}: ${error}`);
+            }
+        }
+    }
+
+    private getPromptFileRetentionMs(): number {
+        const retentionDays = getRuntimeValue<number>('promptFileRetentionDays', 7);
+        const normalizedDays = typeof retentionDays === 'number' && Number.isFinite(retentionDays)
+            ? Math.max(0, retentionDays)
+            : 7;
+        return normalizedDays * 24 * 60 * 60 * 1000;
     }
 
     private async readStore(taskFilePath: string): Promise<TaskSessionStore> {

@@ -139,4 +139,62 @@ describe('task plan quality analysis', () => {
 
         expect(report.issueCount).toBe(0);
     });
+
+    test('cross-checks task requirement references against requirements.md coverage', () => {
+        const report = analyzeTaskPlanQuality([
+            '- [ ] 1. Build first slice',
+            '  - _Files: src/first.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.1, 9.9_',
+            '  - _Verify: npm test -- first.test.ts_',
+            '  - _Done when: first slice passes_',
+            '- [ ] 2. Build second slice',
+            '  - _Files: src/second.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.2_',
+            '  - _Verify: npm test -- second.test.ts_',
+            '  - _Done when: second slice passes_'
+        ], {
+            requirementsText: [
+                '# Requirements',
+                '## Requirement 1.1',
+                'User can start the queue.',
+                '## Requirement 1.2',
+                'User can resume the queue.',
+                '## Requirement 2.1',
+                'User can inspect queue state.'
+            ].join('\n')
+        });
+
+        expect(report.errorCount).toBe(1);
+        expect(report.warningCount).toBe(1);
+        expect(report.issues.map(item => item.message)).toEqual(expect.arrayContaining([
+            'Task 1 references requirement 9.9, but it was not found in requirements.md.',
+            'Requirement 2.1 from requirements.md is not covered by any leaf task.'
+        ]));
+    });
+
+    test('validates verify metadata is actionable', () => {
+        const report = analyzeTaskPlanQuality([
+            '- [ ] 1. Missing verification',
+            '  - _Files: src/feature.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.1_',
+            '  - _Verify: TBD_',
+            '  - _Done when: feature passes_',
+            '- [ ] 2. Vague verification',
+            '  - _Files: src/other.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.1_',
+            '  - _Verify: run checks_',
+            '  - _Done when: checks pass_'
+        ]);
+
+        expect(report.errorCount).toBe(1);
+        expect(report.warningCount).toBe(1);
+        expect(report.issues.map(item => item.message)).toEqual(expect.arrayContaining([
+            'Leaf task _Verify:_ metadata must include a concrete command or explicit manual check.',
+            'Leaf task _Verify:_ metadata should name a concrete verification command, script, or explicit manual check.'
+        ]));
+    });
 });

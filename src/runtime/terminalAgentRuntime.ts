@@ -23,6 +23,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 6000;
     private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 12;
     private static readonly INTERACTIVE_PROMPT_FILE_CLEANUP_MS = 6 * 60 * 60 * 1000;
+    private static readonly PROMPT_FILE_RETENTION_DAYS = 7;
     private static readonly VISIBLE_HEADLESS_POLL_INTERVAL_MS = 1000;
     private static readonly VISIBLE_HEADLESS_TIMEOUT_MS = 30 * 60 * 1000;
     private configManager: ConfigManager;
@@ -63,6 +64,10 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 this.commandTerminalProviderId = undefined;
             }
         });
+
+        this.cleanupExpiredPromptFiles().catch(error => {
+            this.outputChannel.appendLine(`[AgentRuntime] Failed to cleanup expired prompt files: ${error}`);
+        });
     }
 
     async invokeInteractive(request: AgentInvocationRequest): Promise<vscode.Terminal> {
@@ -97,10 +102,9 @@ export class TerminalAgentRuntime implements AgentRuntime {
 
             terminal.show();
 
-            const delay = this.configManager.getTerminalDelay();
-            setTimeout(() => {
-                terminal.sendText(command, true);
-            }, delay);
+            this.sendCommandToNewTerminal(terminal, command).catch(error => {
+                this.outputChannel.appendLine(`[AgentRuntime] Failed to send command to terminal: ${error}`);
+            });
 
             this.schedulePromptCleanup(promptFile.localPath, 30000);
             return terminal;
@@ -252,6 +256,13 @@ export class TerminalAgentRuntime implements AgentRuntime {
             return terminal;
         }
 
+        if (this.canObserveTerminalReadiness()) {
+            this.launchInteractivePromptInTerminal(terminal, provider, prompt, terminalApprovalPolicy, commandOptions).catch(error => {
+                this.outputChannel.appendLine(`[AgentRuntime] Failed to launch interactive prompt: ${error}`);
+            });
+            return terminal;
+        }
+
         const delay = this.configManager.getTerminalDelay();
         setTimeout(() => {
             terminal.sendText(this.buildInteractiveCommand(provider, terminalApprovalPolicy, commandOptions), true);
@@ -292,8 +303,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
             return;
         }
 
-        await this.wait(this.configManager.getTerminalDelay());
-        terminal.sendText(this.buildInteractiveCommand(provider, approvalPolicy, commandOptions), true);
+        await this.launchInteractiveCommandInTerminal(terminal, provider, approvalPolicy, commandOptions);
         this.interactiveTerminal = terminal;
         this.interactiveTerminalProviderId = provider.id;
         this.interactiveTerminalApprovalPolicy = approvalPolicy;
@@ -323,6 +333,132 @@ export class TerminalAgentRuntime implements AgentRuntime {
         this.interactiveTerminalStarted = false;
         this.interactivePromptQueue = Promise.resolve();
         return terminal;
+    }
+
+    private async launchInteractivePromptInTerminal(
+        terminal: vscode.Terminal,
+        provider: AgentProviderConfig,
+        prompt: string,
+        approvalPolicy?: AgentApprovalPolicy,
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
+    ): Promise<void> {
+        await this.launchInteractiveCommandInTerminal(terminal, provider, approvalPolicy, commandOptions);
+        await this.wait(TerminalAgentRuntime.INTERACTIVE_PROMPT_PASTE_DELAY);
+        this.sendPromptToInteractiveTerminal(terminal, provider, prompt);
+    }
+
+    private async launchInteractiveCommandInTerminal(
+        terminal: vscode.Terminal,
+        provider: AgentProviderConfig,
+        approvalPolicy?: AgentApprovalPolicy,
+        commandOptions: Omit<AgentCommandOptions, 'approvalPolicy'> = {}
+    ): Promise<void> {
+        await this.waitForObservableTerminalReady(terminal);
+        const commandStarted = this.waitForTerminalShellExecutionStart(terminal, this.getTerminalReadyTimeoutMs());
+        terminal.sendText(this.buildInteractiveCommand(provider, approvalPolicy, commandOptions), true);
+        await commandStarted;
+    }
+
+    private async sendCommandToNewTerminal(terminal: vscode.Terminal, command: string): Promise<void> {
+        if (!this.canObserveTerminalReadiness()) {
+            setTimeout(() => {
+                terminal.sendText(command, true);
+            }, this.configManager.getTerminalDelay());
+            return;
+        }
+
+        await this.waitForObservableTerminalReady(terminal);
+        terminal.sendText(command, true);
+    }
+
+    private async waitForObservableTerminalReady(terminal: vscode.Terminal): Promise<void> {
+        if (!this.canObserveTerminalReadiness()) {
+            await this.wait(this.configManager.getTerminalDelay());
+            return;
+        }
+
+        if (terminal.shellIntegration) {
+            this.outputChannel.appendLine(`[AgentRuntime] Terminal shell integration is ready: ${terminal.name}`);
+            return;
+        }
+
+        const ready = await this.waitForTerminalShellIntegration(terminal, this.getTerminalReadyTimeoutMs());
+        if (ready) {
+            this.outputChannel.appendLine(`[AgentRuntime] Terminal shell integration became ready: ${terminal.name}`);
+            return;
+        }
+
+        this.outputChannel.appendLine(`[AgentRuntime] Terminal readiness was not observable; falling back to ${this.configManager.getTerminalDelay()}ms launch delay.`);
+        await this.wait(this.configManager.getTerminalDelay());
+    }
+
+    private waitForTerminalShellIntegration(terminal: vscode.Terminal, timeoutMs: number): Promise<boolean> {
+        if (terminal.shellIntegration) {
+            return Promise.resolve(true);
+        }
+
+        const onDidChangeTerminalShellIntegration = (vscode.window as unknown as {
+            onDidChangeTerminalShellIntegration?: (listener: (event: { terminal: vscode.Terminal }) => void) => vscode.Disposable;
+        }).onDidChangeTerminalShellIntegration;
+        if (typeof onDidChangeTerminalShellIntegration !== 'function' || timeoutMs <= 0) {
+            return Promise.resolve(false);
+        }
+
+        return new Promise(resolve => {
+            let disposable: vscode.Disposable | undefined;
+            const timer = setTimeout(() => {
+                disposable?.dispose();
+                resolve(false);
+            }, timeoutMs);
+            this.unrefTimer(timer);
+
+            disposable = onDidChangeTerminalShellIntegration(event => {
+                if (event.terminal !== terminal) {
+                    return;
+                }
+
+                clearTimeout(timer);
+                disposable?.dispose();
+                resolve(true);
+            });
+        });
+    }
+
+    private waitForTerminalShellExecutionStart(terminal: vscode.Terminal, timeoutMs: number): Promise<boolean> {
+        const onDidStartTerminalShellExecution = (vscode.window as unknown as {
+            onDidStartTerminalShellExecution?: (listener: (event: { terminal: vscode.Terminal }) => void) => vscode.Disposable;
+        }).onDidStartTerminalShellExecution;
+        if (typeof onDidStartTerminalShellExecution !== 'function' || timeoutMs <= 0) {
+            return Promise.resolve(false);
+        }
+
+        return new Promise(resolve => {
+            let disposable: vscode.Disposable | undefined;
+            const timer = setTimeout(() => {
+                disposable?.dispose();
+                resolve(false);
+            }, timeoutMs);
+            this.unrefTimer(timer);
+
+            disposable = onDidStartTerminalShellExecution(event => {
+                if (event.terminal !== terminal) {
+                    return;
+                }
+
+                clearTimeout(timer);
+                disposable?.dispose();
+                resolve(true);
+            });
+        });
+    }
+
+    private canObserveTerminalReadiness(): boolean {
+        const windowApi = vscode.window as unknown as {
+            onDidChangeTerminalShellIntegration?: unknown;
+            onDidStartTerminalShellExecution?: unknown;
+        };
+        return typeof windowApi.onDidChangeTerminalShellIntegration === 'function' ||
+            typeof windowApi.onDidStartTerminalShellExecution === 'function';
     }
 
     private getOrCreateCommandTerminal(title: string | undefined, providerId: string): vscode.Terminal {
@@ -628,6 +764,10 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         );
     }
 
+    private getTerminalReadyTimeoutMs(): number {
+        return this.getNumberSetting('terminalReadyTimeoutMs', 3000, 0);
+    }
+
     private getNumberSetting(section: string, defaultValue: number, minimum: number): number {
         const rawValue = getRuntimeValue<unknown>(section, defaultValue);
         const value = typeof rawValue === 'number'
@@ -641,6 +781,10 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
 
     private wait(delayMs: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    private unrefTimer(timer: NodeJS.Timeout): void {
+        timer.unref?.();
     }
 
     private submitInteractivePrompt(terminal: vscode.Terminal, provider: AgentProviderConfig): void {
@@ -662,6 +806,62 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
             await this.cleanupPromptFile(promptFilePath);
         }, delayMs);
         timer.unref?.();
+    }
+
+    private async cleanupExpiredPromptFiles(): Promise<void> {
+        const retentionMs = this.getPromptFileRetentionMs();
+        const now = Date.now();
+        const workspaceRuntimePromptDirs = (vscode.workspace.workspaceFolders ?? [])
+            .map(folder => path.join(folder.uri.fsPath, '.autocode', 'runtime-prompts'));
+        const promptDirs = [
+            this.context.globalStorageUri.fsPath,
+            ...workspaceRuntimePromptDirs
+        ];
+
+        for (const promptDir of promptDirs) {
+            await this.cleanupExpiredPromptFilesInDirectory(promptDir, retentionMs, now);
+        }
+    }
+
+    private async cleanupExpiredPromptFilesInDirectory(directoryPath: string, retentionMs: number, now: number): Promise<void> {
+        if (typeof fs.promises.readdir !== 'function' || typeof fs.promises.stat !== 'function') {
+            return;
+        }
+
+        let entries: string[];
+        try {
+            entries = await fs.promises.readdir(directoryPath);
+        } catch {
+            return;
+        }
+
+        for (const fileName of entries) {
+            if (!this.isManagedPromptFileName(fileName)) {
+                continue;
+            }
+
+            const filePath = path.join(directoryPath, fileName);
+            try {
+                const stat = await fs.promises.stat(filePath);
+                if (typeof stat.mtimeMs === 'number' && now - stat.mtimeMs > retentionMs) {
+                    await this.cleanupPromptFile(filePath);
+                }
+            } catch (error) {
+                this.outputChannel.appendLine(`[AgentRuntime] Failed to inspect prompt file ${filePath}: ${error}`);
+            }
+        }
+    }
+
+    private isManagedPromptFileName(fileName: string): boolean {
+        return /^(?:interactive-prompt|prompt|background-prompt|visible-background-prompt)-.+\.md$/i.test(fileName);
+    }
+
+    private getPromptFileRetentionMs(): number {
+        return this.getNumberSetting(
+            'promptFileRetentionDays',
+            TerminalAgentRuntime.PROMPT_FILE_RETENTION_DAYS,
+            0
+        ) * 24 * 60 * 60 * 1000;
     }
 
     private async cleanupPromptFile(promptFilePath: string): Promise<void> {

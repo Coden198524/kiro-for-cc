@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { TaskSessionManager } from '../../../../src/features/spec/taskSessionManager';
 import { AgentProviderConfig } from '../../../../src/runtime/agentRuntime';
+import { ConfigManager } from '../../../../src/utils/configManager';
 
 describe('TaskSessionManager', () => {
     const taskFilePath = '/mock/workspace/.autocode/specs/demo/tasks.md';
@@ -11,8 +12,8 @@ describe('TaskSessionManager', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         files = new Map();
+        (ConfigManager as any).instance = undefined;
         providerSessionHistory = { findSession: jest.fn().mockResolvedValue(undefined) };
-        manager = new TaskSessionManager({ appendLine: jest.fn() } as any, providerSessionHistory as any);
 
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
@@ -25,8 +26,16 @@ describe('TaskSessionManager', () => {
         (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async (uri: vscode.Uri, content: Uint8Array) => {
             files.set(uri.fsPath, Buffer.from(content));
         });
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockRejectedValue(new Error('missing directory'));
+        (vscode.workspace.fs.stat as jest.Mock).mockRejectedValue(new Error('missing file'));
+        (vscode.workspace.fs.delete as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            files.delete(uri.fsPath);
+            files.delete(uri.fsPath.replace(/\\/g, '/'));
+        });
         (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue({ uri: vscode.Uri.file('/preview.md') });
         (vscode.window.showTextDocument as jest.Mock).mockResolvedValue(undefined);
+
+        manager = new TaskSessionManager({ appendLine: jest.fn() } as any, providerSessionHistory as any);
     });
 
     test('records task invocation with prompt snapshot and provider metadata', async () => {
@@ -37,6 +46,7 @@ describe('TaskSessionManager', () => {
             mode: 'start',
             provider: provider(),
             prompt: 'Implement the task',
+            runId: 'run-2',
             terminal: { name: 'AutoCode - Implementing Task' } as any
         });
 
@@ -45,12 +55,49 @@ describe('TaskSessionManager', () => {
         expect(session.invocations[0]).toMatchObject({
             mode: 'start',
             providerName: 'Codex',
-            terminalName: 'AutoCode - Implementing Task'
+            terminalName: 'AutoCode - Implementing Task',
+            runId: 'run-2'
         });
 
         const store = readStore();
         expect(store.sessions).toHaveLength(1);
         expect(files.get(session.invocations[0].promptSnapshotPath)?.toString()).toBe('Implement the task');
+    });
+
+    test('cleans up expired session prompt snapshots on startup', async () => {
+        const outputChannel = { appendLine: jest.fn() };
+        const oldPromptPath = '/mock/workspace/.autocode/specs/demo/.autocode/session-prompts/old.md';
+        const freshPromptPath = '/mock/workspace/.autocode/specs/demo/.autocode/session-prompts/fresh.md';
+
+        (vscode.workspace.fs.readDirectory as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            if (uri.fsPath.replace(/\\/g, '/') === '/mock/workspace/.autocode/specs') {
+                return [['demo', vscode.FileType.Directory]];
+            }
+
+            if (uri.fsPath.replace(/\\/g, '/').endsWith('/.autocode/session-prompts')) {
+                return [
+                    ['old.md', vscode.FileType.File],
+                    ['fresh.md', vscode.FileType.File],
+                    ['nested', vscode.FileType.Directory]
+                ];
+            }
+
+            throw new Error(`unexpected directory ${uri.fsPath}`);
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockImplementation(async (uri: vscode.Uri) => ({
+            type: vscode.FileType.File,
+            ctime: Date.now(),
+            mtime: uri.fsPath.replace(/\\/g, '/') === oldPromptPath ? Date.now() - 8 * 24 * 60 * 60 * 1000 : Date.now(),
+            size: 1
+        }));
+
+        new TaskSessionManager(outputChannel as any, providerSessionHistory as any);
+        await flushPromises();
+
+        const deletedPaths = (vscode.workspace.fs.delete as jest.Mock).mock.calls
+            .map(call => call[0].fsPath.replace(/\\/g, '/'));
+        expect(deletedPaths).toContain(oldPromptPath);
+        expect(deletedPaths).not.toContain(freshPromptPath);
     });
 
     test('marks the latest matching session completed', async () => {
@@ -286,6 +333,12 @@ describe('TaskSessionManager', () => {
             throw new Error('task session store was not written');
         }
         return JSON.parse(files.get(storePath)!.toString());
+    }
+
+    async function flushPromises(): Promise<void> {
+        for (let index = 0; index < 8; index++) {
+            await Promise.resolve();
+        }
     }
 
     function provider(overrides: Partial<AgentProviderConfig> = {}): AgentProviderConfig {
