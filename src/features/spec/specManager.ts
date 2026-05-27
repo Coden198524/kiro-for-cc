@@ -29,6 +29,7 @@ export interface TaskImplementationRun {
     completionSignalPaths?: string[];
     parallelRuns?: ParallelTaskImplementationRun[];
     failedLineNumbers?: number[];
+    fallbackToSequential?: boolean;
     lineNumber?: number;
     taskDescription?: string;
 }
@@ -555,13 +556,13 @@ export class SpecManager {
 
         if (taskContext.tasks.length === 1) {
             vscode.window.showInformationMessage('Only one runnable spec task was found. Running the normal task executor.');
-            return this.implAllTasks(taskFilePath, options);
+            return this.withSequentialFallback(await this.implAllTasks(taskFilePath, options));
         }
 
         const analysis = this.analyzeParallelTaskSafety(taskContext);
         if (!analysis.canRunInParallel) {
             vscode.window.showWarningMessage(`Parallel task execution fell back to sequential mode: ${analysis.fallbackReason}`);
-            return this.implAllTasks(taskFilePath, options);
+            return this.withSequentialFallback(await this.implAllTasks(taskFilePath, options));
         }
 
         if (analysis.readyScopes.length === 0) {
@@ -629,6 +630,10 @@ export class SpecManager {
 
     private async getRunnableTasks(taskFilePath: string): Promise<RunnableTask[]> {
         return this.getSequentialTaskOrder(await this.getRunnableTaskContext(taskFilePath));
+    }
+
+    private withSequentialFallback(run: TaskImplementationRun | undefined): TaskImplementationRun | undefined {
+        return run ? { ...run, fallbackToSequential: true } : undefined;
     }
 
     private async reportTaskPlanQuality(taskFilePath: string): Promise<void> {
@@ -818,8 +823,8 @@ export class SpecManager {
             };
         }
 
-        const value = dependencyLine.replace(/^(?:[-*]\s*)?(?:_)?(?:depends on|dependencies|depends|blocked by|依赖|前置任务|依赖任务)\s*[:：]\s*/i, '').replace(/_$/, '').trim();
-        if (!value || /^(none|n\/a|na|null|empty|无|无依赖|没有|不依赖|-+)$/i.test(value)) {
+        const value = dependencyLine.replace(this.getDependencyMetadataPrefixPattern(), '').replace(/_$/, '').trim();
+        if (!value || /^(none|n\/a|na|null|empty|无|没有|不依赖|无需|无依赖|-+)$/i.test(value)) {
             return {
                 dependencies: [],
                 hasExplicitDependencies: true
@@ -1087,12 +1092,16 @@ export class SpecManager {
             return englishRisk[1];
         }
 
-        const chineseRisk = text.match(/全局|共享|公共|重构|依赖|安装|配置|构建|生成|迁移|改名|移动/);
+        const chineseRisk = text.match(/全局|共享|公共|重构|安装|配置|构建|生成|迁移|改名|移动|跨模块|跨文件/);
         return chineseRisk?.[0];
     }
 
     private isDependencyMetadataLine(line: string): boolean {
-        return /^(?:[-*]\s*)?(?:_)?(?:depends on|dependencies|depends|blocked by|依赖|前置任务|依赖任务)\s*[:：]/i.test(line);
+        return this.getDependencyMetadataPrefixPattern().test(line);
+    }
+
+    private getDependencyMetadataPrefixPattern(): RegExp {
+        return /^(?:[-*]\s*)?_?(?:depends on|dependencies|depends|blocked by|依赖|前置任务|依赖任务|阻塞于)\s*[:：]\s*/i;
     }
 
     private findOverlappingFileScope(leftScopes: string[], rightScopes: string[]): string | undefined {

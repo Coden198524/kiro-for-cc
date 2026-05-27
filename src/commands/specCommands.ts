@@ -1,19 +1,18 @@
 import * as vscode from 'vscode';
-import { SpecManager, TaskImplementationRun } from '../features/spec/specManager';
+import { SpecManager } from '../features/spec/specManager';
 import { TaskCompletionService } from '../features/spec/taskCompletionService';
 import {
     AutoTaskQueueCommandId,
-    AutoTaskQueueRecord,
     AutoTaskQueueRecoveryRecord,
     AutoTaskQueueStartBlockedError,
-    AutoTaskQueueTaskState,
     findRecoverableAutoTaskQueues,
     getAutoTaskQueueSummary,
     isAutoTaskQueueStale,
     TaskQueueController
 } from '../features/spec/taskQueueController';
+import { AutoTaskQueueRunner } from '../features/spec/autoTaskQueueRunner';
+import { TaskQueueRecoveryInspector } from '../features/spec/taskQueueRecovery';
 import { TaskSessionManager } from '../features/spec/taskSessionManager';
-import { hasChildSpecTasks, parseSpecTaskLine, SpecTaskStatus } from '../features/spec/taskStatus';
 import { markTaskLinesInProgress, markTaskLinesPending, readTaskLine, updateTaskLineStatus } from '../features/spec/taskStatusEditor';
 import { SpecExplorerProvider } from '../providers/specExplorerProvider';
 
@@ -39,140 +38,14 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
     } = options;
 
     const taskQueueController = new TaskQueueController(outputChannel);
-    interface ResolvedQueuedTask {
-        original: AutoTaskQueueTaskState;
-        lineNumber: number;
-        taskDescription: string;
-        status?: SpecTaskStatus;
-        drifted: boolean;
-    }
-
-    interface QueueRecoveryInspection {
-        resolvedTasks: ResolvedQueuedTask[];
-        unresolvedTasks: AutoTaskQueueTaskState[];
-        completedLineNumbers: number[];
-        pendingLineNumbers: number[];
-        drifted: boolean;
-    }
-
-    const continueAutoTaskQueue = async (
-        documentUri: vscode.Uri,
-        lineNumber: number,
-        source: string
-    ): Promise<boolean> => {
-        const commandId = await taskQueueController.consumeContinuation(documentUri, lineNumber, source);
-        if (!commandId) {
-            return false;
-        }
-
-        outputChannel.appendLine(`[Task Execute] Auto task queue continuing after ${source} on line ${lineNumber + 1}.`);
-        await vscode.commands.executeCommand(commandId, documentUri);
-        return true;
-    };
-
-    const registerAutoTaskContinuation = async (
-        documentUri: vscode.Uri,
-        run: TaskImplementationRun | undefined,
-        commandId: AutoTaskQueueCommandId
-    ): Promise<void> => {
-        if (!run?.terminal || !run.completionSignalPath || run.lineNumber === undefined || !run.taskDescription) {
-            await taskQueueController.complete(documentUri, commandId, 'No task run was registered for continuation.');
-            return;
-        }
-
-        await taskQueueController.waitForTask(documentUri, commandId, {
-            lineNumber: run.lineNumber,
-            taskDescription: run.taskDescription,
-            completionSignalPath: run.completionSignalPath,
-            completionSignalToken: run.completionSignalToken
-        });
-
-        const completion = taskCompletionService.registerTaskCompletion(
-            context,
-            run.terminal,
-            {
-                taskFilePath: documentUri.fsPath,
-                lineNumber: run.lineNumber,
-                taskDescription: run.taskDescription
-            },
-            run.completionSignalPath,
-            run.completionSignalToken
-        );
-
-        if (!completion) {
-            outputChannel.appendLine('[Task Execute] Auto task queue will not continue because automatic task verification is disabled.');
-            await taskQueueController.pause(documentUri, commandId, 'Automatic task verification is disabled.', [run.lineNumber]);
-            return;
-        }
-
-        completion.then(async verified => {
-            if (!await taskQueueController.getMatchingQueue(documentUri, run.lineNumber!, commandId)) {
-                return;
-            }
-
-            if (verified) {
-                outputChannel.appendLine(`[Task Execute] Auto task queue verified line ${run.lineNumber! + 1}; continuing with the next task.`);
-                await continueAutoTaskQueue(documentUri, run.lineNumber!, 'automatic verification');
-                return;
-            }
-
-            await markTaskLinesPending(documentUri, [run.lineNumber!]);
-            await taskQueueController.pause(documentUri, commandId, 'Current task was not verified as complete.', [run.lineNumber!]);
-            vscode.window.showWarningMessage('Auto task queue paused because the current task was not verified as complete. Mark the task done manually to continue the queue.');
-        }).catch(error => {
-            outputChannel.appendLine(`[Task Execute] Failed to continue auto task queue: ${error}`);
-            taskQueueController.pause(documentUri, commandId, `Failed to continue queue: ${error}`, [run.lineNumber!]).catch(queueError => {
-                outputChannel.appendLine(`[Task Queue] Failed to pause queue state: ${queueError}`);
-            });
-        });
-    };
-
-    const registerBatchTaskContinuation = async (
-        documentUri: vscode.Uri,
-        run: TaskImplementationRun,
-        commandId: AutoTaskQueueCommandId
-    ): Promise<boolean> => {
-        if (!run.terminal || run.completionSignalPath || !run.completionSignalPaths?.length) {
-            return false;
-        }
-
-        await taskQueueController.waitForBatch(documentUri, commandId, run.completionSignalPaths.map((signalPath, index) => ({
-            lineNumber: parseCompletionSignalLineNumber(signalPath) ?? index,
-            taskDescription: `Batch task ${index + 1}`,
-            completionSignalPath: signalPath
-        })));
-
-        const completion = taskCompletionService.registerTaskCompletionSignals(context, run.terminal, documentUri.fsPath, run.completionSignalPaths);
-        if (!completion) {
-            outputChannel.appendLine('[Task Execute] Auto task queue will not continue because automatic batch task verification is disabled.');
-            await taskQueueController.pause(documentUri, commandId, 'Automatic batch task verification is disabled.');
-            return true;
-        }
-
-        completion.then(async verified => {
-            if (verified) {
-                outputChannel.appendLine('[Task Execute] Batch completion verified; continuing with the next task.');
-                await taskQueueController.clear(documentUri);
-                await vscode.commands.executeCommand(commandId, documentUri);
-                return;
-            }
-
-            await taskQueueController.pause(documentUri, commandId, 'One or more batch tasks were not verified as complete.');
-            vscode.window.showWarningMessage('Auto task queue paused because one or more batch tasks were not verified as complete.');
-        }).catch(error => {
-            outputChannel.appendLine(`[Task Execute] Failed to continue auto task queue after batch verification: ${error}`);
-            taskQueueController.pause(documentUri, commandId, `Failed to continue queue after batch verification: ${error}`).catch(queueError => {
-                outputChannel.appendLine(`[Task Queue] Failed to pause batch queue state: ${queueError}`);
-            });
-        });
-
-        return true;
-    };
-
-    const parseCompletionSignalLineNumber = (completionSignalPath: string): number | undefined => {
-        const match = completionSignalPath.replace(/\\/g, '/').match(/task-completion-(\d+)\.json$/);
-        return match ? Number(match[1]) - 1 : undefined;
-    };
+    const taskQueueRecovery = new TaskQueueRecoveryInspector(taskQueueController, outputChannel);
+    const taskQueueRunner = new AutoTaskQueueRunner({
+        context,
+        taskQueueController,
+        taskCompletionService,
+        recoveryInspector: taskQueueRecovery,
+        outputChannel
+    });
 
     const resolveTasksDocumentUri = (documentUri?: vscode.Uri): vscode.Uri | undefined => {
         const activeDocumentUri = documentUri ?? vscode.window.activeTextEditor?.document.uri;
@@ -182,188 +55,6 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         }
 
         return activeDocumentUri;
-    };
-
-    const getQueuedLineNumbers = (record: Awaited<ReturnType<TaskQueueController['get']>>): number[] => {
-        if (!record) {
-            return [];
-        }
-
-        const lineNumbers = new Set<number>();
-        if (record.currentTask) {
-            lineNumbers.add(record.currentTask.lineNumber);
-        }
-
-        for (const task of record.batchTasks ?? []) {
-            lineNumbers.add(task.lineNumber);
-        }
-
-        return [...lineNumbers].filter(lineNumber => Number.isInteger(lineNumber) && lineNumber >= 0);
-    };
-
-    const getExpectedRunIdsByLineNumber = (tasks: readonly AutoTaskQueueTaskState[]): Record<number, string | undefined> => {
-        return tasks.reduce<Record<number, string | undefined>>((result, task) => {
-            result[task.lineNumber] = task.completionSignalToken;
-            return result;
-        }, {});
-    };
-
-    const getTaskLineNumbersBySignalLineNumber = (
-        resolvedTasks: readonly ResolvedQueuedTask[]
-    ): Record<number, number | undefined> | undefined => {
-        const result: Record<number, number | undefined> = {};
-        for (const resolvedTask of resolvedTasks) {
-            const signalLineNumber = resolvedTask.original.completionSignalPath
-                ? parseCompletionSignalLineNumber(resolvedTask.original.completionSignalPath)
-                : resolvedTask.original.lineNumber;
-            if (signalLineNumber !== undefined && signalLineNumber !== resolvedTask.lineNumber) {
-                result[signalLineNumber] = resolvedTask.lineNumber;
-            }
-        }
-
-        return Object.keys(result).length > 0 ? result : undefined;
-    };
-
-    const getQueuedTasks = (record: AutoTaskQueueRecord): AutoTaskQueueTaskState[] => [
-        ...(record.currentTask ? [record.currentTask] : []),
-        ...(record.batchTasks ?? [])
-    ];
-
-    const readDocumentLinesSafely = async (documentUri: vscode.Uri, context: string): Promise<string[] | undefined> => {
-        try {
-            const document = await vscode.workspace.openTextDocument(documentUri);
-            if (!document || typeof document.lineCount !== 'number' || typeof document.lineAt !== 'function') {
-                throw new Error('VS Code did not return a valid text document.');
-            }
-
-            const lines: string[] = [];
-            for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber++) {
-                lines.push(document.lineAt(lineNumber).text);
-            }
-
-            return lines;
-        } catch (error) {
-            outputChannel.appendLine(`[${context}] Failed to read ${documentUri.fsPath}: ${error}`);
-            return undefined;
-        }
-    };
-
-    const inspectQueuedTasks = async (
-        documentUri: vscode.Uri,
-        record: AutoTaskQueueRecord
-    ): Promise<QueueRecoveryInspection> => {
-        const queuedTasks = getQueuedTasks(record);
-        const inspection: QueueRecoveryInspection = {
-            resolvedTasks: [],
-            unresolvedTasks: [],
-            completedLineNumbers: [],
-            pendingLineNumbers: [],
-            drifted: false
-        };
-
-        if (queuedTasks.length === 0) {
-            return inspection;
-        }
-
-        const lines = await readDocumentLinesSafely(documentUri, 'Task Queue');
-        if (!lines) {
-            inspection.pendingLineNumbers = queuedTasks.map(task => task.lineNumber);
-            return inspection;
-        }
-
-        for (const queuedTask of queuedTasks) {
-            const resolved = resolveQueuedTaskLine(lines, queuedTask);
-            if (!resolved) {
-                inspection.unresolvedTasks.push(queuedTask);
-                continue;
-            }
-
-            inspection.resolvedTasks.push(resolved);
-            if (resolved.drifted) {
-                inspection.drifted = true;
-            }
-
-            if (resolved.status === 'completed') {
-                inspection.completedLineNumbers.push(resolved.lineNumber);
-            } else {
-                inspection.pendingLineNumbers.push(resolved.lineNumber);
-            }
-        }
-
-        if (inspection.drifted && inspection.unresolvedTasks.length === 0) {
-            await taskQueueController.updateQueuedTasks(documentUri, record.commandId, {
-                currentTask: record.currentTask
-                    ? remapQueuedTask(record.currentTask, inspection.resolvedTasks)
-                    : undefined,
-                batchTasks: record.batchTasks
-                    ?.map(task => remapQueuedTask(task, inspection.resolvedTasks))
-                    .filter((task): task is AutoTaskQueueTaskState => Boolean(task)),
-                event: 'Queued task line numbers were refreshed after tasks.md changed.'
-            });
-        }
-
-        return inspection;
-    };
-
-    const resolveQueuedTaskLine = (
-        lines: readonly string[],
-        queuedTask: AutoTaskQueueTaskState
-    ): ResolvedQueuedTask | undefined => {
-        const originalTask = readTaskFromLines(lines, queuedTask.lineNumber);
-        if (originalTask && taskDescriptionsMatch(originalTask.description, queuedTask.taskDescription)) {
-            return {
-                original: queuedTask,
-                lineNumber: queuedTask.lineNumber,
-                taskDescription: originalTask.description,
-                status: originalTask.status,
-                drifted: false
-            };
-        }
-
-        for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
-            const task = parseSpecTaskLine(lines[lineNumber]);
-            if (task && taskDescriptionsMatch(task.description, queuedTask.taskDescription)) {
-                return {
-                    original: queuedTask,
-                    lineNumber,
-                    taskDescription: task.description,
-                    status: task.status,
-                    drifted: lineNumber !== queuedTask.lineNumber
-                };
-            }
-        }
-
-        return undefined;
-    };
-
-    const readTaskFromLines = (lines: readonly string[], lineNumber: number): ReturnType<typeof parseSpecTaskLine> => {
-        if (lineNumber < 0 || lineNumber >= lines.length) {
-            return undefined;
-        }
-
-        return parseSpecTaskLine(lines[lineNumber]);
-    };
-
-    const taskDescriptionsMatch = (left: string, right: string): boolean =>
-        normalizeTaskDescription(left) === normalizeTaskDescription(right);
-
-    const normalizeTaskDescription = (value: string): string =>
-        value.replace(/\s+/g, ' ').trim();
-
-    const remapQueuedTask = (
-        task: AutoTaskQueueTaskState,
-        resolvedTasks: readonly ResolvedQueuedTask[]
-    ): AutoTaskQueueTaskState | undefined => {
-        const resolved = resolvedTasks.find(candidate => candidate.original === task);
-        if (!resolved) {
-            return undefined;
-        }
-
-        return {
-            ...task,
-            lineNumber: resolved.lineNumber,
-            taskDescription: resolved.taskDescription
-        };
     };
 
     const resumeAutoTaskQueue = async (documentUri?: vscode.Uri): Promise<void> => {
@@ -384,7 +75,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             return;
         }
 
-        const inspection = await inspectQueuedTasks(activeDocumentUri, record);
+        const inspection = await taskQueueRecovery.inspectQueuedTasks(activeDocumentUri, record);
         if (inspection.unresolvedTasks.length > 0) {
             await taskQueueController.pause(
                 activeDocumentUri,
@@ -422,7 +113,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 lineNumber: task.lineNumber,
                 taskDescription: task.taskDescription
             }))
-            : getQueuedTasks(record);
+            : taskQueueRecovery.getQueuedTasks(record);
         const queuedLineNumbers = queuedTasks.map(task => task.lineNumber);
         if (queuedLineNumbers.length > 0) {
             const startedAt = Date.parse(record.startedAt);
@@ -434,8 +125,8 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 },
                 () => taskCompletionService.reconcileTaskCompletionSignals(activeDocumentUri.fsPath, {
                     lineNumbers: queuedLineNumbers,
-                    expectedRunIdsByLineNumber: getExpectedRunIdsByLineNumber(queuedTasks),
-                    taskLineNumbersBySignalLineNumber: getTaskLineNumbersBySignalLineNumber(inspection.resolvedTasks),
+                    expectedRunIdsByLineNumber: taskQueueRecovery.getExpectedRunIdsByLineNumber(queuedTasks),
+                    taskLineNumbersBySignalLineNumber: taskQueueRecovery.getTaskLineNumbersBySignalLineNumber(inspection.resolvedTasks),
                     minModifiedAt: Number.isFinite(startedAt) ? startedAt - 2000 : undefined
                 })
             );
@@ -484,10 +175,10 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
             return;
         }
 
-        const inspection = await inspectQueuedTasks(activeDocumentUri, record);
+        const inspection = await taskQueueRecovery.inspectQueuedTasks(activeDocumentUri, record);
         const queuedLineNumbers = inspection.resolvedTasks.length > 0
             ? inspection.resolvedTasks.map(task => task.lineNumber)
-            : getQueuedLineNumbers(record);
+            : taskQueueRecovery.getQueuedLineNumbers(record);
         await markTaskLinesPending(activeDocumentUri, queuedLineNumbers);
         await taskQueueController.clear(activeDocumentUri);
         vscode.window.showInformationMessage('Auto task queue cancelled. Queued in-progress tasks were returned to pending when possible.');
@@ -634,7 +325,7 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
     };
 
     const reconcileExistingCompletionsBeforeQueue = async (documentUri: vscode.Uri): Promise<void> => {
-        const lineNumbers = await readInProgressLeafTaskLineNumbers(documentUri);
+        const lineNumbers = await taskQueueRecovery.readInProgressLeafTaskLineNumbers(documentUri);
         if (lineNumbers.length === 0) {
             return;
         }
@@ -651,23 +342,6 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
         if (result?.verified) {
             outputChannel.appendLine(`[Task Execute] Reconciled ${result.verified}/${result.detected} existing completion signal(s) before starting the task queue.`);
         }
-    };
-
-    const readInProgressLeafTaskLineNumbers = async (documentUri: vscode.Uri): Promise<number[]> => {
-        const lines = await readDocumentLinesSafely(documentUri, 'Task Execute');
-        if (!lines) {
-            return [];
-        }
-
-        const lineNumbers: number[] = [];
-        for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
-            const task = parseSpecTaskLine(lines[lineNumber]);
-            if (task?.status === 'inProgress' && !hasChildSpecTasks(lines, lineNumber)) {
-                lineNumbers.push(lineNumber);
-            }
-        }
-
-        return lineNumbers;
     };
 
     const createSpecCommand = vscode.commands.registerCommand('autocode.spec.create', async () => {
@@ -768,11 +442,11 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                     await taskQueueController.pause(documentUri, commandId, `${run.failedLineNumbers.length} task(s) failed to start.`, run.failedLineNumbers);
                 }
 
-                if (run && await registerBatchTaskContinuation(documentUri, run, commandId)) {
+                if (run && await taskQueueRunner.registerBatchTaskContinuation(documentUri, run, commandId)) {
                     return;
                 }
 
-                await registerAutoTaskContinuation(documentUri, run, commandId);
+                await taskQueueRunner.registerAutoTaskContinuation(documentUri, run, commandId);
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 await taskQueueController.pause(documentUri, commandId, `Failed to start auto task queue: ${error}`, changedLineNumbers);
@@ -795,19 +469,27 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                         changedLineNumbers.push(...await markTaskLinesInProgress(documentUri, tasks.map(task => task.lineNumber)));
                     }
                 });
-                if (run?.failedLineNumbers?.length) {
-                    await markTaskLinesPending(documentUri, run.failedLineNumbers);
-                    await taskQueueController.pause(documentUri, commandId, `${run.failedLineNumbers.length} parallel task(s) failed to start.`, run.failedLineNumbers);
-                    vscode.window.showWarningMessage(`${run.failedLineNumbers.length} parallel task(s) failed to start and were returned to pending.`);
+                const continuationCommandId: AutoTaskQueueCommandId = run?.fallbackToSequential
+                    ? 'autocode.spec.implAllTasks'
+                    : commandId;
+                const failedStartLineNumbers = run?.failedLineNumbers ?? [];
+                if (failedStartLineNumbers.length > 0) {
+                    await markTaskLinesPending(documentUri, failedStartLineNumbers);
+                    vscode.window.showWarningMessage(`${failedStartLineNumbers.length} parallel task(s) failed to start and were returned to pending.`);
+                    if (!run?.parallelRuns?.length) {
+                        await taskQueueController.pause(documentUri, commandId, `${failedStartLineNumbers.length} parallel task(s) failed to start.`, failedStartLineNumbers);
+                        return;
+                    }
                 }
 
                 if (run?.parallelRuns?.length) {
-                    await taskQueueController.waitForBatch(documentUri, commandId, run.parallelRuns.map(parallelRun => ({
+                    const batchTasks = run.parallelRuns.map(parallelRun => ({
                         lineNumber: parallelRun.lineNumber,
                         taskDescription: parallelRun.taskDescription,
                         completionSignalPath: parallelRun.completionSignalPath,
                         completionSignalToken: parallelRun.completionSignalToken
-                    })));
+                    }));
+                    const queueRecord = await taskQueueController.waitForBatch(documentUri, commandId, batchTasks);
                     const completionResults = run.parallelRuns
                         .map(parallelRun => ({
                             lineNumber: parallelRun.lineNumber,
@@ -825,43 +507,65 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                         }))
                         .filter((result): result is { lineNumber: number; completion: Promise<boolean> } => Boolean(result.completion));
 
-                    if (completionResults.length === 0) {
-                        await taskQueueController.pause(documentUri, commandId, 'Automatic parallel task verification is disabled.');
-                        vscode.window.showWarningMessage('Auto task queue paused because automatic parallel task verification is disabled.');
+                    if (completionResults.length !== run.parallelRuns.length) {
+                        const monitoredLineNumbers = new Set(completionResults.map(result => result.lineNumber));
+                        const unmonitoredLineNumbers = run.parallelRuns
+                            .map(parallelRun => parallelRun.lineNumber)
+                            .filter(lineNumber => !monitoredLineNumbers.has(lineNumber));
+                        for (const result of completionResults) {
+                            result.completion.catch(error => {
+                                outputChannel.appendLine(`[Task Execute] Parallel task verification failed after queue pause on line ${result.lineNumber + 1}: ${error}`);
+                            });
+                        }
+                        await markTaskLinesPending(documentUri, unmonitoredLineNumbers);
+                        await taskQueueController.pause(documentUri, commandId, 'Automatic parallel task verification is disabled for one or more launched tasks.', unmonitoredLineNumbers);
+                        vscode.window.showWarningMessage('Auto task queue paused because automatic parallel task verification is disabled for one or more launched tasks.');
                         return;
                     }
 
-                    if (completionResults.length > 0 && !run.failedLineNumbers?.length) {
-                        Promise.all(completionResults.map(result => result.completion)).then(async results => {
-                            const failedLineNumbers = completionResults
-                                .filter((_result, index) => !results[index])
-                                .map(result => result.lineNumber);
-                            if (failedLineNumbers.length > 0) {
-                                await markTaskLinesPending(documentUri, failedLineNumbers);
-                                await taskQueueController.pause(documentUri, commandId, `${failedLineNumbers.length} parallel task(s) were not verified as complete.`, failedLineNumbers);
-                                vscode.window.showWarningMessage(`${failedLineNumbers.length} parallel task(s) were not verified as complete and were returned to pending.`);
+                    Promise.all(completionResults.map(result => result.completion)).then(async results => {
+                        if (!await taskQueueController.getMatchingBatchQueue(documentUri, batchTasks, commandId, queueRecord.queueRunId)) {
+                            return;
+                        }
+
+                        const failedLineNumbers = completionResults
+                            .filter((_result, index) => !results[index])
+                            .map(result => result.lineNumber);
+                        if (failedLineNumbers.length > 0) {
+                            await markTaskLinesPending(documentUri, failedLineNumbers);
+                            vscode.window.showWarningMessage(`${failedLineNumbers.length} parallel task(s) were not verified as complete and were returned to pending.`);
+                            await taskQueueController.pause(documentUri, commandId, `${failedLineNumbers.length} parallel task(s) were not verified as complete.`, failedLineNumbers);
+                            return;
+                        }
+
+                        if (results.every(Boolean)) {
+                            if (failedStartLineNumbers.length > 0) {
+                                await taskQueueController.pause(
+                                    documentUri,
+                                    commandId,
+                                    `${failedStartLineNumbers.length} parallel task(s) failed to start; launched task(s) were verified.`
+                                );
+                                vscode.window.showWarningMessage('Auto task queue paused after launched parallel tasks completed because one or more tasks failed to start.');
                                 return;
                             }
 
-                            if (results.every(Boolean)) {
-                                await taskQueueController.clear(documentUri);
-                                await vscode.commands.executeCommand(commandId, documentUri);
-                            }
-                        }).catch(error => {
-                            outputChannel.appendLine(`[Task Execute] Failed to continue parallel task batch: ${error}`);
-                            taskQueueController.pause(documentUri, commandId, `Failed to continue parallel batch: ${error}`).catch(queueError => {
-                                outputChannel.appendLine(`[Task Queue] Failed to pause parallel queue state: ${queueError}`);
-                            });
+                            await taskQueueController.clear(documentUri);
+                            await vscode.commands.executeCommand(commandId, documentUri);
+                        }
+                    }).catch(error => {
+                        outputChannel.appendLine(`[Task Execute] Failed to continue parallel task batch: ${error}`);
+                        taskQueueController.pause(documentUri, commandId, `Failed to continue parallel batch: ${error}`).catch(queueError => {
+                            outputChannel.appendLine(`[Task Queue] Failed to pause parallel queue state: ${queueError}`);
                         });
-                    }
+                    });
                     return;
                 }
 
-                if (run && await registerBatchTaskContinuation(documentUri, run, commandId)) {
+                if (run && await taskQueueRunner.registerBatchTaskContinuation(documentUri, run, continuationCommandId)) {
                     return;
                 }
 
-                await registerAutoTaskContinuation(documentUri, run, commandId);
+                await taskQueueRunner.registerAutoTaskContinuation(documentUri, run, continuationCommandId);
             } catch (error) {
                 await markTaskLinesPending(documentUri, changedLineNumbers);
                 await taskQueueController.pause(documentUri, commandId, `Failed to start parallel tasks: ${error}`, changedLineNumbers);
@@ -898,7 +602,9 @@ export function registerSpecCommands(options: RegisterSpecCommandsOptions): void
                 await taskSessionManager.markCompleted(documentUri.fsPath, parent.lineNumber, parent.description);
             }
             vscode.window.showInformationMessage(`Task marked done: ${task.description}`);
-            await continueAutoTaskQueue(documentUri, lineNumber, 'manual Mark Done');
+            if (!await taskQueueRunner.continueAutoTaskQueue(documentUri, lineNumber, 'manual Mark Done')) {
+                await taskQueueRunner.continueBatchAutoTaskQueueIfReady(documentUri, lineNumber, 'manual Mark Done');
+            }
         }),
         vscode.commands.registerCommand('autocode.spec.viewTaskSession', async (documentUri: vscode.Uri, lineNumber: number, taskDescription?: string) => {
             outputChannel.appendLine(`[Task Session] Line ${lineNumber + 1}`);

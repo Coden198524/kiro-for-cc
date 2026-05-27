@@ -18,3 +18,5 @@ coverage/
 *.snap.tmp
 .nyc_output/
 
+# AutoCode runtime prompt handoff files
+.autocode/runtime-prompts/

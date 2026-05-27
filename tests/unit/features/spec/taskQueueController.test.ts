@@ -54,6 +54,7 @@ describe('TaskQueueController', () => {
         const record = JSON.parse(files.get(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'))!.toString());
         expect(record).toEqual(expect.objectContaining({
             version: 1,
+            queueRunId: expect.stringMatching(/^queue-/),
             taskFilePath: documentUri.fsPath,
             commandId: 'autocode.spec.implAllTasks',
             status: 'waiting_for_signal'
@@ -63,6 +64,20 @@ describe('TaskQueueController', () => {
             taskDescription: '2.1 Implement queue state',
             completionSignalToken: 'run-5'
         }));
+    });
+
+    test('preserves the queue run id across waiting and completion states', async () => {
+        const started = await controller.start(documentUri, 'autocode.spec.implAllTasks');
+        const waiting = await controller.waitForTask(documentUri, 'autocode.spec.implAllTasks', {
+            lineNumber: 1,
+            taskDescription: '1. First task'
+        });
+
+        expect(waiting.queueRunId).toBe(started.queueRunId);
+
+        await controller.complete(documentUri, 'autocode.spec.implAllTasks');
+        const completed = await controller.get(documentUri, 'autocode.spec.implAllTasks');
+        expect(completed?.queueRunId).toBe(started.queueRunId);
     });
 
     test('consumes a matching continuation only once', async () => {
@@ -78,6 +93,72 @@ describe('TaskQueueController', () => {
         expect(files.has(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'))).toBe(false);
     });
 
+    test('matches a queued batch by line, description, signal path, and token', async () => {
+        const batchTasks = [
+            {
+                lineNumber: 1,
+                taskDescription: '1. First task',
+                completionSignalPath: 'signal-1',
+                completionSignalToken: 'run-1'
+            },
+            {
+                lineNumber: 4,
+                taskDescription: '2. Second task',
+                completionSignalPath: 'signal-2',
+                completionSignalToken: 'run-2'
+            }
+        ];
+        await controller.start(documentUri, 'autocode.spec.implAllTasksParallel');
+        await controller.waitForBatch(documentUri, 'autocode.spec.implAllTasksParallel', batchTasks);
+
+        await expect(controller.getMatchingBatchQueue(documentUri, batchTasks, 'autocode.spec.implAllTasksParallel'))
+            .resolves
+            .toEqual(expect.objectContaining({ status: 'waiting_for_signal' }));
+        const persisted = await controller.get(documentUri, 'autocode.spec.implAllTasksParallel');
+        await expect(controller.getMatchingBatchQueue(documentUri, batchTasks, 'autocode.spec.implAllTasksParallel', `${persisted?.queueRunId}-stale`))
+            .resolves
+            .toBeUndefined();
+        await expect(controller.getMatchingBatchQueue(documentUri, [
+            batchTasks[0],
+            { ...batchTasks[1], completionSignalToken: 'stale-run' }
+        ], 'autocode.spec.implAllTasksParallel')).resolves.toBeUndefined();
+    });
+
+    test('does not match stale cached batch state after another controller clears the queue', async () => {
+        const batchTasks = [
+            {
+                lineNumber: 1,
+                taskDescription: '1. First task',
+                completionSignalPath: 'signal-1',
+                completionSignalToken: 'run-1'
+            }
+        ];
+        await controller.start(documentUri, 'autocode.spec.implAllTasksParallel');
+        await controller.waitForBatch(documentUri, 'autocode.spec.implAllTasksParallel', batchTasks);
+
+        const freshController = new TaskQueueController(vscode.window.createOutputChannel('fresh'));
+        await freshController.clear(documentUri);
+
+        await expect(controller.getMatchingBatchQueue(documentUri, batchTasks, 'autocode.spec.implAllTasksParallel'))
+            .resolves
+            .toBeUndefined();
+    });
+
+    test('does not consume stale cached single-task state after another controller clears the queue', async () => {
+        await controller.start(documentUri, 'autocode.spec.implAllTasks');
+        await controller.waitForTask(documentUri, 'autocode.spec.implAllTasks', {
+            lineNumber: 1,
+            taskDescription: '1. First task'
+        });
+
+        const freshController = new TaskQueueController(vscode.window.createOutputChannel('fresh'));
+        await freshController.clear(documentUri);
+
+        await expect(controller.consumeContinuation(documentUri, 1, 'automatic verification'))
+            .resolves
+            .toBeUndefined();
+    });
+
     test('blocks duplicate queue starts unless forced', async () => {
         await controller.start(documentUri, 'autocode.spec.implAllTasks');
 
@@ -89,6 +170,55 @@ describe('TaskQueueController', () => {
         const record = await controller.get(documentUri);
         expect(record?.commandId).toBe('autocode.spec.implAllTasksParallel');
         expect(record?.status).toBe('running');
+    });
+
+    test('serializes duplicate starts across controller instances', async () => {
+        let notifyFirstWriteStarted: () => void = () => undefined;
+        let releaseFirstWrite: () => void = () => undefined;
+        const firstWriteStarted = new Promise<void>(resolve => {
+            notifyFirstWriteStarted = resolve;
+        });
+        const allowFirstWrite = new Promise<void>(resolve => {
+            releaseFirstWrite = resolve;
+        });
+        let queueWriteCount = 0;
+        (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async (uri: vscode.Uri, content: Uint8Array) => {
+            if (uri.fsPath.endsWith('task-queue.json')) {
+                queueWriteCount += 1;
+                notifyFirstWriteStarted();
+                if (queueWriteCount === 1) {
+                    await allowFirstWrite;
+                }
+            }
+
+            files.set(normalize(uri.fsPath), Buffer.from(content));
+        });
+
+        const firstController = new TaskQueueController(vscode.window.createOutputChannel('first'));
+        const secondController = new TaskQueueController(vscode.window.createOutputChannel('second'));
+        const firstStart = firstController.start(documentUri, 'autocode.spec.implAllTasks');
+        await firstWriteStarted;
+
+        const secondStart = secondController.start(documentUri, 'autocode.spec.implAllTasksParallel');
+        await Promise.resolve();
+        expect(queueWriteCount).toBe(1);
+
+        releaseFirstWrite();
+        await expect(firstStart).resolves.toEqual(expect.objectContaining({
+            commandId: 'autocode.spec.implAllTasks'
+        }));
+        await expect(secondStart).rejects.toBeInstanceOf(AutoTaskQueueStartBlockedError);
+        expect(queueWriteCount).toBe(1);
+    });
+
+    test('creates and releases the persisted queue lock around writes', async () => {
+        await controller.start(documentUri, 'autocode.spec.implAllTasks');
+
+        expect(vscode.workspace.fs.writeFile).toHaveBeenCalledWith(
+            expect.objectContaining({ fsPath: expect.stringContaining('task-queue.lock') }),
+            expect.any(Buffer)
+        );
+        expect(files.has(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.lock'))).toBe(false);
     });
 
     test('summarizes stale waiting queues', async () => {

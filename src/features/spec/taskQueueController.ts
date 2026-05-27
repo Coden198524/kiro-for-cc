@@ -6,6 +6,9 @@ export type AutoTaskQueueStatus = 'running' | 'waiting_for_signal' | 'paused' | 
 export type AutoTaskQueueStartBlockedReason = 'active' | 'invalid_transition';
 
 const AUTO_TASK_QUEUE_STALE_WAIT_MS = 6 * 60 * 60 * 1000;
+const AUTO_TASK_QUEUE_LOCK_RETRY_MS = 50;
+const AUTO_TASK_QUEUE_LOCK_TIMEOUT_MS = 5000;
+const AUTO_TASK_QUEUE_LOCK_STALE_MS = 2 * 60 * 1000;
 const ALLOWED_QUEUE_TRANSITIONS: Record<AutoTaskQueueStatus, AutoTaskQueueStatus[]> = {
     running: ['running', 'waiting_for_signal', 'paused', 'completed'],
     waiting_for_signal: ['running', 'waiting_for_signal', 'paused', 'completed'],
@@ -22,6 +25,7 @@ export interface AutoTaskQueueTaskState {
 
 export interface AutoTaskQueueRecord {
     version: 1;
+    queueRunId: string;
     taskFilePath: string;
     commandId: AutoTaskQueueCommandId;
     status: AutoTaskQueueStatus;
@@ -31,6 +35,11 @@ export interface AutoTaskQueueRecord {
     batchTasks?: AutoTaskQueueTaskState[];
     lastEvent?: string;
     pauseReason?: string;
+}
+
+interface AutoTaskQueueLockRecord {
+    owner: string;
+    createdAt: string;
 }
 
 export interface AutoTaskQueueRecoveryRecord {
@@ -65,6 +74,10 @@ export function getAutoTaskQueueStatePath(documentUri: vscode.Uri): string {
     return path.join(path.dirname(documentUri.fsPath), '.autocode', 'task-queue.json');
 }
 
+export function getAutoTaskQueueLockPath(documentUri: vscode.Uri): string {
+    return path.join(path.dirname(documentUri.fsPath), '.autocode', 'task-queue.lock');
+}
+
 export async function readAutoTaskQueueRecord(documentUri: vscode.Uri): Promise<AutoTaskQueueRecord | undefined> {
     try {
         const content = await vscode.workspace.fs.readFile(vscode.Uri.file(getAutoTaskQueueStatePath(documentUri)));
@@ -73,7 +86,7 @@ export async function readAutoTaskQueueRecord(documentUri: vscode.Uri): Promise<
             return undefined;
         }
 
-        return parsed as AutoTaskQueueRecord;
+        return normalizeQueueRecord(parsed, documentUri);
     } catch {
         return undefined;
     }
@@ -165,6 +178,7 @@ export function getAutoTaskQueueSummary(record: AutoTaskQueueRecord, now = Date.
 }
 
 export class TaskQueueController {
+    private static readonly startLocks = new Map<string, Promise<void>>();
     private queues = new Map<string, AutoTaskQueueRecord>();
 
     constructor(private outputChannel: vscode.OutputChannel) { }
@@ -174,61 +188,74 @@ export class TaskQueueController {
         commandId: AutoTaskQueueCommandId,
         options: AutoTaskQueueStartOptions = {}
     ): Promise<AutoTaskQueueRecord> {
-        const existing = await this.getRecord(documentUri);
-        if (isAutoTaskQueueActive(existing) && !options.force) {
-            throw new AutoTaskQueueStartBlockedError('active', existing);
-        }
+        return this.withStartLock(documentUri, async () => {
+            return this.withFileLock(documentUri, async () => {
+                const existing = await this.getPersistedRecord(documentUri);
+                if (isAutoTaskQueueActive(existing) && !options.force) {
+                    throw new AutoTaskQueueStartBlockedError('active', existing);
+                }
 
-        const now = new Date().toISOString();
-        const record = await this.writeRecord(documentUri, {
-            version: 1,
-            taskFilePath: documentUri.fsPath,
-            commandId,
-            status: 'running',
-            startedAt: now,
-            updatedAt: now,
-            lastEvent: 'Queue started.'
-        }, existing);
-        this.outputChannel.appendLine(`[Task Queue] Started ${commandId}: ${documentUri.fsPath}`);
-        return record;
+                const now = new Date().toISOString();
+                const record = await this.writeRecord(documentUri, {
+                    version: 1,
+                    queueRunId: createQueueRunId(),
+                    taskFilePath: documentUri.fsPath,
+                    commandId,
+                    status: 'running',
+                    startedAt: now,
+                    updatedAt: now,
+                    lastEvent: 'Queue started.'
+                }, existing);
+                this.outputChannel.appendLine(`[Task Queue] Started ${commandId}: ${documentUri.fsPath}`);
+                return record;
+            });
+        });
     }
 
     async waitForTask(
         documentUri: vscode.Uri,
         commandId: AutoTaskQueueCommandId,
         task: AutoTaskQueueTaskState
-    ): Promise<void> {
-        const existing = await this.getRecord(documentUri, commandId);
-        await this.writeRecord(documentUri, {
-            version: 1,
-            taskFilePath: documentUri.fsPath,
-            commandId,
-            status: 'waiting_for_signal',
-            startedAt: existing?.startedAt ?? new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            currentTask: task,
-            lastEvent: `Waiting for completion signal on line ${task.lineNumber + 1}.`
-        }, existing);
+    ): Promise<AutoTaskQueueRecord> {
+        const record = await this.withFileLock(documentUri, async () => {
+            const existing = await this.getPersistedRecord(documentUri, commandId);
+            return this.writeRecord(documentUri, {
+                version: 1,
+                queueRunId: existing?.queueRunId ?? createQueueRunId(),
+                taskFilePath: documentUri.fsPath,
+                commandId,
+                status: 'waiting_for_signal',
+                startedAt: existing?.startedAt ?? new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                currentTask: task,
+                lastEvent: `Waiting for completion signal on line ${task.lineNumber + 1}.`
+            }, existing);
+        });
         this.outputChannel.appendLine(`[Task Queue] Waiting for line ${task.lineNumber + 1}: ${task.taskDescription}`);
+        return record;
     }
 
     async waitForBatch(
         documentUri: vscode.Uri,
         commandId: AutoTaskQueueCommandId,
         tasks: AutoTaskQueueTaskState[]
-    ): Promise<void> {
-        const existing = await this.getRecord(documentUri, commandId);
-        await this.writeRecord(documentUri, {
-            version: 1,
-            taskFilePath: documentUri.fsPath,
-            commandId,
-            status: 'waiting_for_signal',
-            startedAt: existing?.startedAt ?? new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            batchTasks: tasks,
-            lastEvent: `Waiting for ${tasks.length} completion signal(s).`
-        }, existing);
+    ): Promise<AutoTaskQueueRecord> {
+        const record = await this.withFileLock(documentUri, async () => {
+            const existing = await this.getPersistedRecord(documentUri, commandId);
+            return this.writeRecord(documentUri, {
+                version: 1,
+                queueRunId: existing?.queueRunId ?? createQueueRunId(),
+                taskFilePath: documentUri.fsPath,
+                commandId,
+                status: 'waiting_for_signal',
+                startedAt: existing?.startedAt ?? new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                batchTasks: tasks,
+                lastEvent: `Waiting for ${tasks.length} completion signal(s).`
+            }, existing);
+        });
         this.outputChannel.appendLine(`[Task Queue] Waiting for ${tasks.length} task completion signal(s).`);
+        return record;
     }
 
     async pause(
@@ -237,36 +264,42 @@ export class TaskQueueController {
         reason: string,
         lineNumbers: readonly number[] = []
     ): Promise<void> {
-        const existing = await this.getRecord(documentUri, commandId);
-        const currentTask = existing?.currentTask && (lineNumbers.length === 0 || lineNumbers.includes(existing.currentTask.lineNumber))
-            ? existing.currentTask
-            : existing?.currentTask;
-        await this.writeRecord(documentUri, {
-            version: 1,
-            taskFilePath: documentUri.fsPath,
-            commandId,
-            status: 'paused',
-            startedAt: existing?.startedAt ?? new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            currentTask,
-            batchTasks: existing?.batchTasks,
-            lastEvent: reason,
-            pauseReason: reason
-        }, existing);
+        await this.withFileLock(documentUri, async () => {
+            const existing = await this.getPersistedRecord(documentUri, commandId);
+            const currentTask = existing?.currentTask && (lineNumbers.length === 0 || lineNumbers.includes(existing.currentTask.lineNumber))
+                ? existing.currentTask
+                : existing?.currentTask;
+            await this.writeRecord(documentUri, {
+                version: 1,
+                queueRunId: existing?.queueRunId ?? createQueueRunId(),
+                taskFilePath: documentUri.fsPath,
+                commandId,
+                status: 'paused',
+                startedAt: existing?.startedAt ?? new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                currentTask,
+                batchTasks: existing?.batchTasks,
+                lastEvent: reason,
+                pauseReason: reason
+            }, existing);
+        });
         this.outputChannel.appendLine(`[Task Queue] Paused ${commandId}: ${reason}`);
     }
 
     async complete(documentUri: vscode.Uri, commandId: AutoTaskQueueCommandId, event = 'Queue completed.'): Promise<void> {
-        const existing = await this.getRecord(documentUri, commandId);
-        await this.writeRecord(documentUri, {
-            version: 1,
-            taskFilePath: documentUri.fsPath,
-            commandId,
-            status: 'completed',
-            startedAt: existing?.startedAt ?? new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            lastEvent: event
-        }, existing);
+        await this.withFileLock(documentUri, async () => {
+            const existing = await this.getPersistedRecord(documentUri, commandId);
+            await this.writeRecord(documentUri, {
+                version: 1,
+                queueRunId: existing?.queueRunId ?? createQueueRunId(),
+                taskFilePath: documentUri.fsPath,
+                commandId,
+                status: 'completed',
+                startedAt: existing?.startedAt ?? new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                lastEvent: event
+            }, existing);
+        });
         this.outputChannel.appendLine(`[Task Queue] Completed ${commandId}: ${event}`);
     }
 
@@ -279,17 +312,19 @@ export class TaskQueueController {
             event?: string;
         }
     ): Promise<void> {
-        const existing = await this.getRecord(documentUri, commandId);
-        if (!existing) {
-            return;
-        }
+        await this.withFileLock(documentUri, async () => {
+            const existing = await this.getPersistedRecord(documentUri, commandId);
+            if (!existing) {
+                return;
+            }
 
-        await this.writeRecord(documentUri, {
-            ...existing,
-            currentTask: tasks.currentTask,
-            batchTasks: tasks.batchTasks,
-            lastEvent: tasks.event ?? existing.lastEvent
-        }, existing);
+            await this.writeRecord(documentUri, {
+                ...existing,
+                currentTask: tasks.currentTask,
+                batchTasks: tasks.batchTasks,
+                lastEvent: tasks.event ?? existing.lastEvent
+            }, existing);
+        });
     }
 
     async get(documentUri: vscode.Uri, commandId?: AutoTaskQueueCommandId): Promise<AutoTaskQueueRecord | undefined> {
@@ -301,22 +336,29 @@ export class TaskQueueController {
         lineNumber: number,
         source: string
     ): Promise<AutoTaskQueueCommandId | undefined> {
-        const record = await this.getRecord(documentUri);
-        if (!record?.currentTask || record.currentTask.lineNumber !== lineNumber) {
-            return undefined;
-        }
+        return this.withFileLock(documentUri, async () => {
+            const record = await this.getPersistedRecord(documentUri);
+            if (!record?.currentTask || record.currentTask.lineNumber !== lineNumber) {
+                return undefined;
+            }
 
-        await this.clear(documentUri);
-        this.outputChannel.appendLine(`[Task Queue] Continuing after ${source} on line ${lineNumber + 1}.`);
-        return record.commandId;
+            await this.clearRecord(documentUri);
+            this.outputChannel.appendLine(`[Task Queue] Continuing after ${source} on line ${lineNumber + 1}.`);
+            return record.commandId;
+        });
     }
 
     async getMatchingQueue(
         documentUri: vscode.Uri,
         lineNumber: number,
-        commandId?: AutoTaskQueueCommandId
+        commandId?: AutoTaskQueueCommandId,
+        queueRunId?: string
     ): Promise<AutoTaskQueueRecord | undefined> {
-        const record = await this.getRecord(documentUri, commandId);
+        const record = await this.getPersistedRecord(documentUri, commandId);
+        if (queueRunId && record?.queueRunId !== queueRunId) {
+            return undefined;
+        }
+
         if (!record?.currentTask || record.currentTask.lineNumber !== lineNumber) {
             return undefined;
         }
@@ -324,9 +366,52 @@ export class TaskQueueController {
         return record;
     }
 
+    async getMatchingBatchQueue(
+        documentUri: vscode.Uri,
+        tasks: readonly AutoTaskQueueTaskState[],
+        commandId?: AutoTaskQueueCommandId,
+        queueRunId?: string
+    ): Promise<AutoTaskQueueRecord | undefined> {
+        const record = await this.getPersistedRecord(documentUri, commandId);
+        if (queueRunId && record?.queueRunId !== queueRunId) {
+            return undefined;
+        }
+
+        if (!record?.batchTasks || record.batchTasks.length !== tasks.length) {
+            return undefined;
+        }
+
+        const matches = tasks.every((task, index) => {
+            const recordedTask = record.batchTasks?.[index];
+            return Boolean(recordedTask &&
+                recordedTask.lineNumber === task.lineNumber &&
+                recordedTask.taskDescription === task.taskDescription &&
+                recordedTask.completionSignalPath === task.completionSignalPath &&
+                recordedTask.completionSignalToken === task.completionSignalToken);
+        });
+
+        return matches ? record : undefined;
+    }
+
     async clear(documentUri: vscode.Uri): Promise<void> {
-        this.queues.delete(this.getQueueKey(documentUri));
-        await deleteAutoTaskQueueRecord(documentUri);
+        await this.withFileLock(documentUri, async () => {
+            await this.clearRecord(documentUri);
+        });
+    }
+
+    private async getPersistedRecord(
+        documentUri: vscode.Uri,
+        commandId?: AutoTaskQueueCommandId
+    ): Promise<AutoTaskQueueRecord | undefined> {
+        const key = this.getQueueKey(documentUri);
+        const persisted = await readAutoTaskQueueRecord(documentUri);
+        if (!persisted || (commandId && persisted.commandId !== commandId)) {
+            this.queues.delete(key);
+            return undefined;
+        }
+
+        this.queues.set(key, persisted);
+        return persisted;
     }
 
     private async getRecord(
@@ -356,6 +441,7 @@ export class TaskQueueController {
         this.assertValidTransition(existing, record.status);
         const normalizedRecord = {
             ...record,
+            queueRunId: record.queueRunId || existing?.queueRunId || createQueueRunId(),
             taskFilePath: documentUri.fsPath,
             updatedAt: new Date().toISOString()
         };
@@ -364,6 +450,11 @@ export class TaskQueueController {
         await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(statePath)));
         await vscode.workspace.fs.writeFile(vscode.Uri.file(statePath), Buffer.from(JSON.stringify(normalizedRecord, null, 2)));
         return normalizedRecord;
+    }
+
+    private async clearRecord(documentUri: vscode.Uri): Promise<void> {
+        this.queues.delete(this.getQueueKey(documentUri));
+        await deleteAutoTaskQueueRecord(documentUri);
     }
 
     private getQueueKey(documentUri: vscode.Uri): string {
@@ -383,6 +474,99 @@ export class TaskQueueController {
             throw new AutoTaskQueueStartBlockedError('invalid_transition', existing);
         }
     }
+
+    private async withStartLock<T>(documentUri: vscode.Uri, action: () => Promise<T>): Promise<T> {
+        const key = this.getQueueKey(documentUri);
+        const previous = TaskQueueController.startLocks.get(key) ?? Promise.resolve();
+        let releaseLock: () => void = () => undefined;
+        const currentLock = new Promise<void>(resolve => {
+            releaseLock = resolve;
+        });
+        const tail = previous.catch(() => undefined).then(() => currentLock);
+        TaskQueueController.startLocks.set(key, tail);
+
+        await previous.catch(() => undefined);
+        try {
+            return await action();
+        } finally {
+            releaseLock();
+            if (TaskQueueController.startLocks.get(key) === tail) {
+                TaskQueueController.startLocks.delete(key);
+            }
+        }
+    }
+
+    private async withFileLock<T>(documentUri: vscode.Uri, action: () => Promise<T>): Promise<T> {
+        const owner = createQueueRunId();
+        const lockPath = getAutoTaskQueueLockPath(documentUri);
+        const lockUri = vscode.Uri.file(lockPath);
+        const startedAt = Date.now();
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(lockPath)));
+
+        while (Date.now() - startedAt <= AUTO_TASK_QUEUE_LOCK_TIMEOUT_MS) {
+            if (await this.tryAcquireFileLock(lockUri, owner)) {
+                try {
+                    return await action();
+                } finally {
+                    await this.releaseFileLock(lockUri, owner);
+                }
+            }
+
+            await this.wait(AUTO_TASK_QUEUE_LOCK_RETRY_MS);
+        }
+
+        throw new Error(`Timed out waiting for auto task queue lock: ${lockPath}`);
+    }
+
+    private async tryAcquireFileLock(lockUri: vscode.Uri, owner: string): Promise<boolean> {
+        const existing = await readAutoTaskQueueLock(lockUri);
+        if (existing && !isAutoTaskQueueLockStale(existing)) {
+            return false;
+        }
+
+        if (existing) {
+            await deleteAutoTaskQueueLock(lockUri);
+        }
+
+        await vscode.workspace.fs.writeFile(lockUri, Buffer.from(JSON.stringify({
+            owner,
+            createdAt: new Date().toISOString()
+        })));
+
+        const confirmed = await readAutoTaskQueueLock(lockUri);
+        return confirmed?.owner === owner;
+    }
+
+    private async releaseFileLock(lockUri: vscode.Uri, owner: string): Promise<void> {
+        const existing = await readAutoTaskQueueLock(lockUri);
+        if (existing?.owner === owner) {
+            await deleteAutoTaskQueueLock(lockUri);
+        }
+    }
+
+    private async wait(milliseconds: number): Promise<void> {
+        await new Promise(resolve => setTimeout(resolve, milliseconds));
+    }
+}
+
+function normalizeQueueRecord(record: Partial<AutoTaskQueueRecord>, documentUri: vscode.Uri): AutoTaskQueueRecord | undefined {
+    if (!isValidQueueRecord(record, documentUri)) {
+        return undefined;
+    }
+
+    const startedAt = typeof record.startedAt === 'string'
+        ? record.startedAt
+        : new Date(0).toISOString();
+    return {
+        ...record,
+        version: 1,
+        queueRunId: getQueueRunId(record, documentUri),
+        taskFilePath: documentUri.fsPath,
+        commandId: record.commandId as AutoTaskQueueCommandId,
+        status: record.status as AutoTaskQueueStatus,
+        startedAt,
+        updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : startedAt
+    };
 }
 
 function isValidQueueRecord(record: Partial<AutoTaskQueueRecord>, documentUri: vscode.Uri): boolean {
@@ -414,6 +598,69 @@ async function deleteAutoTaskQueueRecord(documentUri: vscode.Uri): Promise<void>
     } catch {
         // The persisted queue file is best-effort state; it may not exist yet.
     }
+}
+
+async function readAutoTaskQueueLock(lockUri: vscode.Uri): Promise<AutoTaskQueueLockRecord | undefined> {
+    try {
+        const content = await vscode.workspace.fs.readFile(lockUri);
+        const parsed = JSON.parse(Buffer.from(content).toString()) as Partial<AutoTaskQueueLockRecord>;
+        if (typeof parsed.owner === 'string' && typeof parsed.createdAt === 'string') {
+            return {
+                owner: parsed.owner,
+                createdAt: parsed.createdAt
+            };
+        }
+
+        return {
+            owner: 'invalid',
+            createdAt: new Date(0).toISOString()
+        };
+    } catch {
+        return undefined;
+    }
+}
+
+async function deleteAutoTaskQueueLock(lockUri: vscode.Uri): Promise<void> {
+    try {
+        await vscode.workspace.fs.delete(lockUri);
+    } catch {
+        // Another extension host may have already released the advisory lock.
+    }
+}
+
+function isAutoTaskQueueLockStale(record: AutoTaskQueueLockRecord, now = Date.now()): boolean {
+    const createdAt = Date.parse(record.createdAt);
+    return !Number.isFinite(createdAt) || now - createdAt > AUTO_TASK_QUEUE_LOCK_STALE_MS;
+}
+
+function getQueueRunId(record: Partial<AutoTaskQueueRecord>, documentUri: vscode.Uri): string {
+    if (typeof record.queueRunId === 'string' && record.queueRunId.trim()) {
+        return record.queueRunId;
+    }
+
+    return createLegacyQueueRunId(record, documentUri);
+}
+
+function createQueueRunId(): string {
+    return `queue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createLegacyQueueRunId(record: Partial<AutoTaskQueueRecord>, documentUri: vscode.Uri): string {
+    return `legacy-${hashString([
+        documentUri.fsPath,
+        record.commandId ?? '',
+        record.startedAt ?? '',
+        record.updatedAt ?? ''
+    ].join('|'))}`;
+}
+
+function hashString(value: string): string {
+    let hash = 0;
+    for (let index = 0; index < value.length; index++) {
+        hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+    }
+
+    return (hash >>> 0).toString(36);
 }
 
 function getQueuedTasks(record: AutoTaskQueueRecord): AutoTaskQueueTaskState[] {

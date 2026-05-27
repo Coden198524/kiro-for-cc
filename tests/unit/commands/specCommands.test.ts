@@ -25,6 +25,7 @@ describe('registerSpecCommands task execution', () => {
     let specManager: any;
     let taskCompletionService: any;
     let outputChannel: vscode.OutputChannel;
+    let files: Map<string, Buffer>;
 
     const mockTasksDocument = (lines: readonly string[]): void => {
         (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(async () => ({
@@ -39,6 +40,7 @@ describe('registerSpecCommands task execution', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         commands = new Map();
+        files = new Map();
         (vscode.Uri as any).file = (filePath: string) => ({
             fsPath: filePath,
             path: filePath,
@@ -75,8 +77,20 @@ describe('registerSpecCommands task execution', () => {
         (readTaskLine as jest.Mock).mockResolvedValue(undefined);
         (updateTaskLineStatus as jest.Mock).mockResolvedValue(undefined);
         (vscode.workspace.fs.readDirectory as jest.Mock).mockRejectedValue(new Error('missing directory'));
-        (vscode.workspace.fs.readFile as jest.Mock).mockRejectedValue(new Error('missing file'));
-        (vscode.workspace.fs.delete as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.fs.readFile as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            const content = files.get(normalize(uri.fsPath));
+            if (!content) {
+                throw new Error('missing file');
+            }
+
+            return content;
+        });
+        (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async (uri: vscode.Uri, content: Uint8Array) => {
+            files.set(normalize(uri.fsPath), Buffer.from(content));
+        });
+        (vscode.workspace.fs.delete as jest.Mock).mockImplementation(async (uri: vscode.Uri) => {
+            files.delete(normalize(uri.fsPath));
+        });
         mockTasksDocument([
             '# Tasks',
             '- [ ] 1. Blocked task',
@@ -365,7 +379,7 @@ describe('registerSpecCommands task execution', () => {
         (vscode.workspace.fs.readDirectory as jest.Mock).mockResolvedValue([
             ['demo', vscode.FileType.Directory]
         ]);
-        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify(queueRecord)));
+        files.set(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'), Buffer.from(JSON.stringify(queueRecord)));
         mockTasksDocument([
             '# Tasks',
             '- [ ] 1. Paused task'
@@ -586,7 +600,7 @@ describe('registerSpecCommands task execution', () => {
                 completionSignalToken: 'run-1'
             }
         };
-        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify(queueRecord)));
+        files.set(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'), Buffer.from(JSON.stringify(queueRecord)));
         mockTasksDocument([
             '# Tasks',
             '- [ ] 1. Stale task'
@@ -625,7 +639,7 @@ describe('registerSpecCommands task execution', () => {
                 }
             ]
         };
-        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify(queueRecord)));
+        files.set(normalize('/mock/workspace/.autocode/specs/demo/.autocode/task-queue.json'), Buffer.from(JSON.stringify(queueRecord)));
         mockTasksDocument([
             '# Tasks',
             '- [ ] 1. Different task',
@@ -683,6 +697,102 @@ describe('registerSpecCommands task execution', () => {
         expect(vscode.commands.executeCommand).toHaveBeenCalledTimes(1);
     });
 
+    test('continues a parallel batch after every queued task is manually marked done', async () => {
+        const terminalA = vscode.window.createTerminal('a');
+        const terminalB = vscode.window.createTerminal('b');
+        const taskLines = [
+            '# Tasks',
+            '- [-] 1. First task',
+            '- [-] 2. Second task'
+        ];
+        mockTasksDocument(taskLines);
+        (markTaskLinesInProgress as jest.Mock).mockResolvedValue([1, 2]);
+        specManager.implAllTasksParallel.mockImplementation(async (_taskFilePath: string, options: any) => {
+            await options.beforeLaunchTasks([
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' },
+                { lineNumber: 2, taskDescription: '2. Second task', status: 'pending', completionSignalPath: 'signal-2' }
+            ]);
+            return {
+                parallelRuns: [
+                    { terminal: terminalA, taskFilePath: documentUri.fsPath, lineNumber: 1, taskDescription: '1. First task', completionSignalPath: 'signal-1', completionSignalToken: 'run-1' },
+                    { terminal: terminalB, taskFilePath: documentUri.fsPath, lineNumber: 2, taskDescription: '2. Second task', completionSignalPath: 'signal-2', completionSignalToken: 'run-2' }
+                ],
+                failedLineNumbers: []
+            };
+        });
+        taskCompletionService.registerTaskCompletion.mockReturnValue(new Promise<boolean>(() => undefined));
+
+        const startParallelTasks = commands.get('autocode.spec.implAllTasksParallel');
+        expect(startParallelTasks).toBeDefined();
+        await startParallelTasks!(documentUri);
+
+        const markDone = commands.get('autocode.spec.markTaskDone');
+        expect(markDone).toBeDefined();
+        taskLines[1] = '- [x] 1. First task';
+        (updateTaskLineStatus as jest.Mock).mockResolvedValueOnce({
+            task: { status: 'completed', description: '1. First task' },
+            parentTasks: [],
+            changedLineNumbers: [1]
+        });
+        await markDone!(documentUri, 1);
+
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+
+        taskLines[2] = '- [x] 2. Second task';
+        (updateTaskLineStatus as jest.Mock).mockResolvedValueOnce({
+            task: { status: 'completed', description: '2. Second task' },
+            parentTasks: [],
+            changedLineNumbers: [2]
+        });
+        await markDone!(documentUri, 2);
+
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+    });
+
+    test('ignores stale parallel verification after the queue is cancelled', async () => {
+        const terminalA = vscode.window.createTerminal('a');
+        const terminalB = vscode.window.createTerminal('b');
+        let resolveFirstCompletion: (verified: boolean) => void = () => undefined;
+        let resolveSecondCompletion: (verified: boolean) => void = () => undefined;
+        const firstCompletion = new Promise<boolean>(resolve => {
+            resolveFirstCompletion = resolve;
+        });
+        const secondCompletion = new Promise<boolean>(resolve => {
+            resolveSecondCompletion = resolve;
+        });
+        (markTaskLinesInProgress as jest.Mock).mockResolvedValue([1, 4]);
+        specManager.implAllTasksParallel.mockImplementation(async (_taskFilePath: string, options: any) => {
+            await options.beforeLaunchTasks([
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' },
+                { lineNumber: 4, taskDescription: '2. Second task', status: 'pending', completionSignalPath: 'signal-2' }
+            ]);
+            return {
+                parallelRuns: [
+                    { terminal: terminalA, taskFilePath: documentUri.fsPath, lineNumber: 1, taskDescription: '1. First task', completionSignalPath: 'signal-1', completionSignalToken: 'run-1' },
+                    { terminal: terminalB, taskFilePath: documentUri.fsPath, lineNumber: 4, taskDescription: '2. Second task', completionSignalPath: 'signal-2', completionSignalToken: 'run-2' }
+                ],
+                failedLineNumbers: []
+            };
+        });
+        taskCompletionService.registerTaskCompletion
+            .mockReturnValueOnce(firstCompletion)
+            .mockReturnValueOnce(secondCompletion);
+
+        const startParallelTasks = commands.get('autocode.spec.implAllTasksParallel');
+        expect(startParallelTasks).toBeDefined();
+        await startParallelTasks!(documentUri);
+
+        const cancelQueue = commands.get('autocode.spec.cancelTaskQueue');
+        expect(cancelQueue).toBeDefined();
+        await cancelQueue!(documentUri);
+
+        resolveFirstCompletion(true);
+        resolveSecondCompletion(true);
+        await flushPromises();
+
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+    });
+
     test('rolls a single pending task back when starting the task terminal fails', async () => {
         (updateTaskLineStatus as jest.Mock).mockResolvedValue({
             task: { status: 'pending', description: '1. Failing task' },
@@ -726,6 +836,67 @@ describe('registerSpecCommands task execution', () => {
         expect(vscode.commands.executeCommand).toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
     });
 
+    test('continues with the sequential command when parallel execution falls back to one task', async () => {
+        const terminal = vscode.window.createTerminal('sequential');
+        (markTaskLinesInProgress as jest.Mock).mockResolvedValue([1]);
+        specManager.implAllTasksParallel.mockImplementation(async (_taskFilePath: string, options: any) => {
+            await options.beforeLaunchTasks([
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' }
+            ]);
+            return {
+                terminal,
+                taskFilePath: documentUri.fsPath,
+                lineNumber: 1,
+                taskDescription: '1. First task',
+                completionSignalPath: 'signal-1',
+                completionSignalToken: 'run-1',
+                fallbackToSequential: true
+            };
+        });
+        taskCompletionService.registerTaskCompletion.mockReturnValue(Promise.resolve(true));
+
+        const command = commands.get('autocode.spec.implAllTasksParallel');
+        expect(command).toBeDefined();
+        await command!(documentUri);
+        await flushPromises();
+
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith('autocode.spec.implAllTasks', documentUri);
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+    });
+
+    test('pauses after launched parallel tasks verify when another task failed to start', async () => {
+        const terminalA = vscode.window.createTerminal('a');
+        const terminalB = vscode.window.createTerminal('b');
+        (markTaskLinesInProgress as jest.Mock).mockResolvedValue([1, 4, 6]);
+        specManager.implAllTasksParallel.mockImplementation(async (_taskFilePath: string, options: any) => {
+            await options.beforeLaunchTasks([
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' },
+                { lineNumber: 4, taskDescription: '2. Second task', status: 'pending', completionSignalPath: 'signal-2' },
+                { lineNumber: 6, taskDescription: '3. Failed task', status: 'pending', completionSignalPath: 'signal-3' }
+            ]);
+            return {
+                parallelRuns: [
+                    { terminal: terminalA, taskFilePath: documentUri.fsPath, lineNumber: 1, taskDescription: '1. First task', completionSignalPath: 'signal-1', completionSignalToken: 'run-1' },
+                    { terminal: terminalB, taskFilePath: documentUri.fsPath, lineNumber: 4, taskDescription: '2. Second task', completionSignalPath: 'signal-2', completionSignalToken: 'run-2' }
+                ],
+                failedLineNumbers: [6]
+            };
+        });
+        taskCompletionService.registerTaskCompletion.mockReturnValue(Promise.resolve(true));
+
+        const command = commands.get('autocode.spec.implAllTasksParallel');
+        expect(command).toBeDefined();
+        await command!(documentUri);
+        await flushPromises();
+
+        expect(markTaskLinesPending).toHaveBeenCalledWith(documentUri, [6]);
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+        expect(getLastQueueWrite()).toEqual(expect.objectContaining({
+            status: 'paused',
+            pauseReason: expect.stringContaining('failed to start')
+        }));
+    });
+
     test('returns failed parallel tasks to pending and does not continue the batch', async () => {
         const terminalA = vscode.window.createTerminal('a');
         const terminalB = vscode.window.createTerminal('b');
@@ -757,6 +928,39 @@ describe('registerSpecCommands task execution', () => {
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('parallel task(s) were not verified'));
     });
 
+    test('pauses parallel queue when automatic verification is disabled for one launched task', async () => {
+        const terminalA = vscode.window.createTerminal('a');
+        const terminalB = vscode.window.createTerminal('b');
+        (markTaskLinesInProgress as jest.Mock).mockResolvedValue([1, 4]);
+        specManager.implAllTasksParallel.mockImplementation(async (_taskFilePath: string, options: any) => {
+            await options.beforeLaunchTasks([
+                { lineNumber: 1, taskDescription: '1. First task', status: 'pending', completionSignalPath: 'signal-1' },
+                { lineNumber: 4, taskDescription: '2. Second task', status: 'pending', completionSignalPath: 'signal-2' }
+            ]);
+            return {
+                parallelRuns: [
+                    { terminal: terminalA, taskFilePath: documentUri.fsPath, lineNumber: 1, taskDescription: '1. First task', completionSignalPath: 'signal-1', completionSignalToken: 'run-1' },
+                    { terminal: terminalB, taskFilePath: documentUri.fsPath, lineNumber: 4, taskDescription: '2. Second task', completionSignalPath: 'signal-2', completionSignalToken: 'run-2' }
+                ],
+                failedLineNumbers: []
+            };
+        });
+        taskCompletionService.registerTaskCompletion
+            .mockReturnValueOnce(Promise.resolve(true))
+            .mockReturnValueOnce(undefined);
+
+        const command = commands.get('autocode.spec.implAllTasksParallel');
+        expect(command).toBeDefined();
+        await command!(documentUri);
+
+        expect(markTaskLinesPending).toHaveBeenCalledWith(documentUri, [4]);
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('autocode.spec.implAllTasksParallel', documentUri);
+        expect(getLastQueueWrite()).toEqual(expect.objectContaining({
+            status: 'paused',
+            pauseReason: expect.stringContaining('disabled for one or more launched tasks')
+        }));
+    });
+
     test('pauses parallel queue when automatic verification is disabled for every launched task', async () => {
         const terminalA = vscode.window.createTerminal('a');
         const terminalB = vscode.window.createTerminal('b');
@@ -785,7 +989,7 @@ describe('registerSpecCommands task execution', () => {
     });
 
     async function flushPromises(): Promise<void> {
-        for (let index = 0; index < 8; index++) {
+        for (let index = 0; index < 24; index++) {
             await Promise.resolve();
         }
     }

@@ -419,6 +419,55 @@ describe('TaskCompletionService', () => {
         );
     });
 
+    test('uses Chinese progress and warning messages for Chinese task completion verification', async () => {
+        jest.useFakeTimers();
+        const terminal = vscode.window.createTerminal('task');
+        const context = { subscriptions: [] as vscode.Disposable[] } as unknown as vscode.ExtensionContext;
+
+        verifier.verifyAndMarkDone.mockResolvedValue(false);
+        (vscode.workspace.createFileSystemWatcher as jest.Mock).mockReturnValue({
+            onDidCreate: jest.fn(),
+            onDidChange: jest.fn(),
+            dispose: jest.fn()
+        });
+        (vscode.workspace.fs.stat as jest.Mock).mockResolvedValue(undefined);
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from(JSON.stringify({
+            status: 'ready_for_verification',
+            taskFilePath,
+            lineNumber: 2,
+            taskDescription: '3.3 实现配置加载启动步骤'
+        })));
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValueOnce({
+            lineCount: 3,
+            lineAt: jest.fn((lineNumber: number) => ({
+                text: lineNumber === 2 ? '- [-] 3.3 实现配置加载启动步骤' : '# Tasks'
+            }))
+        });
+
+        const completion = service.registerTaskCompletion(
+            context,
+            terminal,
+            {
+                taskFilePath,
+                lineNumber: 2,
+                taskDescription: '3.3 实现配置加载启动步骤'
+            },
+            `${signalDir}/task-completion-3.json`
+        );
+
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(completion).resolves.toBe(false);
+        expect(vscode.window.withProgress).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: expect.stringContaining('AutoCode 正在验证任务 3: 3.3 实现配置加载启动步骤')
+            }),
+            expect.any(Function)
+        );
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith('任务完成验证未通过：3.3 实现配置加载启动步骤');
+    });
+
     test('shows a warning when single-task completion verification does not pass', async () => {
         jest.useFakeTimers();
         const terminal = vscode.window.createTerminal('task');

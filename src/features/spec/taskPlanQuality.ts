@@ -28,6 +28,32 @@ interface TaskPlanEntry {
 }
 
 const REQUIRED_LEAF_METADATA = ['files', 'depends on', 'requirements', 'verify', 'done when'];
+const METADATA_KEY_ALIASES: Record<string, string> = {
+    dependencies: 'depends on',
+    depends: 'depends on',
+    'blocked by': 'depends on',
+    files: 'files',
+    file: 'files',
+    requirements: 'requirements',
+    requirement: 'requirements',
+    verify: 'verify',
+    verification: 'verify',
+    'done when': 'done when',
+    'done criteria': 'done when',
+    文件: 'files',
+    影响文件: 'files',
+    修改文件: 'files',
+    依赖: 'depends on',
+    前置任务: 'depends on',
+    依赖任务: 'depends on',
+    阻塞于: 'depends on',
+    需求: 'requirements',
+    需求覆盖: 'requirements',
+    验证: 'verify',
+    验证方式: 'verify',
+    完成条件: 'done when',
+    完成标准: 'done when'
+};
 
 export function analyzeTaskPlanQuality(lines: readonly string[]): TaskPlanQualityReport {
     const tasks = collectTasks(lines);
@@ -83,6 +109,8 @@ export function analyzeTaskPlanQuality(lines: readonly string[]): TaskPlanQualit
             message: `Task dependency graph contains a cycle: ${cycle.join(' -> ')}.`
         });
     }
+
+    issues.push(...findUnsafeParallelFileOverlaps(leafTasks, taskIds));
 
     const errorCount = issues.filter(item => item.severity === 'error').length;
     const warningCount = issues.length - errorCount;
@@ -152,7 +180,7 @@ function parseMetadata(lines: readonly string[]): Map<string, string> {
     const metadata = new Map<string, string>();
 
     for (const line of lines) {
-        const match = line.trim().match(/^(?:[-*]\s*)?_?([A-Za-z][A-Za-z ]+)\s*:\s*(.*?)_?$/);
+        const match = line.trim().match(/^(?:[-*]\s*)?_?([^:：]+)\s*[:：]\s*(.*?)_?$/);
         if (!match) {
             continue;
         }
@@ -169,15 +197,15 @@ function parseTaskId(description: string): string | undefined {
 
 function parseCsvMetadata(value: string | undefined): string[] {
     return (value ?? '')
-        .split(',')
+        .split(/[,，]/)
         .map(item => item.trim())
         .filter(Boolean)
-        .filter(item => !/^(none|n\/a|na|null|empty|-+)$/i.test(item));
+        .filter(item => !isEmptyMetadataValue(item));
 }
 
 function parseDependencyMetadata(value: string | undefined): string[] {
     const normalized = (value ?? '').trim();
-    if (!normalized || /^(none|n\/a|na|null|empty|-+)$/i.test(normalized)) {
+    if (!normalized || isEmptyMetadataValue(normalized)) {
         return [];
     }
 
@@ -229,6 +257,102 @@ function findDependencyCycle(leafTasks: readonly TaskPlanEntry[], taskIds: Map<s
     return undefined;
 }
 
+function findUnsafeParallelFileOverlaps(leafTasks: readonly TaskPlanEntry[], taskIds: Map<string, TaskPlanEntry>): TaskPlanQualityIssue[] {
+    const issues: TaskPlanQualityIssue[] = [];
+
+    for (let leftIndex = 0; leftIndex < leafTasks.length; leftIndex++) {
+        const leftTask = leafTasks[leftIndex];
+        if (!leftTask.taskId) {
+            continue;
+        }
+
+        const leftScopes = getFileScopes(leftTask);
+        if (leftScopes.length === 0) {
+            continue;
+        }
+
+        for (let rightIndex = leftIndex + 1; rightIndex < leafTasks.length; rightIndex++) {
+            const rightTask = leafTasks[rightIndex];
+            if (!rightTask.taskId || hasDependencyPath(leftTask.taskId, rightTask.taskId, taskIds) || hasDependencyPath(rightTask.taskId, leftTask.taskId, taskIds)) {
+                continue;
+            }
+
+            const overlap = findOverlappingFileScope(leftScopes, getFileScopes(rightTask));
+            if (!overlap) {
+                continue;
+            }
+
+            issues.push({
+                severity: 'warning',
+                lineNumber: rightTask.lineNumber,
+                taskId: rightTask.taskId,
+                message: `Tasks ${leftTask.taskId} and ${rightTask.taskId} both target ${overlap} without a dependency; add a dependency or split file scopes before parallel execution.`
+            });
+        }
+    }
+
+    return issues;
+}
+
+function getFileScopes(task: TaskPlanEntry): string[] {
+    return parseCsvMetadata(task.metadata.get('files'))
+        .map(normalizeFileScope)
+        .filter((scope): scope is string => Boolean(scope));
+}
+
+function normalizeFileScope(value: string): string | undefined {
+    const normalized = value
+        .trim()
+        .replace(/^[_*`"']+/, '')
+        .replace(/[_*`"',;]+$/, '')
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\.\//, '')
+        .toLowerCase();
+    return normalized && !isEmptyMetadataValue(normalized) ? normalized : undefined;
+}
+
+function findOverlappingFileScope(leftScopes: readonly string[], rightScopes: readonly string[]): string | undefined {
+    for (const left of leftScopes) {
+        for (const right of rightScopes) {
+            if (fileScopesOverlap(left, right)) {
+                return left === right ? left : `${left} / ${right}`;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function fileScopesOverlap(left: string, right: string): boolean {
+    return left === right || isScopePrefix(left, right) || isScopePrefix(right, left);
+}
+
+function isScopePrefix(parent: string, child: string): boolean {
+    const prefix = parent.endsWith('/') ? parent : `${parent}/`;
+    return child.startsWith(prefix);
+}
+
+function hasDependencyPath(fromTaskId: string, toTaskId: string, taskIds: Map<string, TaskPlanEntry>, visiting = new Set<string>()): boolean {
+    if (fromTaskId === toTaskId || visiting.has(fromTaskId)) {
+        return false;
+    }
+
+    const task = taskIds.get(fromTaskId);
+    if (!task) {
+        return false;
+    }
+
+    visiting.add(fromTaskId);
+    for (const dependency of parseDependencyMetadata(task.metadata.get('depends on'))) {
+        if (dependency === toTaskId || hasDependencyPath(dependency, toTaskId, taskIds, visiting)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function issue(severity: TaskPlanQualitySeverity, task: TaskPlanEntry, message: string): TaskPlanQualityIssue {
     return {
         severity,
@@ -243,9 +367,14 @@ function indentationWidth(indentation: string): number {
 }
 
 function normalizeMetadataKey(key: string): string {
-    return key.trim().replace(/\s+/g, ' ').toLowerCase();
+    const normalized = key.trim().replace(/\s+/g, ' ').toLowerCase();
+    return METADATA_KEY_ALIASES[normalized] ?? normalized;
 }
 
 function formatMetadataKey(key: string): string {
     return key.replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function isEmptyMetadataValue(value: string): boolean {
+    return /^(none|n\/a|na|null|empty|无|没有|不依赖|无需|无依赖|-+)$/i.test(value.trim());
 }

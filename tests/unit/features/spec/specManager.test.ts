@@ -515,6 +515,48 @@ describe('SpecManager', () => {
         expect(run?.parallelRuns?.map(item => item.lineNumber)).toEqual([1, 4]);
     });
 
+    test('uses Chinese dependency metadata as a DAG and starts only ready tasks', async () => {
+        const capturedRequests: Array<{ prompt: string; title?: string; approvalPolicy?: string }> = [];
+        const runtime: AgentRuntime = {
+            provider,
+            refreshProvider: jest.fn(),
+            invokeInteractive: jest.fn(async request => {
+                capturedRequests.push({
+                    prompt: request.prompt,
+                    title: request.title,
+                    approvalPolicy: request.approvalPolicy
+                });
+                return vscode.window.createTerminal('mock');
+            }),
+            invokeHeadless: jest.fn(),
+            renameTerminal: jest.fn()
+        };
+        const document = createTaskDocument([
+            '# Implementation Plan',
+            '- [ ] 1. 初始化核心',
+            '  - _Files: src/core.ts_',
+            '  - _依赖: 无_',
+            '- [ ] 2. 实现依赖功能',
+            '  - _Files: src/feature.ts_',
+            '  - _依赖: 1_',
+            '- [ ] 3. 实现独立适配器',
+            '  - _Files: src/adapter.ts_',
+            '  - _前置任务: 无_'
+        ]);
+        (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(document);
+
+        const outputChannel = vscode.window.createOutputChannel('test');
+        const specManager = new SpecManager(runtime, outputChannel);
+
+        const run = await specManager.implAllTasksParallel('/mock/workspace/.autocode/specs/demo/tasks.md');
+
+        expect(runtime.invokeInteractive).toHaveBeenCalledTimes(2);
+        expect(capturedRequests.map(request => request.approvalPolicy)).toEqual(['never', 'never']);
+        expect(capturedRequests.map(request => request.title)).toEqual(['Task 1: 初始化核心', 'Task 3: 实现独立适配器']);
+        expect(capturedRequests.map(request => request.prompt).join('\n')).not.toContain('2. 实现依赖功能');
+        expect(run?.parallelRuns?.map(item => item.lineNumber)).toEqual([1, 7]);
+    });
+
     test('falls back to sequential all-task execution when dependency metadata is cyclic', async () => {
         const runtime = createRuntime(provider, () => undefined);
         const document = createTaskDocument([
@@ -531,7 +573,7 @@ describe('SpecManager', () => {
         const outputChannel = vscode.window.createOutputChannel('test');
         const specManager = new SpecManager(runtime, outputChannel);
 
-        await specManager.implAllTasksParallel('/mock/workspace/.autocode/specs/demo/tasks.md');
+        const run = await specManager.implAllTasksParallel('/mock/workspace/.autocode/specs/demo/tasks.md');
 
         expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('cycle'));
         expect(runtime.invokeInteractive).toHaveBeenCalledTimes(1);
@@ -540,6 +582,7 @@ describe('SpecManager', () => {
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
+        expect(run?.fallbackToSequential).toBe(true);
     });
 
     test('falls back to sequential all-task execution when parallel file scopes overlap', async () => {
@@ -565,6 +608,7 @@ describe('SpecManager', () => {
             reuseTerminal: true,
             approvalPolicy: 'never'
         }));
+        expect(run?.fallbackToSequential).toBe(true);
         expect(run?.completionSignalPath?.replace(/\\/g, '/')).toBe('/mock/workspace/.autocode/specs/demo/.autocode/task-completion-2.json');
     });
 

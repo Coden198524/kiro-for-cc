@@ -28,6 +28,16 @@ describe('TerminalAgentRuntime', () => {
         configValues = {};
         (ConfigManager as any).instance = undefined;
         (vscode.workspace.fs.createDirectory as jest.Mock).mockResolvedValue(undefined);
+        (vscode.Uri as any).file = (filePath: string) => ({
+            fsPath: filePath,
+            path: filePath,
+            scheme: 'file'
+        });
+        (vscode.workspace as any).workspaceFolders = [{
+            uri: vscode.Uri.file('/mock/workspace'),
+            name: 'mock-workspace',
+            index: 0
+        }];
         (vscode.workspace as any).getConfiguration = jest.fn(() => ({
             inspect: jest.fn((key: string) => (
                 Object.prototype.hasOwnProperty.call(configValues, key)
@@ -244,7 +254,7 @@ describe('TerminalAgentRuntime', () => {
         expect((runtime as any).buildInteractiveCommand()).toBe('claude --permission-mode bypassPermissions');
     });
 
-    test('pastes prompt into Claude interactive terminal', async () => {
+    test('sends a prompt-file instruction into Claude interactive terminal', async () => {
         jest.useFakeTimers();
         const terminal = {
             name: 'Mock Terminal',
@@ -269,10 +279,21 @@ describe('TerminalAgentRuntime', () => {
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
 
         jest.advanceTimersByTime(1500);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
+        const sentPrompt = terminal.sendText.mock.calls[1][0] as string;
+        expect(sentPrompt).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(sentPrompt).toContain('interactive-prompt-');
+        expect(sentPrompt).not.toContain('Feature Description: 支持中文 Spec');
+        expect(fs.promises.writeFile).toHaveBeenCalledWith(
+            expect.stringContaining('.autocode'),
+            'Feature Description: 支持中文 Spec'
+        );
+        expect(fs.promises.writeFile).toHaveBeenCalledWith(
+            expect.stringContaining('runtime-prompts'),
+            expect.any(String)
+        );
     });
 
-    test('pastes and submits prompt into Codex interactive terminal after Codex delay', async () => {
+    test('pastes and submits prompt-file instruction into Codex interactive terminal after Codex delay', async () => {
         jest.useFakeTimers();
         configValues['agent.provider'] = 'codex';
         configValues['providers.codex.command'] = 'codex';
@@ -299,7 +320,18 @@ describe('TerminalAgentRuntime', () => {
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'codex', true);
 
         jest.advanceTimersByTime(1500);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~Feature Description: 支持中文 Spec\x1b[201~', false);
+        const sentPrompt = terminal.sendText.mock.calls[1][0] as string;
+        expect(sentPrompt).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(sentPrompt).toContain('interactive-prompt-');
+        expect(sentPrompt).not.toContain('Feature Description: 支持中文 Spec');
+        expect(fs.promises.writeFile).toHaveBeenCalledWith(
+            expect.stringContaining('.autocode'),
+            'Feature Description: 支持中文 Spec'
+        );
+        expect(fs.promises.writeFile).toHaveBeenCalledWith(
+            expect.stringContaining('runtime-prompts'),
+            expect.any(String)
+        );
 
         jest.advanceTimersByTime(1199);
         expect(terminal.sendText).toHaveBeenCalledTimes(2);
@@ -366,7 +398,10 @@ describe('TerminalAgentRuntime', () => {
         expect(taskTerminal.show).toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(800);
-        expect(taskTerminal.sendText).toHaveBeenNthCalledWith(1, '\x1b[200~Verify in this terminal\x1b[201~', false);
+        const sentPrompt = taskTerminal.sendText.mock.calls[0][0] as string;
+        expect(sentPrompt).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(sentPrompt).toContain('interactive-prompt-');
+        expect(sentPrompt).not.toContain('Verify in this terminal');
 
         await jest.advanceTimersByTimeAsync(1200);
         expect(taskTerminal.sendText).toHaveBeenNthCalledWith(2, '', true);
@@ -449,8 +484,10 @@ describe('TerminalAgentRuntime', () => {
 
         expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~First task\x1b[201~', false);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(3, '\x1b[200~Second task\x1b[201~', false);
+        expect(terminal.sendText.mock.calls[1][0]).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(terminal.sendText.mock.calls[1][0]).not.toContain('First task');
+        expect(terminal.sendText.mock.calls[2][0]).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(terminal.sendText.mock.calls[2][0]).not.toContain('Second task');
     });
 
     test('reuses allocated interactive terminal before launch delay completes', async () => {
@@ -484,8 +521,10 @@ describe('TerminalAgentRuntime', () => {
 
         expect(vscode.window.createTerminal).toHaveBeenCalledTimes(1);
         expect(terminal.sendText).toHaveBeenNthCalledWith(1, 'claude --permission-mode bypassPermissions', true);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(2, '\x1b[200~First task\x1b[201~', false);
-        expect(terminal.sendText).toHaveBeenNthCalledWith(3, '\x1b[200~Second task\x1b[201~', false);
+        expect(terminal.sendText.mock.calls[1][0]).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(terminal.sendText.mock.calls[1][0]).not.toContain('First task');
+        expect(terminal.sendText.mock.calls[2][0]).toContain('\x1b[200~AutoCode has written the full prompt to a local file');
+        expect(terminal.sendText.mock.calls[2][0]).not.toContain('Second task');
     });
 
     test('reuses command terminal for non-interactive CLI providers when requested', async () => {

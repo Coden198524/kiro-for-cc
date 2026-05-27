@@ -77,4 +77,66 @@ describe('task plan quality analysis', () => {
             'Task dependency graph contains a cycle: 1.1 -> 1.2 -> 1.1.'
         ]));
     });
+
+    test('accepts localized metadata aliases and validates localized dependencies', () => {
+        const report = analyzeTaskPlanQuality([
+            '- [ ] 1. 初始化核心',
+            '  - _文件: src/core.ts, tests/core.test.ts_',
+            '  - _依赖: 无_',
+            '  - _需求: 1.1_',
+            '  - _验证: npm test -- core.test.ts_',
+            '  - _完成条件: 核心能力有测试覆盖_',
+            '- [ ] 2. 实现功能',
+            '  - _文件: src/feature.ts, tests/feature.test.ts_',
+            '  - _前置任务: 1, 3_',
+            '  - _需求: 2.1_',
+            '  - _验证方式: npm test -- feature.test.ts_',
+            '  - _完成标准: 功能测试通过_'
+        ]);
+
+        expect(report.errorCount).toBe(1);
+        expect(report.issues.map(item => item.message)).toEqual([
+            'Task 2 depends on unknown task 3.'
+        ]);
+    });
+
+    test('warns when independent leaf tasks target overlapping file scopes', () => {
+        const report = analyzeTaskPlanQuality([
+            '- [ ] 1. Build first slice',
+            '  - _Files: src/shared.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.1_',
+            '  - _Verify: npm test -- shared.test.ts_',
+            '  - _Done when: first slice passes_',
+            '- [ ] 2. Build second slice',
+            '  - _Files: src/shared.ts, tests/shared.test.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.2_',
+            '  - _Verify: npm test -- shared.test.ts_',
+            '  - _Done when: second slice passes_'
+        ]);
+
+        expect(report.errorCount).toBe(0);
+        expect(report.warningCount).toBe(1);
+        expect(report.issues[0].message).toBe('Tasks 1 and 2 both target src/shared.ts without a dependency; add a dependency or split file scopes before parallel execution.');
+    });
+
+    test('allows overlapping file scopes when dependency metadata orders the tasks', () => {
+        const report = analyzeTaskPlanQuality([
+            '- [ ] 1. Build first slice',
+            '  - _Files: src/shared.ts_',
+            '  - _Depends on: none_',
+            '  - _Requirements: 1.1_',
+            '  - _Verify: npm test -- shared.test.ts_',
+            '  - _Done when: first slice passes_',
+            '- [ ] 2. Build second slice',
+            '  - _Files: src/shared.ts, tests/shared.test.ts_',
+            '  - _Depends on: 1_',
+            '  - _Requirements: 1.2_',
+            '  - _Verify: npm test -- shared.test.ts_',
+            '  - _Done when: second slice passes_'
+        ]);
+
+        expect(report.issueCount).toBe(0);
+    });
 });

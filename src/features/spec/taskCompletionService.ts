@@ -178,6 +178,7 @@ export class TaskCompletionService {
                     }
                 });
             }, TaskCompletionService.TERMINAL_CLOSE_SIGNAL_GRACE_MS);
+            this.unrefTimer(closeGraceTimer);
         };
 
         const shellEndDisposable = vscode.window.onDidEndTerminalShellExecution(async (event) => {
@@ -346,6 +347,7 @@ export class TaskCompletionService {
                     finishCompletion(false);
                 });
             }, TaskCompletionService.TERMINAL_CLOSE_SIGNAL_GRACE_MS);
+            this.unrefTimer(closeGraceTimer);
         });
 
         context.subscriptions.push(...disposables, terminalDisposable);
@@ -624,16 +626,18 @@ export class TaskCompletionService {
                     this.outputChannel.appendLine(`[Task Complete] Failed to verify completion signal: ${error}`);
                 });
             }, 500);
+            this.unrefTimer(timer);
         };
 
         watcher.onDidCreate(uri => trigger(uri, 'watcher'));
         watcher.onDidChange(uri => trigger(uri, 'watcher'));
-        setTimeout(() => {
+        const startupTimer = setTimeout(() => {
             vscode.workspace.fs.stat(signalUri).then(
                 () => trigger(signalUri, 'startup'),
                 () => undefined
             );
         }, 0);
+        this.unrefTimer(startupTimer);
 
         const pollTimer = setInterval(() => {
             if (disposed) {
@@ -651,6 +655,7 @@ export class TaskCompletionService {
                 () => undefined
             );
         }, TaskCompletionService.SIGNAL_POLL_INTERVAL_MS);
+        this.unrefTimer(pollTimer);
 
         return {
             dispose: () => {
@@ -669,5 +674,9 @@ export class TaskCompletionService {
         return process.platform === 'win32'
             ? normalized.toLowerCase()
             : normalized;
+    }
+
+    private unrefTimer(timer: NodeJS.Timeout): void {
+        timer.unref?.();
     }
 }

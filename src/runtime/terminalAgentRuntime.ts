@@ -22,6 +22,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
     private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MIN_DELAY = 1200;
     private static readonly CODEX_INTERACTIVE_PROMPT_SUBMIT_MAX_DELAY = 6000;
     private static readonly CODEX_INTERACTIVE_PROMPT_CHARS_PER_DELAY_MS = 12;
+    private static readonly INTERACTIVE_PROMPT_FILE_CLEANUP_MS = 6 * 60 * 60 * 1000;
     private static readonly VISIBLE_HEADLESS_POLL_INTERVAL_MS = 1000;
     private static readonly VISIBLE_HEADLESS_TIMEOUT_MS = 30 * 60 * 1000;
     private configManager: ConfigManager;
@@ -72,14 +73,19 @@ export class TerminalAgentRuntime implements AgentRuntime {
             const prompt = this.decoratePrompt(request.prompt, request.agentType);
 
             if (provider.id === 'claude' || provider.id === 'codex') {
-                return this.invokePromptPastedInteractive(prompt, request.title, request.reuseTerminal, request.approvalPolicy, {
+                const promptFile = await this.createInteractivePromptFileRecord(prompt);
+                const promptFileInstruction = this.buildInteractivePromptFileInstruction(promptFile.providerPath);
+                const terminal = await this.invokePromptPastedInteractive(promptFileInstruction, request.title, request.reuseTerminal, request.approvalPolicy, {
                     sandboxMode: request.sandboxMode,
                     bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
                 }, request.targetTerminal);
+                this.outputChannel.appendLine(`[AgentRuntime] Wrote interactive prompt file: ${promptFile.localPath}`);
+                this.schedulePromptCleanup(promptFile.localPath, TerminalAgentRuntime.INTERACTIVE_PROMPT_FILE_CLEANUP_MS);
+                return terminal;
             }
 
-            const promptFilePath = await this.createTempFile(prompt, 'prompt');
-            const command = this.buildCommand(promptFilePath, provider, {
+            const promptFile = await this.createTempFileRecord(prompt, 'prompt');
+            const command = this.buildCommand(promptFile.providerPath, provider, {
                 approvalPolicy: request.approvalPolicy,
                 sandboxMode: request.sandboxMode,
                 bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
@@ -96,7 +102,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 terminal.sendText(command, true);
             }, delay);
 
-            this.schedulePromptCleanup(promptFilePath, 30000);
+            this.schedulePromptCleanup(promptFile.localPath, 30000);
             return terminal;
         } catch (error) {
             this.outputChannel.appendLine(`ERROR: Failed to run ${this.provider.displayName}: ${error}`);
@@ -121,8 +127,8 @@ export class TerminalAgentRuntime implements AgentRuntime {
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         const cwd = workspaceFolder?.uri.fsPath;
-        const promptFilePath = await this.createTempFile(prompt, 'background-prompt');
-        const commandLine = this.buildCommand(promptFilePath, this.provider, {
+        const promptFile = await this.createTempFileRecord(prompt, 'background-prompt');
+        const commandLine = this.buildCommand(promptFile.providerPath, this.provider, {
             approvalPolicy: request.approvalPolicy,
             sandboxMode: request.sandboxMode,
             bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
@@ -134,14 +140,14 @@ export class TerminalAgentRuntime implements AgentRuntime {
                 shell: process.platform === 'win32' ? 'powershell.exe' : undefined,
                 maxBuffer: 1024 * 1024 * 8
             });
-            await this.cleanupPromptFile(promptFilePath);
+            await this.cleanupPromptFile(promptFile.localPath);
             return {
                 exitCode: 0,
                 output: stdout,
                 stderr
             };
         } catch (error: any) {
-            await this.cleanupPromptFile(promptFilePath);
+            await this.cleanupPromptFile(promptFile.localPath);
             this.outputChannel.appendLine(`[AgentRuntime] Headless command failed: ${error}`);
             return {
                 exitCode: typeof error?.code === 'number' ? error.code : 1,
@@ -157,10 +163,10 @@ export class TerminalAgentRuntime implements AgentRuntime {
         this.outputChannel.appendLine(prompt);
         this.outputChannel.appendLine('========================================');
 
-        const promptFilePath = await this.createTempFile(prompt, 'visible-background-prompt');
+        const promptFile = await this.createTempFileRecord(prompt, 'visible-background-prompt');
         const outputFilePath = this.createTempArtifactPath('visible-headless-output', 'log');
         const statusFilePath = this.createTempArtifactPath('visible-headless-status', 'txt');
-        const commandLine = this.buildCommand(promptFilePath, this.provider, {
+        const commandLine = this.buildCommand(promptFile.providerPath, this.provider, {
             approvalPolicy: request.approvalPolicy,
             sandboxMode: request.sandboxMode,
             bypassApprovalsAndSandbox: request.bypassApprovalsAndSandbox
@@ -174,7 +180,7 @@ export class TerminalAgentRuntime implements AgentRuntime {
         terminal.sendText(terminalCommand, true);
 
         const result = await this.waitForVisibleHeadlessResult(statusFilePath, outputFilePath);
-        await this.cleanupPromptFile(promptFilePath);
+        await this.cleanupPromptFile(promptFile.localPath);
         await this.deleteTempArtifact(statusFilePath);
         await this.deleteTempArtifact(outputFilePath);
         return result;
@@ -388,14 +394,43 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
         return `${server.name} (${server.type}${command ? `, command: ${command}` : ''}${source}${envKeys})`;
     }
 
-    private async createTempFile(content: string, prefix: string = 'prompt'): Promise<string> {
+    private async createTempFileRecord(content: string, prefix: string = 'prompt'): Promise<{ localPath: string; providerPath: string }> {
         const tempDir = this.context.globalStorageUri.fsPath;
         await vscode.workspace.fs.createDirectory(this.context.globalStorageUri);
 
         const tempFile = path.join(tempDir, `${prefix}-${Date.now()}.md`);
         await fs.promises.writeFile(tempFile, content);
 
-        return this.convertPathIfWSL(tempFile);
+        return {
+            localPath: tempFile,
+            providerPath: this.convertPathIfWSL(tempFile)
+        };
+    }
+
+    private async createInteractivePromptFileRecord(content: string): Promise<{ localPath: string; providerPath: string }> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder?.uri?.fsPath) {
+            return this.createTempFileRecord(content, 'interactive-prompt');
+        }
+
+        const promptDir = path.join(workspaceFolder.uri.fsPath, '.autocode', 'runtime-prompts');
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(promptDir));
+        const promptFile = path.join(promptDir, `interactive-prompt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.md`);
+        await fs.promises.writeFile(promptFile, content);
+
+        return {
+            localPath: promptFile,
+            providerPath: this.convertPathIfWSL(promptFile)
+        };
+    }
+
+    private buildInteractivePromptFileInstruction(promptFilePath: string): string {
+        return [
+            'AutoCode has written the full prompt to a local file to keep this terminal readable.',
+            'Read and execute the prompt from this exact file path:',
+            promptFilePath,
+            'Do not ask for the prompt to be pasted unless reading the file fails.'
+        ].join('\n');
     }
 
     private createTempArtifactPath(prefix: string, extension: string): string {
@@ -623,9 +658,10 @@ Use these tools and MCP servers when the active provider exposes equivalent capa
     }
 
     private schedulePromptCleanup(promptFilePath: string, delayMs: number): void {
-        setTimeout(async () => {
+        const timer = setTimeout(async () => {
             await this.cleanupPromptFile(promptFilePath);
         }, delayMs);
+        timer.unref?.();
     }
 
     private async cleanupPromptFile(promptFilePath: string): Promise<void> {
