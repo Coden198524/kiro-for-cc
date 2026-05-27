@@ -209,6 +209,9 @@ describe('MemoryManager', () => {
         expect(records.map(record => record.status)).toEqual(['conflict', 'conflict']);
         expect(records[0].conflictWith).toEqual([records[1].id]);
         expect(records[1].conflictWith).toEqual([records[0].id]);
+
+        const conflicts = await memoryManager.listRecords('conflict');
+        expect(conflicts.map(record => record.status)).toEqual(['conflict', 'conflict']);
     });
 
     test('ranks preferences and pitfalls above noisy session summaries', async () => {

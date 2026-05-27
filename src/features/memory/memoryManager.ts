@@ -466,6 +466,9 @@ export class MemoryManager {
             if (category === 'pending') {
                 return record.status === 'pending';
             }
+            if (category === 'conflict') {
+                return record.status === 'conflict';
+            }
             return true;
         }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }

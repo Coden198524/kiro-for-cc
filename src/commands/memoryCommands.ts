@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { MemoryManager, MemoryType, StoredMemoryRecord } from '../features/memory/memoryManager';
-import { MemoryExplorerProvider } from '../providers/memoryExplorerProvider';
+import { MemoryExplorerProvider, MemoryFilterCategory } from '../providers/memoryExplorerProvider';
 
 export interface RegisterMemoryCommandsOptions {
     context: vscode.ExtensionContext;
@@ -21,6 +21,57 @@ export function registerMemoryCommands(options: RegisterMemoryCommandsOptions): 
         vscode.commands.registerCommand('autocode.memory.refresh', async () => {
             outputChannel.appendLine('[Memory] Refreshing memory explorer...');
             memoryExplorer.refresh();
+        }),
+        vscode.commands.registerCommand('autocode.memory.search', async () => {
+            const currentFilter = memoryExplorer.getFilter();
+            const query = await vscode.window.showInputBox({
+                title: 'Search Memory',
+                prompt: 'Filter the Memory view by text, tag, source path, or metadata.',
+                value: currentFilter.query,
+                placeHolder: 'Example: task queue verification',
+                ignoreFocusOut: true
+            });
+            if (query === undefined) {
+                return;
+            }
+
+            memoryExplorer.setFilter({
+                ...currentFilter,
+                query
+            });
+        }),
+        vscode.commands.registerCommand('autocode.memory.filter', async () => {
+            const currentFilter = memoryExplorer.getFilter();
+            const items: Array<{
+                label: string;
+                description: string;
+                category?: MemoryFilterCategory;
+            }> = [
+                { label: 'All Memory', description: 'Show every active memory category' },
+                { label: 'Review Inbox', description: 'Pending memories waiting for review', category: 'pending' },
+                { label: 'Conflicts', description: 'Memories that conflict with another record', category: 'conflict' },
+                { label: 'Project Memory', description: 'Project facts, decisions, commands, and conventions', category: 'project' },
+                { label: 'User Preferences', description: 'User-wide preferences', category: 'user' },
+                { label: 'Spec Memory', description: 'Spec summaries and task execution history', category: 'spec' },
+                { label: 'Session History', description: 'Recorded AI task sessions', category: 'session' },
+                { label: 'Pitfalls', description: 'Known failures, caveats, and recovery notes', category: 'pitfall' }
+            ];
+            const selected = await vscode.window.showQuickPick(items, {
+                title: 'Filter Memory',
+                placeHolder: 'Choose which memory category to show'
+            });
+            if (!selected) {
+                return;
+            }
+
+            memoryExplorer.setFilter({
+                ...currentFilter,
+                category: selected.category
+            });
+        }),
+        vscode.commands.registerCommand('autocode.memory.clearFilter', async () => {
+            memoryExplorer.clearFilter();
+            vscode.window.showInformationMessage('Memory filter cleared.');
         }),
         vscode.commands.registerCommand('autocode.memory.createProjectMemory', async () => {
             const text = await vscode.window.showInputBox({

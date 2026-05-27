@@ -108,7 +108,7 @@
       },
       {
         "view": "autocode.views.memoryExplorer",
-        "contents": "Remember reusable project facts and user preferences\n\n[$(add) Add Project Memory](command:autocode.memory.createProjectMemory)\n\n[$(account) Add User Preference](command:autocode.memory.createUserPreference)"
+        "contents": "Remember reusable project facts and user preferences\n\n[$(search) Search Memory](command:autocode.memory.search)\n\n[$(filter) Filter Memory](command:autocode.memory.filter)\n\n[$(add) Add Project Memory](command:autocode.memory.createProjectMemory)\n\n[$(account) Add User Preference](command:autocode.memory.createUserPreference)"
       },
       {
         "view": "autocode.views.mcpServerStatus",
@@ -387,6 +387,24 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "autocode.memory.search",
+        "title": "Search Memory",
+        "category": "AutoCode",
+        "icon": "$(search)"
+      },
+      {
+        "command": "autocode.memory.filter",
+        "title": "Filter Memory",
+        "category": "AutoCode",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "autocode.memory.clearFilter",
+        "title": "Clear Memory Filter",
+        "category": "AutoCode",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "autocode.memory.openSource",
         "title": "Open Memory Source",
         "category": "AutoCode",
@@ -542,9 +560,19 @@
           "group": "navigation@2"
         },
         {
-          "command": "autocode.memory.refresh",
+          "command": "autocode.memory.search",
           "when": "view == autocode.views.memoryExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "autocode.memory.filter",
+          "when": "view == autocode.views.memoryExplorer",
+          "group": "navigation@4"
+        },
+        {
+          "command": "autocode.memory.refresh",
+          "when": "view == autocode.views.memoryExplorer",
+          "group": "navigation@5"
         },
         {
           "command": "autocode.mcp.refresh",
@@ -672,6 +700,18 @@
         },
         {
           "command": "autocode.currentWork.refresh",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.search",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.filter",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.clearFilter",
           "when": "workspaceFolderCount > 0"
         },
         {

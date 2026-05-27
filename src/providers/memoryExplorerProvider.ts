@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 import { MemoryManager, StoredMemoryRecord } from '../features/memory/memoryManager';
 
 type MemoryGroupId = 'pending' | 'project' | 'user' | 'spec' | 'session' | 'pitfall';
+export type MemoryFilterCategory = 'all' | MemoryGroupId | 'conflict';
+
+export interface MemoryExplorerFilter {
+    query?: string;
+    category?: MemoryFilterCategory;
+}
 
 interface MemoryGroup {
     id: MemoryGroupId;
@@ -49,14 +55,47 @@ const MEMORY_GROUPS: MemoryGroup[] = [
     }
 ];
 
+const FILTER_CATEGORY_LABELS: Record<MemoryFilterCategory, string> = {
+    all: 'All Memory',
+    pending: 'Review Inbox',
+    project: 'Project Memory',
+    user: 'User Preferences',
+    spec: 'Spec Memory',
+    session: 'Session History',
+    pitfall: 'Pitfalls',
+    conflict: 'Conflicts'
+};
+
 export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTreeItem> {
     private _onDidChangeTreeData = new vscode.EventEmitter<MemoryTreeItem | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private filter: MemoryExplorerFilter = {};
 
     constructor(private memoryManager: MemoryManager) { }
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
+    }
+
+    setFilter(filter: MemoryExplorerFilter): void {
+        this.filter = {
+            query: filter.query?.trim() || undefined,
+            category: filter.category && filter.category !== 'all' ? filter.category : undefined
+        };
+        this.refresh();
+    }
+
+    clearFilter(): void {
+        this.filter = {};
+        this.refresh();
+    }
+
+    getFilter(): MemoryExplorerFilter {
+        return { ...this.filter };
+    }
+
+    hasActiveFilter(): boolean {
+        return Boolean(this.filter.query || this.filter.category);
     }
 
     getTreeItem(element: MemoryTreeItem): vscode.TreeItem {
@@ -77,6 +116,21 @@ export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTre
         }
 
         if (!element) {
+            if (this.hasActiveFilter()) {
+                return [
+                    new MemoryTreeItem(
+                        'Filtered Memory',
+                        vscode.TreeItemCollapsibleState.Expanded,
+                        'memory-filter-group',
+                        undefined,
+                        this.formatFilterDescription(),
+                        new vscode.ThemeIcon('filter'),
+                        undefined,
+                        true
+                    )
+                ];
+            }
+
             return MEMORY_GROUPS.map(group => new MemoryTreeItem(
                 group.label,
                 vscode.TreeItemCollapsibleState.Collapsed,
@@ -86,6 +140,23 @@ export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTre
                 new vscode.ThemeIcon(group.icon),
                 group
             ));
+        }
+
+        if (element.filterRoot) {
+            const records = await this.listFilteredRecords();
+            if (records.length === 0) {
+                return [
+                    new MemoryTreeItem(
+                        'No matching memory',
+                        vscode.TreeItemCollapsibleState.None,
+                        'memory-empty',
+                        undefined,
+                        'Adjust or clear the current memory filter.'
+                    )
+                ];
+            }
+
+            return records.map(record => this.createRecordItem(record));
         }
 
         if (element.group) {
@@ -102,17 +173,52 @@ export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTre
                 ];
             }
 
-            return records.map(record => new MemoryTreeItem(
-                this.formatRecordLabel(record),
-                vscode.TreeItemCollapsibleState.None,
-                'memory-record',
-                record,
-                this.formatRecordTooltip(record),
-                new vscode.ThemeIcon(this.getRecordIcon(record))
-            ));
+            return records.map(record => this.createRecordItem(record));
         }
 
         return [];
+    }
+
+    private async listFilteredRecords(): Promise<StoredMemoryRecord[]> {
+        const category = this.filter.category;
+        const records = await this.memoryManager.listRecords(category);
+        const query = this.filter.query;
+        if (!query) {
+            return records;
+        }
+
+        const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+        if (tokens.length === 0) {
+            return records;
+        }
+
+        return records.filter(record => this.matchesQuery(record, tokens));
+    }
+
+    private matchesQuery(record: StoredMemoryRecord, tokens: readonly string[]): boolean {
+        const haystack = [
+            record.text,
+            record.scope,
+            record.type,
+            record.status ?? 'active',
+            record.subject ?? '',
+            record.source?.path ?? '',
+            ...(record.tags ?? []),
+            record.metadata ? JSON.stringify(record.metadata) : ''
+        ].join(' ').toLowerCase();
+
+        return tokens.every(token => haystack.includes(token));
+    }
+
+    private createRecordItem(record: StoredMemoryRecord): MemoryTreeItem {
+        return new MemoryTreeItem(
+            this.formatRecordLabel(record),
+            vscode.TreeItemCollapsibleState.None,
+            'memory-record',
+            record,
+            this.formatRecordTooltip(record),
+            new vscode.ThemeIcon(this.getRecordIcon(record))
+        );
     }
 
     private formatRecordLabel(record: StoredMemoryRecord): string {
@@ -126,6 +232,7 @@ export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTre
             '',
             `Scope: ${record.scope}`,
             `Type: ${record.type}`,
+            `Status: ${record.status ?? 'active'}`,
             `Confidence: ${record.confidence}`,
             `Created: ${record.createdAt}`,
             record.tags?.length ? `Tags: ${record.tags.join(', ')}` : '',
@@ -133,7 +240,19 @@ export class MemoryExplorerProvider implements vscode.TreeDataProvider<MemoryTre
         ].filter(Boolean).join('\n');
     }
 
+    private formatFilterDescription(): string {
+        const parts = [
+            this.filter.category ? FILTER_CATEGORY_LABELS[this.filter.category] : undefined,
+            this.filter.query ? `Query: ${this.filter.query}` : undefined
+        ].filter(Boolean);
+
+        return parts.length > 0 ? parts.join(' | ') : 'No filter';
+    }
+
     private getRecordIcon(record: StoredMemoryRecord): string {
+        if (record.status === 'conflict') {
+            return 'warning';
+        }
         if (record.type === 'pitfall') {
             return 'warning';
         }
@@ -158,12 +277,17 @@ class MemoryTreeItem extends vscode.TreeItem {
         public readonly record?: StoredMemoryRecord,
         tooltip?: string,
         iconPath?: vscode.ThemeIcon,
-        public readonly group?: MemoryGroup
+        public readonly group?: MemoryGroup,
+        public readonly filterRoot = false
     ) {
         super(label, collapsibleState);
         this.label = label;
         this.tooltip = tooltip;
         this.iconPath = iconPath;
+
+        if (filterRoot && tooltip) {
+            this.description = tooltip;
+        }
 
         if (record) {
             this.description = `${record.scope}/${record.type}`;
