@@ -113,12 +113,25 @@ describe('MemoryManager', () => {
             lineNumber: 3,
             taskDescription: '2. Implement task queue memory',
             verified: true,
-            summary: 'Focused tests passed.'
+            summary: 'Focused tests passed. Next: update docs later.',
+            evidence: ['npm test -- memoryManager.test.ts passed'],
+            filesChanged: ['src/features/memory/memoryManager.ts']
         });
 
         const memoryPath = normalize('/mock/workspace/.autocode/specs/demo/memory/verification.jsonl');
-        expect(files.get(memoryPath)?.toString()).toContain('Implement task queue memory');
-        expect(files.get(memoryPath)?.toString()).toContain('Focused tests passed.');
+        const record = JSON.parse(files.get(memoryPath)!.toString().trim());
+        expect(record.text).toContain('Implement task queue memory');
+        expect(record.text).toContain('Focused tests passed.');
+        expect(record.metadata).toEqual(expect.objectContaining({
+            taskId: '2',
+            specName: 'demo',
+            outcome: 'verified',
+            lineNumber: 3,
+            filesChanged: ['src/features/memory/memoryManager.ts'],
+            verifyCommands: ['npm test -- memoryManager.test.ts passed'],
+            evidence: ['npm test -- memoryManager.test.ts passed'],
+            followUps: ['Next: update docs later']
+        }));
     });
 
     test('deduplicates exact memory records by fingerprint', async () => {

@@ -28,6 +28,7 @@ export interface MemoryRecord {
     subject?: string;
     fingerprint?: string;
     conflictWith?: string[];
+    metadata?: Record<string, unknown>;
 }
 
 export interface StoredMemoryRecord extends MemoryRecord {
@@ -43,6 +44,7 @@ export interface AddMemoryRequest {
     confidence?: number;
     specFilePath?: string;
     subject?: string;
+    metadata?: Record<string, unknown>;
 }
 
 export interface MemorySearchRequest {
@@ -60,6 +62,10 @@ export interface TaskMemoryRequest {
     verified: boolean;
     summary?: string;
     evidence?: string[];
+    filesChanged?: string[];
+    verifyCommands?: string[];
+    followUps?: string[];
+    pitfalls?: string[];
 }
 
 export interface SessionMemoryRequest {
@@ -71,6 +77,7 @@ export interface SessionMemoryRequest {
     providerName: string;
     providerSessionId?: string;
     promptSnapshotPath?: string;
+    summary?: string;
 }
 
 export class MemoryManager {
@@ -111,7 +118,8 @@ export class MemoryManager {
             createdAt: new Date().toISOString(),
             status: 'active',
             subject,
-            fingerprint
+            fingerprint,
+            metadata: request.metadata
         };
 
         const storagePath = this.getStoragePathForRecord(record, request.specFilePath);
@@ -153,6 +161,18 @@ export class MemoryManager {
             request.taskDescription,
             request.summary
         ].filter(Boolean);
+        const evidence = request.evidence ?? [];
+        const metadata = {
+            taskId: this.parseTaskId(request.taskDescription),
+            specName: this.getSpecNameFromTaskFilePath(request.taskFilePath),
+            outcome: request.verified ? 'verified' : 'not-verified',
+            lineNumber: request.lineNumber,
+            filesChanged: request.filesChanged ?? [],
+            verifyCommands: request.verifyCommands ?? this.extractVerifyCommands([request.summary, ...evidence].filter((item): item is string => Boolean(item))),
+            evidence,
+            followUps: request.followUps ?? this.extractFollowUps(request.summary),
+            pitfalls: request.pitfalls ?? this.extractPitfalls([request.summary, ...evidence].filter((item): item is string => Boolean(item)))
+        };
 
         await this.addMemory({
             scope: 'task',
@@ -169,7 +189,8 @@ export class MemoryManager {
                 request.verified ? 'verified' : 'not-verified',
                 ...this.inferTags(request.taskDescription)
             ],
-            confidence: request.verified ? 0.95 : 0.65
+            confidence: request.verified ? 0.95 : 0.65,
+            metadata
         });
     }
 
@@ -193,7 +214,18 @@ export class MemoryManager {
                 lineNumber: request.lineNumber
             },
             tags: ['session', request.providerName, ...this.inferTags(request.taskDescription)],
-            confidence: 0.85
+            confidence: 0.85,
+            metadata: {
+                taskId: this.parseTaskId(request.taskDescription),
+                specName: this.getSpecNameFromTaskFilePath(request.taskFilePath),
+                lineNumber: request.lineNumber,
+                sessionId: request.sessionId,
+                invocationId: request.invocationId,
+                providerName: request.providerName,
+                providerSessionId: request.providerSessionId,
+                promptSnapshotPath: request.promptSnapshotPath,
+                summary: request.summary
+            }
         });
     }
 
@@ -781,6 +813,48 @@ export class MemoryManager {
     private inferTags(text: string): string[] {
         return this.tokenize(text)
             .filter(token => token.length >= 3 || /[\u3400-\u9fff]/.test(token))
+            .slice(0, 8);
+    }
+
+    private parseTaskId(description: string): string | undefined {
+        return description.trim().match(/^(\d+(?:\.\d+)*)(?:[.)])?\s+/)?.[1];
+    }
+
+    private getSpecNameFromTaskFilePath(taskFilePath: string): string | undefined {
+        const normalized = taskFilePath.replace(/\\/g, '/');
+        const match = normalized.match(/\/\.autocode\/specs\/([^/]+)\/tasks\.md$/);
+        return match?.[1];
+    }
+
+    private extractVerifyCommands(values: readonly string[]): string[] {
+        const commands = new Set<string>();
+        const commandPattern = /\b(?:npm|pnpm|yarn|npx|node|dotnet|go|cargo|python|python3|pytest|vitest|jest|tsc|webpack|vsce|mvn|gradle|make|cmake)\b[^\r\n]*/gi;
+        for (const value of values) {
+            for (const match of value.match(commandPattern) ?? []) {
+                commands.add(match.trim().replace(/[.;。]+$/g, ''));
+            }
+        }
+
+        return [...commands].slice(0, 12);
+    }
+
+    private extractFollowUps(summary: string | undefined): string[] {
+        if (!summary) {
+            return [];
+        }
+
+        return summary
+            .split(/\r?\n|[.;。]/)
+            .map(line => line.trim())
+            .filter(line => /\b(todo|follow.?up|next|later|remaining)\b|后续|待办|下一步|剩余/i.test(line))
+            .slice(0, 8);
+    }
+
+    private extractPitfalls(values: readonly string[]): string[] {
+        return values
+            .flatMap(value => value.split(/\r?\n|[.;。]/))
+            .map(line => line.trim())
+            .filter(line => /\b(fail|failed|error|blocked|flaky|pitfall|risk|cannot|unable)\b|失败|错误|阻塞|风险|无法/i.test(line))
             .slice(0, 8);
     }
 
