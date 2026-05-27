@@ -398,6 +398,41 @@ describe('MemoryManager', () => {
         }));
     });
 
+    test('records compressed session completion summaries as active memory', async () => {
+        await memoryManager.recordSessionSummary({
+            taskFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            taskDescription: '3.1 Implement session memory compression',
+            lineNumber: 8,
+            sessionId: 'session-123',
+            providerNames: ['Codex', 'Codex'],
+            invocationCount: 2,
+            promptSnapshotPaths: [
+                '/mock/workspace/.autocode/specs/demo/.autocode/session-prompts/first.md',
+                '/mock/workspace/.autocode/specs/demo/.autocode/session-prompts/second.md'
+            ],
+            completedAt: '2026-05-27T00:00:00.000Z'
+        });
+
+        const records = await memoryManager.search({
+            query: 'session memory compression'
+        });
+
+        expect(records[0]).toEqual(expect.objectContaining({
+            scope: 'session',
+            type: 'summary',
+            status: 'active',
+            subject: 'session-summary:session-123',
+            metadata: expect.objectContaining({
+                taskId: '3.1',
+                specName: 'demo',
+                providerNames: ['Codex'],
+                invocationCount: 2
+            })
+        }));
+        expect(records[0].text).toContain('Task session completed');
+        expect(records[0].text).toContain('Prompt snapshots:');
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

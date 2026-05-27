@@ -133,6 +133,16 @@ export class TaskSessionManager {
         session.completedAt = now;
 
         await this.writeStore(taskFilePath, store);
+        await this.memoryManager?.recordSessionSummary({
+            taskFilePath,
+            taskDescription: session.taskDescription,
+            lineNumber: session.lineNumber,
+            sessionId: session.id,
+            providerNames: session.invocations.map(invocation => invocation.providerName),
+            invocationCount: session.invocations.length,
+            promptSnapshotPaths: session.invocations.map(invocation => invocation.promptSnapshotPath),
+            completedAt: now
+        });
         return session;
     }
 

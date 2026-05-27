@@ -88,6 +88,17 @@ export interface SessionMemoryRequest {
     summary?: string;
 }
 
+export interface SessionSummaryMemoryRequest {
+    taskFilePath: string;
+    taskDescription: string;
+    lineNumber: number;
+    sessionId: string;
+    providerNames: string[];
+    invocationCount: number;
+    promptSnapshotPaths: string[];
+    completedAt: string;
+}
+
 export class MemoryManager {
     constructor(
         private context: vscode.ExtensionContext,
@@ -240,6 +251,44 @@ export class MemoryManager {
                 summary: request.summary
             },
             status: 'pending'
+        });
+    }
+
+    async recordSessionSummary(request: SessionSummaryMemoryRequest): Promise<void> {
+        if (!this.isAutoWriteEnabled()) {
+            return;
+        }
+
+        const providerNames = [...new Set(request.providerNames.filter(Boolean))];
+        await this.addMemory({
+            scope: 'session',
+            type: 'summary',
+            text: [
+                `Task session completed for ${request.taskDescription}.`,
+                `Providers: ${providerNames.join(', ') || 'unknown'}.`,
+                `Invocations: ${request.invocationCount}.`,
+                request.promptSnapshotPaths.length > 0 ? `Prompt snapshots: ${request.promptSnapshotPaths.join(', ')}.` : ''
+            ].filter(Boolean).join(' '),
+            source: {
+                kind: 'session',
+                path: request.taskFilePath,
+                sessionId: request.sessionId,
+                lineNumber: request.lineNumber
+            },
+            tags: ['session-summary', ...providerNames, ...this.inferTags(request.taskDescription)],
+            confidence: 0.9,
+            subject: `session-summary:${request.sessionId}`,
+            status: 'active',
+            metadata: {
+                taskId: this.parseTaskId(request.taskDescription),
+                specName: this.getSpecNameFromTaskFilePath(request.taskFilePath),
+                lineNumber: request.lineNumber,
+                sessionId: request.sessionId,
+                providerNames,
+                invocationCount: request.invocationCount,
+                promptSnapshotPaths: request.promptSnapshotPaths,
+                completedAt: request.completedAt
+            }
         });
     }
 
