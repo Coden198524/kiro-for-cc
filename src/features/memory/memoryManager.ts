@@ -99,12 +99,16 @@ export class MemoryManager {
             return undefined;
         }
 
-        const text = request.text.trim();
+        const redaction = this.redactSensitiveText(request.text);
+        const text = redaction.text.trim();
         if (!text) {
             return undefined;
         }
 
-        const tags = this.normalizeTags(request.tags ?? this.inferTags(text));
+        const tags = this.normalizeTags([
+            ...(request.tags ?? this.inferTags(text)),
+            ...(redaction.redacted ? ['redacted-sensitive'] : [])
+        ]);
         const subject = this.normalizeSubject(request.subject ?? this.inferSubject(text, tags, request.source));
         const fingerprint = this.fingerprintText(text);
         const record: MemoryRecord = {
@@ -119,7 +123,7 @@ export class MemoryManager {
             status: 'active',
             subject,
             fingerprint,
-            metadata: request.metadata
+            metadata: this.sanitizeMetadata(request.metadata)
         };
 
         const storagePath = this.getStoragePathForRecord(record, request.specFilePath);
@@ -856,6 +860,49 @@ export class MemoryManager {
             .map(line => line.trim())
             .filter(line => /\b(fail|failed|error|blocked|flaky|pitfall|risk|cannot|unable)\b|失败|错误|阻塞|风险|无法/i.test(line))
             .slice(0, 8);
+    }
+
+    private redactSensitiveText(value: string): { text: string; redacted: boolean } {
+        const replacements: Array<[RegExp, string | ((match: string) => string)]> = [
+            [/\bsk-[A-Za-z0-9_-]{16,}\b/g, 'sk-[REDACTED]'],
+            [/\bgh[pousr]_[A-Za-z0-9_]{16,}\b/g, 'gh_[REDACTED]'],
+            [/\bAKIA[0-9A-Z]{12,}\b/g, 'AKIA[REDACTED]'],
+            [/\b(?:password|passwd|pwd|token|api[_-]?key|secret|access[_-]?key)\s*[:=]\s*["']?[^"'\s,;]+/gi, match => `${match.split(/[:=]/)[0].trim()}=[REDACTED]`],
+            [/\bC:\\Users\\[^\\\s]+/gi, 'C:\\Users\\[REDACTED]'],
+            [/\/home\/[^/\s]+/g, '/home/[REDACTED]'],
+            [/\/Users\/[^/\s]+/g, '/Users/[REDACTED]']
+        ];
+
+        let text = value;
+        for (const [pattern, replacement] of replacements) {
+            text = text.replace(pattern, replacement as string);
+        }
+
+        return {
+            text,
+            redacted: text !== value
+        };
+    }
+
+    private sanitizeMetadata(value: unknown): Record<string, unknown> | undefined {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return undefined;
+        }
+
+        return this.sanitizeMetadataValue(value) as Record<string, unknown>;
+    }
+
+    private sanitizeMetadataValue(value: unknown): unknown {
+        if (typeof value === 'string') {
+            return this.redactSensitiveText(value).text;
+        }
+        if (Array.isArray(value)) {
+            return value.map(item => this.sanitizeMetadataValue(item));
+        }
+        if (value && typeof value === 'object') {
+            return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.sanitizeMetadataValue(item)]));
+        }
+        return value;
     }
 
     private normalizeTags(tags: string[]): string[] {

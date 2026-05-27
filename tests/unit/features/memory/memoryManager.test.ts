@@ -304,6 +304,31 @@ describe('MemoryManager', () => {
         expect(context).toContain('omitted');
     });
 
+    test('redacts secrets and private user paths before writing memory', async () => {
+        await memoryManager.addMemory({
+            scope: 'user',
+            type: 'preference',
+            text: 'Use token=abc123secret and OpenAI key sk-abcdefghijklmnopqrstuvwxyz from C:\\Users\\Alice\\config.',
+            metadata: {
+                command: 'curl -H "Authorization: token=abc123secret"',
+                paths: ['/home/alice/project', '/Users/bob/project']
+            },
+            confidence: 1
+        });
+
+        const memoryPath = normalize('/mock/global/memory/user/preferences.jsonl');
+        const record = JSON.parse(files.get(memoryPath)!.toString().trim());
+        const serialized = JSON.stringify(record);
+        expect(serialized).not.toContain('abc123secret');
+        expect(serialized).not.toContain('abcdefghijklmnopqrstuvwxyz');
+        expect(serialized).not.toContain('Alice');
+        expect(serialized).not.toContain('/home/alice');
+        expect(serialized).not.toContain('/Users/bob');
+        expect(record.text).toContain('[REDACTED]');
+        expect(record.tags).toContain('redacted-sensitive');
+        expect(record.metadata.command).toContain('[REDACTED]');
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }
