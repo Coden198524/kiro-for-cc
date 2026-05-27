@@ -157,6 +157,14 @@ export class SpecManager {
         await this.createFromDescription(description, true, agentReadiness);
     }
 
+    async createFromIteration(description: string): Promise<void> {
+        if (!(await this.ensureProjectContextReadyForSpec())) {
+            return;
+        }
+
+        await this.createFromDescription(description, false);
+    }
+
     private async createFromDescription(
         description: string,
         useAgents: boolean,

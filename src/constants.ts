@@ -59,7 +59,8 @@ export const DEFAULT_CONFIG = {
         mcp: true,
         hooks: true,
         settings: true,
-        memory: true
+        memory: true,
+        iterations: true
     }
 } as const;
 

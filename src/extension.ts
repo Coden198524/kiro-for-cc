@@ -8,8 +8,10 @@ import { MCPExplorerProvider } from './providers/mcpExplorerProvider';
 import { OverviewProvider } from './providers/overviewProvider';
 import { AgentsExplorerProvider } from './providers/agentsExplorerProvider';
 import { MemoryExplorerProvider } from './providers/memoryExplorerProvider';
+import { IterationExplorerProvider } from './providers/iterationExplorerProvider';
 import { AgentManager } from './features/agents/agentManager';
 import { MemoryManager } from './features/memory/memoryManager';
+import { IterationManager } from './features/iteration/iterationManager';
 import { ConfigManager } from './utils/configManager';
 import { PromptLoader } from './services/promptLoader';
 import { UpdateChecker } from './utils/updateChecker';
@@ -23,6 +25,7 @@ import { registerSpecCommands } from './commands/specCommands';
 import { registerPermissionCommands } from './commands/permissionCommands';
 import { registerSteeringCommands } from './commands/steeringCommands';
 import { registerMemoryCommands } from './commands/memoryCommands';
+import { registerIterationCommands } from './commands/iterationCommands';
 import { registerGeneralCommands } from './commands/generalCommands';
 import { registerWorkspaceWatchers } from './watchers/workspaceWatchers';
 import { SettingsManager } from './features/settings/settingsManager';
@@ -38,6 +41,7 @@ let taskCompletionVerifier: TaskCompletionVerifier;
 let taskCompletionService: TaskCompletionService;
 let settingsManager: SettingsManager;
 let memoryManager: MemoryManager;
+let iterationManager: IterationManager;
 export let outputChannel: vscode.OutputChannel;
 
 // 导出 getter 函数供其他模块使用
@@ -88,6 +92,7 @@ export async function activate(context: vscode.ExtensionContext) {
     taskSessionManager = new TaskSessionManager(outputChannel, undefined, memoryManager);
     taskCompletionVerifier = new TaskCompletionVerifier(agentRuntime, taskSessionManager, outputChannel, memoryManager);
     taskCompletionService = new TaskCompletionService(taskCompletionVerifier, outputChannel);
+    iterationManager = new IterationManager(agentRuntime, outputChannel, memoryManager);
     // Initialize Agent Manager and agents
     agentManager = new AgentManager(context, outputChannel);
     steeringManager = new SteeringManager(agentRuntime, outputChannel);
@@ -99,6 +104,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const specExplorer = new SpecExplorerProvider(context, outputChannel);
     const steeringExplorer = new SteeringExplorerProvider(context);
     const memoryExplorer = new MemoryExplorerProvider(memoryManager);
+    const iterationExplorer = new IterationExplorerProvider(iterationManager);
     const hooksExplorer = new HooksExplorerProvider(context, agentRuntime.provider);
     const mcpExplorer = new MCPExplorerProvider(context, outputChannel);
     const agentsExplorer = new AgentsExplorerProvider(context, agentManager, outputChannel, agentRuntime.provider);
@@ -113,6 +119,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerTreeDataProvider('autocode.views.agentsExplorer', agentsExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.steeringExplorer', steeringExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.memoryExplorer', memoryExplorer),
+        vscode.window.registerTreeDataProvider('autocode.views.iterationExplorer', iterationExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.hooksStatus', hooksExplorer),
         vscode.window.registerTreeDataProvider('autocode.views.mcpServerStatus', mcpExplorer)
     );
@@ -142,6 +149,13 @@ export async function activate(context: vscode.ExtensionContext) {
         context,
         memoryManager,
         memoryExplorer,
+        outputChannel
+    });
+    registerIterationCommands({
+        context,
+        iterationManager,
+        iterationExplorer,
+        createSpecFromDescription: description => specManager.createFromIteration(description),
         outputChannel
     });
     registerGeneralCommands({

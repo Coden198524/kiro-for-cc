@@ -37,6 +37,7 @@ export const window = {
   showInputBox: jest.fn(),
   showQuickPick: jest.fn(),
   showTextDocument: jest.fn(),
+  activeTextEditor: undefined,
   createTerminal: jest.fn(() => ({
     name: 'Mock Terminal',
     processId: Promise.resolve(undefined),
@@ -92,7 +93,8 @@ export const workspace = {
 };
 
 export const languages = {
-  registerCodeLensProvider: jest.fn(() => ({ dispose: jest.fn() }))
+  registerCodeLensProvider: jest.fn(() => ({ dispose: jest.fn() })),
+  getDiagnostics: jest.fn(() => [])
 };
 
 export class Position {

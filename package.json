@@ -44,6 +44,11 @@
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.agents.visible"
         },
         {
+          "id": "autocode.views.iterationExplorer",
+          "name": "Iterations",
+          "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.iterations.visible"
+        },
+        {
           "id": "autocode.views.steeringExplorer",
           "name": "Steering",
           "when": "!(workbenchState == empty || workspaceFolderCount == 0) && config.autocode.views.steering.visible"
@@ -81,6 +86,10 @@
         "contents": "Build complex features with structured planning\n\n[$(repo) Initialize Project Context](command:autocode.steering.generateInitial)\n\n[$(plus) Create New Spec](command:autocode.spec.create)\n\n[$(sparkle) Create New Spec With Agents](command:autocode.spec.createWithAgents)"
       },
       {
+        "view": "autocode.views.iterationExplorer",
+        "contents": "Run lightweight AI iterations without creating a full spec\n\n[$(sparkle) Start Iteration](command:autocode.iteration.start)\n\n[$(tools) Edit / Fix](command:autocode.iteration.edit)\n\n[$(comment-discussion) Ask / Analyze](command:autocode.iteration.ask)"
+      },
+      {
         "view": "autocode.views.hooksStatus",
         "contents": "Automate repetitive tasks with smart triggers"
       },
@@ -109,6 +118,30 @@
         "title": "New Spec with Agents",
         "category": "AutoCode",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "autocode.iteration.start",
+        "title": "Start Iteration",
+        "category": "AutoCode",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "autocode.iteration.ask",
+        "title": "Iteration: Ask / Analyze",
+        "category": "AutoCode",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "autocode.iteration.edit",
+        "title": "Iteration: Edit / Fix",
+        "category": "AutoCode",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "autocode.iteration.document",
+        "title": "Iteration: Generate Document",
+        "category": "AutoCode",
+        "icon": "$(book)"
       },
       {
         "command": "autocode.steering.create",
@@ -337,6 +370,36 @@
         "title": "Refresh Memory",
         "category": "AutoCode",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "autocode.iteration.refresh",
+        "title": "Refresh Iterations",
+        "category": "AutoCode",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "autocode.iteration.openRecord",
+        "title": "Open Iteration Record",
+        "category": "AutoCode",
+        "icon": "$(json)"
+      },
+      {
+        "command": "autocode.iteration.openPrompt",
+        "title": "Open Iteration Prompt",
+        "category": "AutoCode",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "autocode.iteration.openSummary",
+        "title": "Open Iteration Summary",
+        "category": "AutoCode",
+        "icon": "$(markdown)"
+      },
+      {
+        "command": "autocode.iteration.convertToSpec",
+        "title": "Convert Iteration to Spec",
+        "category": "AutoCode",
+        "icon": "$(repo)"
       }
     ],
     "menus": {
@@ -369,6 +432,21 @@
         {
           "command": "autocode.spec.refresh",
           "when": "view == autocode.views.specExplorer",
+          "group": "navigation@3"
+        },
+        {
+          "command": "autocode.iteration.start",
+          "when": "view == autocode.views.iterationExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "autocode.iteration.edit",
+          "when": "view == autocode.views.iterationExplorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "autocode.iteration.refresh",
+          "when": "view == autocode.views.iterationExplorer",
           "group": "navigation@3"
         },
         {
@@ -442,11 +520,51 @@
           "command": "autocode.memory.forget",
           "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
           "group": "7_modification"
+        },
+        {
+          "command": "autocode.iteration.openSummary",
+          "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
+          "group": "inline"
+        },
+        {
+          "command": "autocode.iteration.openPrompt",
+          "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
+          "group": "2_open"
+        },
+        {
+          "command": "autocode.iteration.openRecord",
+          "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
+          "group": "2_open"
+        },
+        {
+          "command": "autocode.iteration.convertToSpec",
+          "when": "view == autocode.views.iterationExplorer && viewItem == iteration-record",
+          "group": "3_convert"
         }
       ],
       "commandPalette": [
         {
           "command": "autocode.spec.create"
+        },
+        {
+          "command": "autocode.iteration.start",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.iteration.ask",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.iteration.edit",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.iteration.document",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.iteration.convertToSpec",
+          "when": "workspaceFolderCount > 0"
         },
         {
           "command": "autocode.spec.showTaskQueues",
@@ -750,6 +868,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Agents view"
+        },
+        "autocode.views.iterations.visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Iterations view"
         },
         "autocode.views.hooks.visible": {
           "type": "boolean",

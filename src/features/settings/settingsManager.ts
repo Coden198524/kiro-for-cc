@@ -55,6 +55,8 @@ export class SettingsManager {
         const currentVisibility = {
             specs: config.get('views.specs.visible', true),
             agents: config.get('views.agents.visible', true),
+            iterations: config.get('views.iterations.visible', true),
+            memory: config.get('views.memory.visible', true),
             hooks: config.get('views.hooks.visible', true),
             steering: config.get('views.steering.visible', true),
             mcp: config.get('views.mcp.visible', true)
@@ -70,6 +72,16 @@ export class SettingsManager {
                 label: `$(${currentVisibility.agents ? 'check' : 'blank'}) Agents`,
                 picked: currentVisibility.agents,
                 id: 'agents'
+            },
+            {
+                label: `$(${currentVisibility.iterations ? 'check' : 'blank'}) Iterations`,
+                picked: currentVisibility.iterations,
+                id: 'iterations'
+            },
+            {
+                label: `$(${currentVisibility.memory ? 'check' : 'blank'}) Memory`,
+                picked: currentVisibility.memory,
+                id: 'memory'
             },
             {
                 label: `$(${currentVisibility.hooks ? 'check' : 'blank'}) Agent Hooks`,
@@ -100,6 +112,8 @@ export class SettingsManager {
         const newVisibility = {
             specs: selected.some(item => item.id === 'specs'),
             agents: selected.some(item => item.id === 'agents'),
+            iterations: selected.some(item => item.id === 'iterations'),
+            memory: selected.some(item => item.id === 'memory'),
             hooks: selected.some(item => item.id === 'hooks'),
             steering: selected.some(item => item.id === 'steering'),
             mcp: selected.some(item => item.id === 'mcp')
@@ -107,6 +121,8 @@ export class SettingsManager {
 
         await config.update('views.specs.visible', newVisibility.specs, vscode.ConfigurationTarget.Workspace);
         await config.update('views.agents.visible', newVisibility.agents, vscode.ConfigurationTarget.Workspace);
+        await config.update('views.iterations.visible', newVisibility.iterations, vscode.ConfigurationTarget.Workspace);
+        await config.update('views.memory.visible', newVisibility.memory, vscode.ConfigurationTarget.Workspace);
         await config.update('views.hooks.visible', newVisibility.hooks, vscode.ConfigurationTarget.Workspace);
         await config.update('views.steering.visible', newVisibility.steering, vscode.ConfigurationTarget.Workspace);
         await config.update('views.mcp.visible', newVisibility.mcp, vscode.ConfigurationTarget.Workspace);
@@ -119,6 +135,8 @@ export class SettingsManager {
                 ...settings.views,
                 specs: { visible: newVisibility.specs },
                 agents: { visible: newVisibility.agents },
+                iterations: { visible: newVisibility.iterations },
+                memory: { visible: newVisibility.memory },
                 hooks: { visible: newVisibility.hooks },
                 steering: { visible: newVisibility.steering },
                 mcp: { visible: newVisibility.mcp }

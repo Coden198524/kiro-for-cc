@@ -47,6 +47,7 @@ export interface AutoCodeSettings {
         hooks: { visible: boolean };
         settings: { visible: boolean };
         memory: { visible: boolean };
+        iterations: { visible: boolean };
     };
 }
 
@@ -220,7 +221,8 @@ export class ConfigManager {
                 mcp: { visible: DEFAULT_VIEW_VISIBILITY.mcp },
                 hooks: { visible: DEFAULT_VIEW_VISIBILITY.hooks },
                 settings: { visible: DEFAULT_VIEW_VISIBILITY.settings },
-                memory: { visible: DEFAULT_VIEW_VISIBILITY.memory }
+                memory: { visible: DEFAULT_VIEW_VISIBILITY.memory },
+                iterations: { visible: DEFAULT_VIEW_VISIBILITY.iterations }
             }
         };
     }
@@ -305,6 +307,10 @@ export class ConfigManager {
                 memory: {
                     ...defaults.views.memory,
                     ...(viewSettings.memory ?? {})
+                },
+                iterations: {
+                    ...defaults.views.iterations,
+                    ...(viewSettings.iterations ?? {})
                 }
             }
         };

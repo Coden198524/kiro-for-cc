@@ -3,6 +3,7 @@
 
 export { default as createSpec } from './spec/create-spec';
 export { default as createSpecWithAgents } from './spec/create-spec-with-agents';
+export { default as startIteration } from './iteration/start-iteration';
 export { default as createCustomSteering } from './steering/create-custom-steering';
 export { default as deleteSteering } from './steering/delete-steering';
 export { default as initSteering } from './steering/init-steering';
