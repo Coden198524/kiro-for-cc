@@ -121,6 +121,83 @@ describe('MemoryManager', () => {
         expect(files.get(memoryPath)?.toString()).toContain('Focused tests passed.');
     });
 
+    test('deduplicates exact memory records by fingerprint', async () => {
+        const first = await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: 'Use existing SpecManager patterns.',
+            tags: ['SpecManager'],
+            confidence: 0.9
+        });
+        const duplicate = await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: 'Use existing SpecManager patterns.',
+            tags: ['SpecManager'],
+            confidence: 0.9
+        });
+
+        expect(duplicate?.id).toBe(first?.id);
+        const memoryPath = normalize('/mock/workspace/.autocode/memory/project/facts.jsonl');
+        expect(files.get(memoryPath)?.toString().trim().split(/\r?\n/)).toHaveLength(1);
+    });
+
+    test('only supersedes same-subject source updates instead of shared-tag records', async () => {
+        const first = await memoryManager.addMemory({
+            scope: 'project',
+            type: 'decision',
+            text: 'Queue state is stored in task-queue.json.',
+            source: { kind: 'file', path: '/mock/workspace/src/queue.ts' },
+            tags: ['queue'],
+            confidence: 0.8
+        });
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'decision',
+            text: 'Queue state is persisted in task-queue.json with a run id.',
+            source: { kind: 'file', path: '/mock/workspace/src/queue.ts' },
+            tags: ['queue'],
+            confidence: 0.9
+        });
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'decision',
+            text: 'Queue UI belongs in the Current Work panel.',
+            tags: ['queue'],
+            confidence: 0.9
+        });
+
+        const memoryPath = normalize('/mock/workspace/.autocode/memory/project/decisions.jsonl');
+        const records = files.get(memoryPath)!.toString().trim().split(/\r?\n/).map(line => JSON.parse(line));
+        expect(records.find(record => record.id === first?.id).status).toBe('superseded');
+        expect(records.filter(record => record.status === 'active')).toHaveLength(2);
+    });
+
+    test('marks opposing same-subject memories as conflicts instead of overwriting them', async () => {
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'preference',
+            text: 'Use strict verification for task queues.',
+            tags: ['verification'],
+            subject: 'task-verification',
+            confidence: 0.9
+        });
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'preference',
+            text: 'Do not use strict verification for task queues.',
+            tags: ['verification'],
+            subject: 'task-verification',
+            confidence: 0.9
+        });
+
+        const memoryPath = normalize('/mock/workspace/.autocode/memory/project/facts.jsonl');
+        const records = files.get(memoryPath)!.toString().trim().split(/\r?\n/).map(line => JSON.parse(line));
+        expect(records.map(record => record.status)).toEqual(['conflict', 'conflict']);
+        expect(records[0].conflictWith).toEqual([records[1].id]);
+        expect(records[1].conflictWith).toEqual([records[0].id]);
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

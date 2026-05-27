@@ -4,7 +4,7 @@ import { getRuntimeValue } from '../../runtime/runtimeSettings';
 
 export type MemoryScope = 'project' | 'user' | 'spec' | 'task' | 'session';
 export type MemoryType = 'fact' | 'decision' | 'preference' | 'pitfall' | 'command' | 'verification' | 'summary';
-export type MemoryStatus = 'active' | 'superseded' | 'forgotten';
+export type MemoryStatus = 'active' | 'superseded' | 'forgotten' | 'conflict';
 
 export interface MemorySource {
     kind: 'task' | 'user' | 'file' | 'verification' | 'session' | 'spec';
@@ -25,6 +25,9 @@ export interface MemoryRecord {
     updatedAt?: string;
     status?: MemoryStatus;
     supersededBy?: string;
+    subject?: string;
+    fingerprint?: string;
+    conflictWith?: string[];
 }
 
 export interface StoredMemoryRecord extends MemoryRecord {
@@ -39,6 +42,7 @@ export interface AddMemoryRequest {
     tags?: string[];
     confidence?: number;
     specFilePath?: string;
+    subject?: string;
 }
 
 export interface MemorySearchRequest {
@@ -92,25 +96,43 @@ export class MemoryManager {
             return undefined;
         }
 
+        const tags = this.normalizeTags(request.tags ?? this.inferTags(text));
+        const subject = this.normalizeSubject(request.subject ?? this.inferSubject(text, tags, request.source));
+        const fingerprint = this.fingerprintText(text);
         const record: MemoryRecord = {
             id: this.createId('mem'),
             scope: request.scope,
             type: request.type,
             text,
             source: request.source,
-            tags: this.normalizeTags(request.tags ?? this.inferTags(text)),
+            tags,
             confidence: this.clampConfidence(request.confidence ?? 0.8),
             createdAt: new Date().toISOString(),
-            status: 'active'
+            status: 'active',
+            subject,
+            fingerprint
         };
 
         const storagePath = this.getStoragePathForRecord(record, request.specFilePath);
         const records = await this.readRecordsFromPath(storagePath);
         for (const existing of records) {
+            if (this.isDuplicateMemory(existing, record)) {
+                return existing;
+            }
+
             if (this.shouldSupersede(existing, record)) {
                 existing.status = 'superseded';
                 existing.supersededBy = record.id;
                 existing.updatedAt = record.createdAt;
+                continue;
+            }
+
+            if (this.isConflictingMemory(existing, record)) {
+                existing.status = 'conflict';
+                existing.conflictWith = this.addUnique(existing.conflictWith, record.id);
+                existing.updatedAt = record.createdAt;
+                record.status = 'conflict';
+                record.conflictWith = this.addUnique(record.conflictWith, existing.id);
             }
         }
 
@@ -212,7 +234,7 @@ export class MemoryManager {
         const records = await this.readSearchCorpus(request);
         const queryTokens = this.tokenize(request.query);
         const scored = records
-            .filter(record => (record.status ?? 'active') === 'active')
+            .filter(record => this.isRetrievableStatus(record.status))
             .map(record => ({
                 record,
                 score: this.scoreRecord(record, queryTokens, request.query)
@@ -227,7 +249,7 @@ export class MemoryManager {
         const records = await this.readSearchCorpus({
             includeUserPreferences: true
         });
-        const activeRecords = records.filter(record => (record.status ?? 'active') === 'active');
+        const activeRecords = records.filter(record => this.isRetrievableStatus(record.status));
 
         if (!category) {
             return activeRecords;
@@ -461,16 +483,142 @@ export class MemoryManager {
     }
 
     private shouldSupersede(existing: MemoryRecord, next: MemoryRecord): boolean {
-        if ((existing.status ?? 'active') !== 'active') {
+        if (!this.isRetrievableStatus(existing.status)) {
             return false;
         }
 
-        if (existing.scope !== next.scope || existing.type !== next.type) {
+        if (!this.isSameMemorySubject(existing, next)) {
             return false;
         }
 
-        const sharedTags = (existing.tags ?? []).some(tag => (next.tags ?? []).includes(tag));
-        return sharedTags && this.normalizeText(existing.text) !== this.normalizeText(next.text);
+        if (this.normalizeText(existing.text) === this.normalizeText(next.text) || this.isConflictingMemory(existing, next)) {
+            return false;
+        }
+
+        return this.isSameSource(existing.source, next.source) ||
+            (this.textSimilarity(existing.text, next.text) >= 0.75 && next.confidence >= existing.confidence);
+    }
+
+    private isDuplicateMemory(existing: MemoryRecord, next: MemoryRecord): boolean {
+        if (!this.isRetrievableStatus(existing.status)) {
+            return false;
+        }
+
+        return existing.scope === next.scope &&
+            existing.type === next.type &&
+            this.getFingerprint(existing) === this.getFingerprint(next);
+    }
+
+    private isConflictingMemory(existing: MemoryRecord, next: MemoryRecord): boolean {
+        if (!this.isSameMemorySubject(existing, next)) {
+            return false;
+        }
+
+        if (this.normalizeText(existing.text) === this.normalizeText(next.text)) {
+            return false;
+        }
+
+        const conflictTypes: MemoryType[] = ['fact', 'decision', 'preference', 'command'];
+        if (!conflictTypes.includes(existing.type) && !conflictTypes.includes(next.type)) {
+            return false;
+        }
+
+        return this.hasOpposingLanguage(existing.text, next.text);
+    }
+
+    private isSameMemorySubject(existing: MemoryRecord, next: MemoryRecord): boolean {
+        return existing.scope === next.scope &&
+            existing.type === next.type &&
+            this.getSubject(existing) === this.getSubject(next);
+    }
+
+    private isRetrievableStatus(status: MemoryStatus | undefined): boolean {
+        return (status ?? 'active') === 'active' || status === 'conflict';
+    }
+
+    private isSameSource(left?: MemorySource, right?: MemorySource): boolean {
+        if (!left || !right) {
+            return false;
+        }
+
+        return left.kind === right.kind &&
+            this.normalizePathForMemory(left.path ?? '') === this.normalizePathForMemory(right.path ?? '') &&
+            left.lineNumber === right.lineNumber &&
+            left.sessionId === right.sessionId;
+    }
+
+    private inferSubject(text: string, tags: readonly string[], source?: MemorySource): string {
+        if (source?.path) {
+            return `${source.kind}:${this.normalizePathForMemory(source.path)}${source.lineNumber !== undefined ? `:${source.lineNumber}` : ''}`;
+        }
+
+        return tags.slice(0, 3).join('|') || this.tokenize(text).filter(token => token.length >= 3).slice(0, 5).join('|') || 'general';
+    }
+
+    private normalizeSubject(subject: string): string {
+        return subject.trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    private getSubject(record: MemoryRecord): string {
+        return this.normalizeSubject(record.subject ?? this.inferSubject(record.text, record.tags ?? [], record.source));
+    }
+
+    private getFingerprint(record: MemoryRecord): string {
+        return record.fingerprint ?? this.fingerprintText(record.text);
+    }
+
+    private fingerprintText(text: string): string {
+        return this.hashString(this.normalizeText(text));
+    }
+
+    private textSimilarity(leftText: string, rightText: string): number {
+        const left = new Set(this.tokenize(leftText));
+        const right = new Set(this.tokenize(rightText));
+        if (left.size === 0 || right.size === 0) {
+            return 0;
+        }
+
+        let intersection = 0;
+        for (const token of left) {
+            if (right.has(token)) {
+                intersection += 1;
+            }
+        }
+
+        const union = new Set([...left, ...right]).size;
+        return union === 0 ? 0 : intersection / union;
+    }
+
+    private hasOpposingLanguage(leftText: string, rightText: string): boolean {
+        const left = this.normalizeText(leftText);
+        const right = this.normalizeText(rightText);
+        const leftNegative = this.hasNegativeMarker(left);
+        const rightNegative = this.hasNegativeMarker(right);
+        if (leftNegative !== rightNegative && this.textSimilarity(left, right) >= 0.25) {
+            return true;
+        }
+
+        const opposingPairs: Array<[RegExp, RegExp]> = [
+            [/\b(enable|enabled|use|allow|should|must|prefer|true|on|yes)\b/i, /\b(disable|disabled|avoid|forbid|never|do not|don't|skip|false|off|no)\b/i],
+            [/\b(开启|启用|使用|允许|必须|应该|优先)\b/u, /\b(关闭|禁用|避免|禁止|不要|跳过)\b/u]
+        ];
+
+        return opposingPairs.some(([positive, negative]) =>
+            (positive.test(left) && negative.test(right)) ||
+            (negative.test(left) && positive.test(right))
+        );
+    }
+
+    private hasNegativeMarker(text: string): boolean {
+        return /\b(disable|disabled|avoid|forbid|never|do not|don't|skip|false|off|no)\b|关闭|禁用|避免|禁止|不要|跳过/u.test(text);
+    }
+
+    private addUnique(values: string[] | undefined, value: string): string[] {
+        return [...new Set([...(values ?? []), value])];
+    }
+
+    private normalizePathForMemory(filePath: string): string {
+        return filePath.replace(/\\/g, '/').toLowerCase();
     }
 
     private scoreRecord(record: MemoryRecord, queryTokens: string[], rawQuery: string): number {
@@ -531,6 +679,15 @@ export class MemoryManager {
 
     private normalizeText(text: string): string {
         return text.trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    private hashString(value: string): string {
+        let hash = 0;
+        for (let index = 0; index < value.length; index++) {
+            hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+        }
+
+        return (hash >>> 0).toString(36);
     }
 
     private clampConfidence(value: number): number {
