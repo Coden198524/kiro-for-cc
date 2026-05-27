@@ -393,6 +393,12 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "autocode.memory.accept",
+        "title": "Accept Memory",
+        "category": "AutoCode",
+        "icon": "$(check)"
+      },
+      {
         "command": "autocode.memory.forget",
         "title": "Forget Memory",
         "category": "AutoCode",
@@ -564,6 +570,11 @@
           "command": "autocode.memory.openSource",
           "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
           "group": "inline"
+        },
+        {
+          "command": "autocode.memory.accept",
+          "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
+          "group": "inline@2"
         },
         {
           "command": "autocode.memory.forget",

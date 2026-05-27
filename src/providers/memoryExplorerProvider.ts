@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { MemoryManager, StoredMemoryRecord } from '../features/memory/memoryManager';
 
-type MemoryGroupId = 'project' | 'user' | 'spec' | 'session' | 'pitfall';
+type MemoryGroupId = 'pending' | 'project' | 'user' | 'spec' | 'session' | 'pitfall';
 
 interface MemoryGroup {
     id: MemoryGroupId;
@@ -11,6 +11,12 @@ interface MemoryGroup {
 }
 
 const MEMORY_GROUPS: MemoryGroup[] = [
+    {
+        id: 'pending',
+        label: 'Review Inbox',
+        icon: 'inbox',
+        description: 'Pending memories waiting for review'
+    },
     {
         id: 'project',
         label: 'Project Memory',

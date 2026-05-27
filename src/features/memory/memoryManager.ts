@@ -4,7 +4,7 @@ import { getRuntimeValue } from '../../runtime/runtimeSettings';
 
 export type MemoryScope = 'project' | 'user' | 'spec' | 'task' | 'session';
 export type MemoryType = 'fact' | 'decision' | 'preference' | 'pitfall' | 'command' | 'verification' | 'summary';
-export type MemoryStatus = 'active' | 'superseded' | 'forgotten' | 'conflict';
+export type MemoryStatus = 'active' | 'pending' | 'superseded' | 'forgotten' | 'conflict';
 
 export interface MemorySource {
     kind: 'task' | 'user' | 'file' | 'verification' | 'session' | 'spec';
@@ -45,6 +45,7 @@ export interface AddMemoryRequest {
     specFilePath?: string;
     subject?: string;
     metadata?: Record<string, unknown>;
+    status?: MemoryStatus;
 }
 
 export interface MemorySearchRequest {
@@ -120,7 +121,7 @@ export class MemoryManager {
             tags,
             confidence: this.clampConfidence(request.confidence ?? 0.8),
             createdAt: new Date().toISOString(),
-            status: 'active',
+            status: request.status ?? 'active',
             subject,
             fingerprint,
             metadata: this.sanitizeMetadata(request.metadata)
@@ -194,7 +195,8 @@ export class MemoryManager {
                 ...this.inferTags(request.taskDescription)
             ],
             confidence: request.verified ? 0.95 : 0.65,
-            metadata
+            metadata,
+            status: request.verified ? 'active' : 'pending'
         });
     }
 
@@ -229,7 +231,8 @@ export class MemoryManager {
                 providerSessionId: request.providerSessionId,
                 promptSnapshotPath: request.promptSnapshotPath,
                 summary: request.summary
-            }
+            },
+            status: 'pending'
         });
     }
 
@@ -316,13 +319,15 @@ export class MemoryManager {
         const records = await this.readSearchCorpus({
             includeUserPreferences: true
         });
-        const activeRecords = records.filter(record => this.isRetrievableStatus(record.status));
+        const visibleRecords = category === 'pending'
+            ? records.filter(record => record.status === 'pending')
+            : records.filter(record => this.isRetrievableStatus(record.status));
 
         if (!category) {
-            return activeRecords;
+            return visibleRecords;
         }
 
-        return activeRecords.filter(record => {
+        return visibleRecords.filter(record => {
             if (category === 'project') {
                 return record.scope === 'project';
             }
@@ -337,6 +342,9 @@ export class MemoryManager {
             }
             if (category === 'pitfall') {
                 return record.type === 'pitfall';
+            }
+            if (category === 'pending') {
+                return record.status === 'pending';
             }
             return true;
         }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -357,6 +365,26 @@ export class MemoryManager {
         }
 
         target.status = 'forgotten';
+        target.updatedAt = new Date().toISOString();
+        await this.writeRecordsToPath(stored.storagePath, records);
+        return true;
+    }
+
+    async acceptMemory(record: MemoryRecord): Promise<boolean> {
+        const stored = 'storagePath' in record
+            ? record as StoredMemoryRecord
+            : (await this.listRecords('pending')).find(item => item.id === record.id);
+        if (!stored) {
+            return false;
+        }
+
+        const records = await this.readRecordsFromPath(stored.storagePath);
+        const target = records.find(item => item.id === stored.id);
+        if (!target) {
+            return false;
+        }
+
+        target.status = 'active';
         target.updatedAt = new Date().toISOString();
         await this.writeRecordsToPath(stored.storagePath, records);
         return true;

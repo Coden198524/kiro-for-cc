@@ -31,15 +31,18 @@ describe('MemoryExplorerProvider', () => {
         const projectItems = await provider.getChildren(groups[0]);
 
         expect(groups.map(item => item.label)).toEqual([
+            'Review Inbox',
             'Project Memory',
             'User Preferences',
             'Spec Memory',
             'Session History',
             'Pitfalls'
         ]);
-        expect(projectItems[0].label).toBe('Use existing SpecManager patterns.');
-        expect(projectItems[0].contextValue).toBe('memory-record');
-        expect(projectItems[0].command?.command).toBe('autocode.memory.openSource');
-        expect(projectItems[0].iconPath).toEqual(new vscode.ThemeIcon('note'));
+        expect(projectItems[0].label).toBe('No memory yet');
+        const projectRecordItems = await provider.getChildren(groups[1]);
+        expect(projectRecordItems[0].label).toBe('Use existing SpecManager patterns.');
+        expect(projectRecordItems[0].contextValue).toBe('memory-record');
+        expect(projectRecordItems[0].command?.command).toBe('autocode.memory.openSource');
+        expect(projectRecordItems[0].iconPath).toEqual(new vscode.ThemeIcon('note'));
     });
 });

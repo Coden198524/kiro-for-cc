@@ -329,6 +329,29 @@ describe('MemoryManager', () => {
         expect(record.metadata.command).toContain('[REDACTED]');
     });
 
+    test('keeps pending memories out of prompt context until accepted', async () => {
+        await memoryManager.recordSessionInvocation({
+            taskFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            taskDescription: '1. Analyze queue state',
+            lineNumber: 1,
+            sessionId: 'session-1',
+            invocationId: 'invocation-1',
+            providerName: 'Codex',
+            promptSnapshotPath: '/mock/workspace/.autocode/specs/demo/.autocode/session-prompts/prompt.md'
+        });
+
+        expect(await memoryManager.buildPromptContext({ query: 'queue state' }))
+            .toBe('No relevant AutoCode memory was found.');
+
+        const pending = await memoryManager.listRecords('pending');
+        expect(pending).toHaveLength(1);
+        expect(pending[0].status).toBe('pending');
+
+        expect(await memoryManager.acceptMemory(pending[0])).toBe(true);
+        const context = await memoryManager.buildPromptContext({ query: 'queue state' });
+        expect(context).toContain('Codex session started for task');
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

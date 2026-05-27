@@ -85,6 +85,18 @@ export function registerMemoryCommands(options: RegisterMemoryCommandsOptions): 
 
             await memoryManager.openMemorySource(record);
         }),
+        vscode.commands.registerCommand('autocode.memory.accept', async (record?: StoredMemoryRecord) => {
+            if (!record) {
+                vscode.window.showWarningMessage('No memory item selected.');
+                return;
+            }
+
+            const accepted = await memoryManager.acceptMemory(record);
+            if (accepted) {
+                vscode.window.showInformationMessage('Memory accepted.');
+                memoryExplorer.refresh();
+            }
+        }),
         vscode.commands.registerCommand('autocode.memory.forget', async (record?: StoredMemoryRecord) => {
             if (!record) {
                 vscode.window.showWarningMessage('No memory item selected.');
