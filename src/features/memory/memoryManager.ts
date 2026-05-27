@@ -48,6 +48,13 @@ export interface AddMemoryRequest {
     status?: MemoryStatus;
 }
 
+export interface UpdateMemoryRequest {
+    text?: string;
+    tags?: string[];
+    confidence?: number;
+    metadata?: Record<string, unknown>;
+}
+
 export interface MemorySearchRequest {
     query: string;
     specFilePath?: string;
@@ -390,6 +397,74 @@ export class MemoryManager {
         return true;
     }
 
+    async updateMemory(record: MemoryRecord, updates: UpdateMemoryRequest): Promise<boolean> {
+        const stored = await this.resolveStoredMemory(record);
+        if (!stored) {
+            return false;
+        }
+
+        const records = await this.readRecordsFromPath(stored.storagePath);
+        const target = records.find(item => item.id === stored.id);
+        if (!target) {
+            return false;
+        }
+
+        const nextText = updates.text !== undefined ? this.redactSensitiveText(updates.text).text.trim() : target.text;
+        if (!nextText) {
+            return false;
+        }
+
+        target.text = nextText;
+        target.tags = updates.tags !== undefined
+            ? this.normalizeTags(updates.tags)
+            : target.tags;
+        if (updates.confidence !== undefined) {
+            target.confidence = this.clampConfidence(updates.confidence);
+        }
+        if (updates.metadata !== undefined) {
+            target.metadata = this.sanitizeMetadata(updates.metadata);
+        }
+        target.subject = this.normalizeSubject(target.subject ?? this.inferSubject(target.text, target.tags ?? [], target.source));
+        target.fingerprint = this.fingerprintText(target.text);
+        target.updatedAt = new Date().toISOString();
+
+        await this.writeRecordsToPath(stored.storagePath, records);
+        return true;
+    }
+
+    async supersedeMemory(record: MemoryRecord, replacementText: string): Promise<MemoryRecord | undefined> {
+        const stored = await this.resolveStoredMemory(record);
+        if (!stored) {
+            return undefined;
+        }
+
+        const replacement = await this.addMemory({
+            scope: stored.scope,
+            type: stored.type,
+            text: replacementText,
+            source: stored.source,
+            tags: stored.tags,
+            confidence: stored.confidence,
+            subject: this.getSubject(stored),
+            metadata: stored.metadata,
+            status: 'active'
+        });
+        if (!replacement) {
+            return undefined;
+        }
+
+        const records = await this.readRecordsFromPath(stored.storagePath);
+        const target = records.find(item => item.id === stored.id);
+        if (target) {
+            target.status = 'superseded';
+            target.supersededBy = replacement.id;
+            target.updatedAt = new Date().toISOString();
+            await this.writeRecordsToPath(stored.storagePath, records);
+        }
+
+        return replacement;
+    }
+
     async openMemorySource(record: MemoryRecord): Promise<void> {
         const sourcePath = record.source?.path;
         if (!sourcePath) {
@@ -411,6 +486,15 @@ export class MemoryManager {
 
     getMemoryRootPath(): string {
         return path.join(this.getWorkspaceRoot(), '.autocode', 'memory');
+    }
+
+    private async resolveStoredMemory(record: MemoryRecord): Promise<StoredMemoryRecord | undefined> {
+        if ('storagePath' in record) {
+            return record as StoredMemoryRecord;
+        }
+
+        return (await this.listRecords()).find(item => item.id === record.id) ??
+            (await this.listRecords('pending')).find(item => item.id === record.id);
     }
 
     private async readSearchCorpus(request: Pick<MemorySearchRequest, 'specFilePath' | 'includeUserPreferences'>): Promise<StoredMemoryRecord[]> {

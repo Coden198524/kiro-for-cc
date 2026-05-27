@@ -352,6 +352,52 @@ describe('MemoryManager', () => {
         expect(context).toContain('Codex session started for task');
     });
 
+    test('edits memory text while preserving the same record id', async () => {
+        const record = await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: 'Use old queue wording.',
+            tags: ['queue'],
+            confidence: 0.8
+        });
+
+        expect(await memoryManager.updateMemory(record!, {
+            text: 'Use updated queue wording.',
+            confidence: 0.95
+        })).toBe(true);
+
+        const records = await memoryManager.search({ query: 'updated queue wording' });
+        expect(records[0]).toEqual(expect.objectContaining({
+            id: record?.id,
+            text: 'Use updated queue wording.',
+            confidence: 0.95
+        }));
+    });
+
+    test('supersedes memory with an explicit replacement record', async () => {
+        const record = await memoryManager.addMemory({
+            scope: 'project',
+            type: 'decision',
+            text: 'Queue state uses old storage.',
+            tags: ['queue'],
+            confidence: 0.8
+        });
+
+        const replacement = await memoryManager.supersedeMemory(record!, 'Queue state uses task-queue.json storage.');
+
+        expect(replacement?.id).not.toBe(record?.id);
+        const memoryPath = normalize('/mock/workspace/.autocode/memory/project/decisions.jsonl');
+        const records = files.get(memoryPath)!.toString().trim().split(/\r?\n/).map(line => JSON.parse(line));
+        expect(records.find(item => item.id === record?.id)).toEqual(expect.objectContaining({
+            status: 'superseded',
+            supersededBy: replacement?.id
+        }));
+        expect(records.find(item => item.id === replacement?.id)).toEqual(expect.objectContaining({
+            status: 'active',
+            text: 'Queue state uses task-queue.json storage.'
+        }));
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }

@@ -399,6 +399,18 @@
         "icon": "$(check)"
       },
       {
+        "command": "autocode.memory.edit",
+        "title": "Edit Memory",
+        "category": "AutoCode",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "autocode.memory.supersede",
+        "title": "Supersede Memory",
+        "category": "AutoCode",
+        "icon": "$(replace)"
+      },
+      {
         "command": "autocode.memory.forget",
         "title": "Forget Memory",
         "category": "AutoCode",
@@ -575,6 +587,16 @@
           "command": "autocode.memory.accept",
           "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
           "group": "inline@2"
+        },
+        {
+          "command": "autocode.memory.edit",
+          "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
+          "group": "2_edit"
+        },
+        {
+          "command": "autocode.memory.supersede",
+          "when": "view == autocode.views.memoryExplorer && viewItem == memory-record",
+          "group": "2_edit"
         },
         {
           "command": "autocode.memory.forget",

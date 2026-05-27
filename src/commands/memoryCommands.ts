@@ -97,6 +97,50 @@ export function registerMemoryCommands(options: RegisterMemoryCommandsOptions): 
                 memoryExplorer.refresh();
             }
         }),
+        vscode.commands.registerCommand('autocode.memory.edit', async (record?: StoredMemoryRecord) => {
+            if (!record) {
+                vscode.window.showWarningMessage('No memory item selected.');
+                return;
+            }
+
+            const text = await vscode.window.showInputBox({
+                title: 'Edit Memory',
+                prompt: 'Update this memory text.',
+                value: record.text,
+                ignoreFocusOut: true
+            });
+            if (text === undefined) {
+                return;
+            }
+
+            const updated = await memoryManager.updateMemory(record, { text });
+            if (updated) {
+                vscode.window.showInformationMessage('Memory updated.');
+                memoryExplorer.refresh();
+            }
+        }),
+        vscode.commands.registerCommand('autocode.memory.supersede', async (record?: StoredMemoryRecord) => {
+            if (!record) {
+                vscode.window.showWarningMessage('No memory item selected.');
+                return;
+            }
+
+            const text = await vscode.window.showInputBox({
+                title: 'Supersede Memory',
+                prompt: 'Write the replacement memory. The selected memory will remain in the audit trail as superseded.',
+                value: record.text,
+                ignoreFocusOut: true
+            });
+            if (!text) {
+                return;
+            }
+
+            const replacement = await memoryManager.supersedeMemory(record, text);
+            if (replacement) {
+                vscode.window.showInformationMessage('Memory superseded.');
+                memoryExplorer.refresh();
+            }
+        }),
         vscode.commands.registerCommand('autocode.memory.forget', async (record?: StoredMemoryRecord) => {
             if (!record) {
                 vscode.window.showWarningMessage('No memory item selected.');
