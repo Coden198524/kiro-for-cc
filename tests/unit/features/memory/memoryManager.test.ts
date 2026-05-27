@@ -248,6 +248,37 @@ describe('MemoryManager', () => {
         ]);
     });
 
+    test('uses local BM25 ranking to prefer complete lexical matches over noisy repeats', async () => {
+        writeJsonl('/mock/workspace/.autocode/memory/project/facts.jsonl', [
+            createMemoryRecord('exact-runid', 'project', 'fact', 'Completion signal reconciliation must compare the queue runId token before marking a task done.', {
+                createdAt: '2026-05-27T00:00:00.000Z',
+                tags: ['completion-signal', 'runId'],
+                confidence: 0.9
+            }),
+            createMemoryRecord('noisy-queue', 'session', 'summary', 'queue queue queue queue queue completion completion old session note', {
+                createdAt: '2026-05-27T00:00:00.000Z',
+                tags: ['queue'],
+                confidence: 0.9
+            }),
+            createMemoryRecord('partial-signal', 'project', 'fact', 'Completion signals should be visible in the task terminal.', {
+                createdAt: '2026-05-27T00:00:00.000Z',
+                tags: ['completion'],
+                confidence: 0.9
+            })
+        ]);
+
+        const records = await memoryManager.search({
+            query: 'completion signal runId',
+            maxItems: 3
+        });
+
+        expect(records.map(record => record.id)).toEqual([
+            'exact-runid',
+            'partial-signal',
+            'noisy-queue'
+        ]);
+    });
+
     test('boosts memories from the current spec and current file context', async () => {
         writeJsonl('/mock/workspace/.autocode/specs/demo/memory/verification.jsonl', [
             createMemoryRecord('demo-task', 'task', 'verification', 'Queue verification passed for the demo spec.', {

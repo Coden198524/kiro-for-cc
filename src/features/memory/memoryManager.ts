@@ -119,6 +119,14 @@ export interface SpecArchiveMemoryRequest {
     completedAt?: string;
 }
 
+interface MemoryLexicalSearchContext {
+    documentCount: number;
+    averageLength: number;
+    documentFrequencyByTerm: Map<string, number>;
+    documentLengthByRecordId: Map<string, number>;
+    termFrequenciesByRecordId: Map<string, Map<string, number>>;
+}
+
 export class MemoryManager {
     constructor(
         private context: vscode.ExtensionContext,
@@ -423,11 +431,12 @@ export class MemoryManager {
         const maxItems = request.maxItems ?? getRuntimeValue<number>('memory.maxPromptItems', 8);
         const records = await this.readSearchCorpus(request);
         const queryTokens = this.tokenize(request.query);
-        const scored = records
-            .filter(record => this.isRetrievableStatus(record.status))
+        const retrievableRecords = records.filter(record => this.isRetrievableStatus(record.status));
+        const lexicalContext = this.createLexicalSearchContext(retrievableRecords);
+        const scored = retrievableRecords
             .map(record => ({
                 record,
-                score: this.scoreRecord(record, queryTokens, request)
+                score: this.scoreRecord(record, queryTokens, request, lexicalContext)
             }))
             .filter(item => item.score > 0)
             .sort((a, b) => b.score - a.score || b.record.createdAt.localeCompare(a.record.createdAt));
@@ -927,26 +936,29 @@ export class MemoryManager {
         return filePath.replace(/\\/g, '/').toLowerCase();
     }
 
-    private scoreRecord(record: StoredMemoryRecord | MemoryRecord, queryTokens: string[], request: MemorySearchRequest): number {
+    private scoreRecord(
+        record: StoredMemoryRecord | MemoryRecord,
+        queryTokens: string[],
+        request: MemorySearchRequest,
+        lexicalContext: MemoryLexicalSearchContext
+    ): number {
         const rawQuery = request.query;
         if (queryTokens.length === 0) {
             return this.getContextScore(record, request);
         }
 
-        const haystack = [
-            record.text,
-            ...(record.tags ?? []),
-            record.source?.path ?? ''
-        ].join(' ').toLowerCase();
-        let score = 0;
-        for (const token of queryTokens) {
-            if (haystack.includes(token)) {
-                score += token.length >= 3 ? 2 : 1;
-            }
+        const lexicalScore = this.getRuntimeEmbeddingProvider() === 'none'
+            ? this.scoreLocalBm25(record, queryTokens, lexicalContext)
+            : this.scoreKeywordMatches(record, queryTokens);
+        const coverageScore = this.scoreQueryCoverage(record, queryTokens, rawQuery);
+        const contextScore = this.getContextScore(record, request);
+        if (lexicalScore + coverageScore <= 0 && contextScore <= 0) {
+            return 0;
         }
 
+        let score = lexicalScore + coverageScore;
         score += this.getTypeWeight(record);
-        score += this.getContextScore(record, request);
+        score += contextScore;
         score += this.getRecencyScore(record);
         score += Math.max(0, Math.min(1, record.confidence)) * 2;
 
@@ -967,6 +979,120 @@ export class MemoryManager {
         }
 
         return score;
+    }
+
+    private createLexicalSearchContext(records: readonly StoredMemoryRecord[]): MemoryLexicalSearchContext {
+        const documentFrequencyByTerm = new Map<string, number>();
+        const documentLengthByRecordId = new Map<string, number>();
+        const termFrequenciesByRecordId = new Map<string, Map<string, number>>();
+        let totalLength = 0;
+
+        for (const record of records) {
+            const terms = this.tokenizeForScoring(this.getRecordSearchText(record));
+            const termFrequencies = new Map<string, number>();
+            for (const term of terms) {
+                termFrequencies.set(term, (termFrequencies.get(term) ?? 0) + 1);
+            }
+
+            for (const term of termFrequencies.keys()) {
+                documentFrequencyByTerm.set(term, (documentFrequencyByTerm.get(term) ?? 0) + 1);
+            }
+
+            const length = Math.max(1, terms.length);
+            totalLength += length;
+            documentLengthByRecordId.set(record.id, length);
+            termFrequenciesByRecordId.set(record.id, termFrequencies);
+        }
+
+        return {
+            documentCount: records.length,
+            averageLength: records.length > 0 ? totalLength / records.length : 1,
+            documentFrequencyByTerm,
+            documentLengthByRecordId,
+            termFrequenciesByRecordId
+        };
+    }
+
+    private scoreLocalBm25(
+        record: StoredMemoryRecord | MemoryRecord,
+        queryTokens: readonly string[],
+        context: MemoryLexicalSearchContext
+    ): number {
+        if (context.documentCount === 0) {
+            return 0;
+        }
+
+        const termFrequencies = context.termFrequenciesByRecordId.get(record.id);
+        if (!termFrequencies) {
+            return 0;
+        }
+
+        const documentLength = context.documentLengthByRecordId.get(record.id) ?? 1;
+        const k1 = 1.4;
+        const b = 0.75;
+        let score = 0;
+        for (const token of queryTokens) {
+            const termFrequency = termFrequencies.get(token) ?? 0;
+            if (termFrequency <= 0) {
+                continue;
+            }
+
+            const documentFrequency = context.documentFrequencyByTerm.get(token) ?? 0;
+            const inverseDocumentFrequency = Math.log(1 + (context.documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5));
+            const denominator = termFrequency + k1 * (1 - b + b * (documentLength / Math.max(1, context.averageLength)));
+            score += inverseDocumentFrequency * ((termFrequency * (k1 + 1)) / denominator);
+        }
+
+        return score * 4;
+    }
+
+    private scoreKeywordMatches(record: StoredMemoryRecord | MemoryRecord, queryTokens: readonly string[]): number {
+        const haystack = this.getRecordSearchText(record).toLowerCase();
+        let score = 0;
+        for (const token of queryTokens) {
+            if (haystack.includes(token)) {
+                score += token.length >= 3 ? 2 : 1;
+            }
+        }
+
+        return score;
+    }
+
+    private scoreQueryCoverage(record: StoredMemoryRecord | MemoryRecord, queryTokens: readonly string[], rawQuery: string): number {
+        const haystack = this.getRecordSearchText(record).toLowerCase();
+        const matchedCount = queryTokens.filter(token => haystack.includes(token)).length;
+        if (matchedCount === 0) {
+            return 0;
+        }
+
+        let score = (matchedCount / queryTokens.length) * 3;
+        if (matchedCount === queryTokens.length) {
+            score += 2;
+        }
+
+        const normalizedQuery = rawQuery.trim().replace(/\s+/g, ' ').toLowerCase();
+        if (normalizedQuery.length >= 3 && haystack.includes(normalizedQuery)) {
+            score += 3;
+        }
+
+        return score;
+    }
+
+    private getRecordSearchText(record: StoredMemoryRecord | MemoryRecord): string {
+        return [
+            record.text,
+            record.scope,
+            record.type,
+            record.status ?? 'active',
+            record.subject ?? '',
+            record.source?.path ?? '',
+            ...(record.tags ?? []),
+            record.metadata ? JSON.stringify(record.metadata) : ''
+        ].join(' ');
+    }
+
+    private getRuntimeEmbeddingProvider(): string {
+        return getRuntimeValue<string>('memory.embeddingProvider', 'none').trim().toLowerCase() || 'none';
     }
 
     private getTypeWeight(record: MemoryRecord): number {
@@ -1051,6 +1177,20 @@ export class MemoryManager {
         }
 
         return [...tokens];
+    }
+
+    private tokenizeForScoring(text: string): string[] {
+        const normalized = text.toLowerCase();
+        const terms: string[] = [];
+        for (const match of normalized.match(/[a-z0-9_./-]{2,}|[\u3400-\u9fff]{2,}/g) ?? []) {
+            terms.push(match);
+        }
+
+        for (const char of normalized.match(/[\u3400-\u9fff]/g) ?? []) {
+            terms.push(char);
+        }
+
+        return terms;
     }
 
     private inferTags(text: string): string[] {
