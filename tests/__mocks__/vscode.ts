@@ -36,6 +36,8 @@ export const window = {
   showWarningMessage: jest.fn(),
   showInputBox: jest.fn(),
   showQuickPick: jest.fn(),
+  showSaveDialog: jest.fn(),
+  showOpenDialog: jest.fn(),
   showTextDocument: jest.fn(),
   activeTextEditor: undefined,
   createTerminal: jest.fn(() => ({

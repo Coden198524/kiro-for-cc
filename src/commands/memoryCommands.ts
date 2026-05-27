@@ -128,6 +128,54 @@ export function registerMemoryCommands(options: RegisterMemoryCommandsOptions): 
         vscode.commands.registerCommand('autocode.memory.openProjectMemory', async () => {
             await memoryManager.openProjectMemoryFile();
         }),
+        vscode.commands.registerCommand('autocode.memory.export', async () => {
+            const defaultUri = vscode.Uri.file(memoryManager.getDefaultMemoryExportPath());
+            const targetUri = await vscode.window.showSaveDialog({
+                defaultUri,
+                filters: {
+                    'AutoCode Memory Export': ['json']
+                },
+                saveLabel: 'Export Memory'
+            });
+            if (!targetUri) {
+                return;
+            }
+
+            const result = await memoryManager.exportMemories(targetUri.fsPath);
+            if (!result) {
+                vscode.window.showWarningMessage('Memory is disabled.');
+                return;
+            }
+
+            outputChannel.appendLine(`[Memory] Exported ${result.recordCount} memory record(s) to ${result.filePath}.`);
+            vscode.window.showInformationMessage(`Exported ${result.recordCount} memory record(s).`);
+        }),
+        vscode.commands.registerCommand('autocode.memory.import', async () => {
+            const sourceUris = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                filters: {
+                    'AutoCode Memory Export': ['json', 'jsonl']
+                },
+                openLabel: 'Import Memory'
+            });
+            const sourceUri = sourceUris?.[0];
+            if (!sourceUri) {
+                return;
+            }
+
+            const result = await memoryManager.importMemoriesFromFile(sourceUri.fsPath);
+            outputChannel.appendLine(`[Memory] Imported ${result.importedCount} memory record(s), skipped ${result.skippedCount}, normalized ${result.normalizedCount}.`);
+            vscode.window.showInformationMessage(`Imported ${result.importedCount} memory record(s). Skipped ${result.skippedCount}.`);
+            memoryExplorer.refresh();
+        }),
+        vscode.commands.registerCommand('autocode.memory.migrate', async () => {
+            const result = await memoryManager.normalizeMemoryStore();
+            outputChannel.appendLine(`[Memory] Normalized ${result.normalizedCount} memory record(s) in ${result.fileCount} file(s).`);
+            vscode.window.showInformationMessage(`Memory migration complete: normalized ${result.normalizedCount} record(s).`);
+            memoryExplorer.refresh();
+        }),
         vscode.commands.registerCommand('autocode.memory.openSource', async (record?: StoredMemoryRecord) => {
             if (!record) {
                 vscode.window.showWarningMessage('No memory item selected.');

@@ -119,6 +119,23 @@ export interface SpecArchiveMemoryRequest {
     completedAt?: string;
 }
 
+export interface MemoryExportResult {
+    filePath: string;
+    recordCount: number;
+    exportedAt: string;
+}
+
+export interface MemoryImportResult {
+    importedCount: number;
+    skippedCount: number;
+    normalizedCount: number;
+}
+
+export interface MemoryMigrationResult {
+    fileCount: number;
+    normalizedCount: number;
+}
+
 interface MemoryLexicalSearchContext {
     documentCount: number;
     averageLength: number;
@@ -609,6 +626,125 @@ export class MemoryManager {
         await vscode.window.showTextDocument(document, { preview: false });
     }
 
+    getDefaultMemoryExportPath(): string {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        return path.join(this.getMemoryRootPath(), 'exports', `memory-export-${timestamp}.json`);
+    }
+
+    async exportMemories(targetPath = this.getDefaultMemoryExportPath()): Promise<MemoryExportResult | undefined> {
+        if (!this.isEnabled()) {
+            return undefined;
+        }
+
+        const exportedAt = new Date().toISOString();
+        const records = await this.readSearchCorpus({ includeUserPreferences: true });
+        const payload = {
+            version: 1,
+            exportedAt,
+            workspaceRoot: this.getWorkspaceRoot(),
+            records: records.map(record => ({
+                ...this.stripStoragePath(record),
+                storagePath: this.toPortableMemoryPath(record.storagePath)
+            }))
+        };
+
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(targetPath)));
+        await vscode.workspace.fs.writeFile(vscode.Uri.file(targetPath), Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf8'));
+        return {
+            filePath: targetPath,
+            recordCount: records.length,
+            exportedAt
+        };
+    }
+
+    async importMemoriesFromFile(filePath: string): Promise<MemoryImportResult> {
+        const text = await this.readTextIfExists(filePath);
+        if (!text) {
+            return {
+                importedCount: 0,
+                skippedCount: 0,
+                normalizedCount: 0
+            };
+        }
+
+        return this.importMemories(this.parseImportedMemoryRecords(text));
+    }
+
+    async importMemories(records: readonly unknown[]): Promise<MemoryImportResult> {
+        let importedCount = 0;
+        let skippedCount = 0;
+        let normalizedCount = 0;
+        const recordsByPath = new Map<string, MemoryRecord[]>();
+
+        for (const rawRecord of records) {
+            const normalized = this.normalizeImportedMemoryRecord(rawRecord);
+            if (!normalized) {
+                skippedCount += 1;
+                continue;
+            }
+
+            if (normalized.normalized) {
+                normalizedCount += 1;
+            }
+
+            const storagePath = this.getImportedStoragePath(normalized.record, normalized.storagePath);
+            const existingRecords = recordsByPath.get(storagePath) ?? await this.readRecordsFromPath(storagePath);
+            if (existingRecords.some(existing => existing.id === normalized.record.id || this.isDuplicateMemory(existing, normalized.record))) {
+                skippedCount += 1;
+                recordsByPath.set(storagePath, existingRecords);
+                continue;
+            }
+
+            existingRecords.push(normalized.record);
+            recordsByPath.set(storagePath, existingRecords);
+            importedCount += 1;
+        }
+
+        for (const [storagePath, storageRecords] of recordsByPath) {
+            await this.writeRecordsToPath(storagePath, storageRecords);
+        }
+
+        return {
+            importedCount,
+            skippedCount,
+            normalizedCount
+        };
+    }
+
+    async normalizeMemoryStore(): Promise<MemoryMigrationResult> {
+        const paths = await this.listMemoryStoragePaths({ includeUserPreferences: true });
+        let fileCount = 0;
+        let normalizedCount = 0;
+
+        for (const filePath of paths) {
+            const records = await this.readRecordsFromPath(filePath);
+            if (records.length === 0) {
+                continue;
+            }
+
+            let changed = false;
+            const normalizedRecords = records.map(record => {
+                const before = JSON.stringify(record);
+                const normalized = this.normalizeStoredMemoryRecord(record);
+                if (JSON.stringify(normalized) !== before) {
+                    changed = true;
+                    normalizedCount += 1;
+                }
+                return normalized;
+            });
+
+            if (changed) {
+                await this.writeRecordsToPath(filePath, normalizedRecords);
+                fileCount += 1;
+            }
+        }
+
+        return {
+            fileCount,
+            normalizedCount
+        };
+    }
+
     getMemoryRootPath(): string {
         return path.join(this.getWorkspaceRoot(), '.autocode', 'memory');
     }
@@ -623,6 +759,18 @@ export class MemoryManager {
     }
 
     private async readSearchCorpus(request: Pick<MemorySearchRequest, 'specFilePath' | 'includeUserPreferences'>): Promise<StoredMemoryRecord[]> {
+        const paths = await this.listMemoryStoragePaths(request);
+        const records: StoredMemoryRecord[] = [];
+        for (const filePath of paths) {
+            for (const record of await this.readRecordsFromPath(filePath)) {
+                records.push({ ...record, storagePath: filePath });
+            }
+        }
+
+        return records;
+    }
+
+    private async listMemoryStoragePaths(request: Pick<MemorySearchRequest, 'specFilePath' | 'includeUserPreferences'>): Promise<string[]> {
         const paths = new Set<string>();
         paths.add(path.join(this.getProjectMemoryDir(), 'facts.jsonl'));
         paths.add(path.join(this.getProjectMemoryDir(), 'pitfalls.jsonl'));
@@ -643,14 +791,7 @@ export class MemoryManager {
             }
         }
 
-        const records: StoredMemoryRecord[] = [];
-        for (const filePath of paths) {
-            for (const record of await this.readRecordsFromPath(filePath)) {
-                records.push({ ...record, storagePath: filePath });
-            }
-        }
-
-        return records;
+        return [...paths];
     }
 
     private async listSpecMemoryJsonlPaths(): Promise<string[]> {
@@ -791,6 +932,210 @@ export class MemoryManager {
         } catch {
             return undefined;
         }
+    }
+
+    private parseImportedMemoryRecords(text: string): unknown[] {
+        const trimmed = text.trim();
+        if (!trimmed) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(trimmed) as unknown;
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+            if (this.isPlainObject(parsed) && Array.isArray(parsed.records)) {
+                return parsed.records;
+            }
+            if (this.isPlainObject(parsed)) {
+                return [parsed];
+            }
+        } catch {
+            // Fall back to JSONL.
+        }
+
+        const records: unknown[] = [];
+        for (const line of trimmed.split(/\r?\n/)) {
+            if (!line.trim()) {
+                continue;
+            }
+            try {
+                records.push(JSON.parse(line));
+            } catch (error) {
+                this.outputChannel.appendLine(`[Memory] Failed to parse imported memory line: ${error}`);
+            }
+        }
+
+        return records;
+    }
+
+    private normalizeImportedMemoryRecord(rawRecord: unknown): { record: MemoryRecord; storagePath?: string; normalized: boolean } | undefined {
+        if (!this.isPlainObject(rawRecord)) {
+            return undefined;
+        }
+
+        const scope = typeof rawRecord.scope === 'string' && this.isMemoryScope(rawRecord.scope)
+            ? rawRecord.scope
+            : undefined;
+        const type = typeof rawRecord.type === 'string' && this.isMemoryType(rawRecord.type)
+            ? rawRecord.type
+            : undefined;
+        const rawText = typeof rawRecord.text === 'string' ? rawRecord.text : '';
+        const redaction = this.redactSensitiveText(rawText);
+        const text = redaction.text.trim();
+        if (!scope || !type || !text) {
+            return undefined;
+        }
+
+        const source = this.normalizeMemorySource(rawRecord.source);
+        const tags = this.normalizeTags([
+            ...(Array.isArray(rawRecord.tags) ? rawRecord.tags.filter((tag): tag is string => typeof tag === 'string') : this.inferTags(text)),
+            ...(redaction.redacted ? ['redacted-sensitive'] : [])
+        ]);
+        const status = typeof rawRecord.status === 'string' && this.isMemoryStatus(rawRecord.status)
+            ? rawRecord.status
+            : 'active';
+        const createdAt = typeof rawRecord.createdAt === 'string' && Number.isFinite(Date.parse(rawRecord.createdAt))
+            ? rawRecord.createdAt
+            : new Date().toISOString();
+        const updatedAt = typeof rawRecord.updatedAt === 'string' && Number.isFinite(Date.parse(rawRecord.updatedAt))
+            ? rawRecord.updatedAt
+            : undefined;
+        const subject = this.normalizeSubject(typeof rawRecord.subject === 'string'
+            ? rawRecord.subject
+            : this.inferSubject(text, tags, source));
+        const fingerprint = typeof rawRecord.fingerprint === 'string' && rawRecord.fingerprint.trim()
+            ? rawRecord.fingerprint.trim()
+            : this.fingerprintText(text);
+        const conflictWith = Array.isArray(rawRecord.conflictWith)
+            ? this.normalizeTags(rawRecord.conflictWith.filter((value): value is string => typeof value === 'string'))
+            : undefined;
+        const metadata = this.sanitizeMetadata(rawRecord.metadata);
+        const record: MemoryRecord = {
+            id: typeof rawRecord.id === 'string' && rawRecord.id.trim() ? rawRecord.id.trim() : this.createId('mem'),
+            scope,
+            type,
+            text,
+            source,
+            tags,
+            confidence: this.clampConfidence(typeof rawRecord.confidence === 'number' ? rawRecord.confidence : 0.8),
+            createdAt,
+            updatedAt,
+            status,
+            supersededBy: typeof rawRecord.supersededBy === 'string' ? rawRecord.supersededBy : undefined,
+            subject,
+            fingerprint,
+            conflictWith,
+            metadata
+        };
+
+        const storagePath = typeof rawRecord.storagePath === 'string'
+            ? rawRecord.storagePath
+            : undefined;
+        const normalized = redaction.redacted ||
+            !rawRecord.subject ||
+            !rawRecord.fingerprint ||
+            rawRecord.status !== status ||
+            rawRecord.createdAt !== createdAt ||
+            !Array.isArray(rawRecord.tags);
+
+        return {
+            record,
+            storagePath,
+            normalized
+        };
+    }
+
+    private normalizeStoredMemoryRecord(record: MemoryRecord): MemoryRecord {
+        return this.normalizeImportedMemoryRecord(record)?.record ?? record;
+    }
+
+    private normalizeMemorySource(value: unknown): MemorySource | undefined {
+        if (!this.isPlainObject(value) || typeof value.kind !== 'string') {
+            return undefined;
+        }
+
+        const sourceKinds: MemorySource['kind'][] = ['task', 'user', 'file', 'verification', 'session', 'spec'];
+        if (!sourceKinds.includes(value.kind as MemorySource['kind'])) {
+            return undefined;
+        }
+
+        return {
+            kind: value.kind as MemorySource['kind'],
+            path: typeof value.path === 'string' ? this.rebaseAutocodePath(value.path) : undefined,
+            sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
+            lineNumber: typeof value.lineNumber === 'number' && Number.isFinite(value.lineNumber) ? value.lineNumber : undefined
+        };
+    }
+
+    private getImportedStoragePath(record: MemoryRecord, storagePath?: string): string {
+        if (record.scope === 'user') {
+            return this.getUserMemoryPath();
+        }
+
+        const rebasedStoragePath = this.rebaseAutocodePath(storagePath);
+        if (rebasedStoragePath && this.isWorkspaceMemoryJsonlPath(rebasedStoragePath)) {
+            return rebasedStoragePath;
+        }
+
+        return this.getStoragePathForRecord(record, record.source?.path);
+    }
+
+    private stripStoragePath(record: StoredMemoryRecord): MemoryRecord {
+        const { storagePath: _storagePath, ...memoryRecord } = record;
+        return memoryRecord;
+    }
+
+    private toPortableMemoryPath(filePath: string): string {
+        const normalizedRoot = this.normalizePathForMemory(this.getWorkspaceRoot());
+        const normalizedPath = this.normalizePathForMemory(filePath);
+        if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
+            return normalizedPath.slice(normalizedRoot.length + 1);
+        }
+
+        return filePath;
+    }
+
+    private rebaseAutocodePath(filePath: string | undefined): string | undefined {
+        if (!filePath) {
+            return undefined;
+        }
+
+        const normalized = filePath.replace(/\\/g, '/');
+        const autocodeIndex = normalized.toLowerCase().indexOf('.autocode/');
+        if (autocodeIndex < 0) {
+            return filePath;
+        }
+
+        return path.join(this.getWorkspaceRoot(), ...normalized.slice(autocodeIndex).split('/'));
+    }
+
+    private isWorkspaceMemoryJsonlPath(filePath: string): boolean {
+        const normalizedRoot = this.normalizePathForMemory(this.getWorkspaceRoot());
+        const normalizedPath = this.normalizePathForMemory(filePath);
+        if (!normalizedPath.endsWith('.jsonl')) {
+            return false;
+        }
+
+        return normalizedPath.startsWith(`${normalizedRoot}/.autocode/memory/`) ||
+            (normalizedPath.startsWith(`${normalizedRoot}/.autocode/specs/`) && normalizedPath.includes('/memory/'));
+    }
+
+    private isPlainObject(value: unknown): value is Record<string, unknown> {
+        return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+    }
+
+    private isMemoryScope(value: string): value is MemoryScope {
+        return ['project', 'user', 'spec', 'task', 'session'].includes(value);
+    }
+
+    private isMemoryType(value: string): value is MemoryType {
+        return ['fact', 'decision', 'preference', 'pitfall', 'command', 'verification', 'summary'].includes(value);
+    }
+
+    private isMemoryStatus(value: string): value is MemoryStatus {
+        return ['active', 'pending', 'superseded', 'forgotten', 'conflict'].includes(value);
     }
 
     private shouldSupersede(existing: MemoryRecord, next: MemoryRecord): boolean {

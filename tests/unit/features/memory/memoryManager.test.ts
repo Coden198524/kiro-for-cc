@@ -522,12 +522,99 @@ describe('MemoryManager', () => {
         expect(records[0].id).toBe(record.id);
     });
 
+    test('exports and imports memory records with dedupe and normalization', async () => {
+        await memoryManager.addMemory({
+            scope: 'project',
+            type: 'fact',
+            text: 'Memory export should preserve project facts.',
+            tags: ['export'],
+            confidence: 0.9
+        });
+
+        const exportResult = await memoryManager.exportMemories('/mock/workspace/.autocode/memory/exports/test-export.json');
+        const exportPayload = JSON.parse(files.get(normalize('/mock/workspace/.autocode/memory/exports/test-export.json'))!.toString());
+
+        expect(exportResult).toEqual(expect.objectContaining({
+            filePath: '/mock/workspace/.autocode/memory/exports/test-export.json',
+            recordCount: 1
+        }));
+        expect(exportPayload.records[0].storagePath).toBe('.autocode/memory/project/facts.jsonl');
+
+        const duplicateResult = await memoryManager.importMemoriesFromFile('/mock/workspace/.autocode/memory/exports/test-export.json');
+        expect(duplicateResult).toEqual({
+            importedCount: 0,
+            skippedCount: 1,
+            normalizedCount: 0
+        });
+
+        writeJson('/mock/workspace/import-memory.json', {
+            version: 1,
+            records: [
+                {
+                    id: 'legacy-imported-decision',
+                    scope: 'project',
+                    type: 'decision',
+                    text: 'Imported memories should be normalized before writing.',
+                    confidence: 0.91,
+                    createdAt: '2026-05-27T00:00:00.000Z'
+                }
+            ]
+        });
+        const importResult = await memoryManager.importMemoriesFromFile('/mock/workspace/import-memory.json');
+
+        expect(importResult).toEqual({
+            importedCount: 1,
+            skippedCount: 0,
+            normalizedCount: 1
+        });
+        const records = await memoryManager.search({
+            query: 'imported memories normalized'
+        });
+        expect(records[0]).toEqual(expect.objectContaining({
+            id: 'legacy-imported-decision',
+            subject: expect.any(String),
+            fingerprint: expect.any(String)
+        }));
+    });
+
+    test('migrates older memory records by filling retrieval metadata', async () => {
+        writeJsonl('/mock/workspace/.autocode/memory/project/facts.jsonl', [
+            {
+                id: 'legacy-fact',
+                scope: 'project',
+                type: 'fact',
+                text: 'Legacy memory records need retrieval metadata.',
+                confidence: 0.8,
+                createdAt: '2026-05-26T00:00:00.000Z'
+            }
+        ]);
+
+        const result = await memoryManager.normalizeMemoryStore();
+        const migrated = JSON.parse(files.get(normalize('/mock/workspace/.autocode/memory/project/facts.jsonl'))!.toString().trim());
+
+        expect(result).toEqual({
+            fileCount: 1,
+            normalizedCount: 1
+        });
+        expect(migrated).toEqual(expect.objectContaining({
+            id: 'legacy-fact',
+            status: 'active',
+            subject: expect.any(String),
+            fingerprint: expect.any(String),
+            tags: expect.any(Array)
+        }));
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
     }
 
     function writeJsonl(filePath: string, records: unknown[]): void {
         files.set(normalize(filePath), Buffer.from(records.map(record => JSON.stringify(record)).join('\n') + '\n'));
+    }
+
+    function writeJson(filePath: string, value: unknown): void {
+        files.set(normalize(filePath), Buffer.from(JSON.stringify(value, null, 2)));
     }
 
     function createMemoryRecord(

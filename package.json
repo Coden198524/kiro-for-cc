@@ -387,6 +387,24 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "autocode.memory.export",
+        "title": "Export Memory",
+        "category": "AutoCode",
+        "icon": "$(export)"
+      },
+      {
+        "command": "autocode.memory.import",
+        "title": "Import Memory",
+        "category": "AutoCode",
+        "icon": "$(import)"
+      },
+      {
+        "command": "autocode.memory.migrate",
+        "title": "Migrate Memory Store",
+        "category": "AutoCode",
+        "icon": "$(tools)"
+      },
+      {
         "command": "autocode.memory.search",
         "title": "Search Memory",
         "category": "AutoCode",
@@ -712,6 +730,18 @@
         },
         {
           "command": "autocode.memory.clearFilter",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.export",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.import",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "autocode.memory.migrate",
           "when": "workspaceFolderCount > 0"
         },
         {
