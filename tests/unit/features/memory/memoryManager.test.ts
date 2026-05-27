@@ -198,7 +198,92 @@ describe('MemoryManager', () => {
         expect(records[1].conflictWith).toEqual([records[0].id]);
     });
 
+    test('ranks preferences and pitfalls above noisy session summaries', async () => {
+        writeJsonl('/mock/workspace/.autocode/memory/sessions/sessions.jsonl', [
+            createMemoryRecord('session-1', 'session', 'summary', 'queue queue queue queue queue failure happened once', {
+                createdAt: '2020-01-01T00:00:00.000Z',
+                confidence: 0.7
+            })
+        ]);
+        writeJsonl('/mock/global/memory/user/preferences.jsonl', [
+            createMemoryRecord('preference-1', 'user', 'preference', 'Prefer Chinese summaries when discussing queue failures.', {
+                createdAt: new Date().toISOString(),
+                tags: ['queue', 'failure', 'preference'],
+                confidence: 1
+            })
+        ]);
+        writeJsonl('/mock/workspace/.autocode/memory/project/pitfalls.jsonl', [
+            createMemoryRecord('pitfall-1', 'project', 'pitfall', 'Queue failure often comes from stale completion signals.', {
+                createdAt: new Date().toISOString(),
+                tags: ['queue', 'failure'],
+                confidence: 0.9
+            })
+        ]);
+
+        const records = await memoryManager.search({
+            query: 'queue failure language preference',
+            maxItems: 3
+        });
+
+        expect(records.map(record => record.id)).toEqual([
+            'preference-1',
+            'pitfall-1',
+            'session-1'
+        ]);
+    });
+
+    test('boosts memories from the current spec and current file context', async () => {
+        writeJsonl('/mock/workspace/.autocode/specs/demo/memory/verification.jsonl', [
+            createMemoryRecord('demo-task', 'task', 'verification', 'Queue verification passed for the demo spec.', {
+                createdAt: new Date().toISOString(),
+                source: { kind: 'verification', path: '/mock/workspace/.autocode/specs/demo/tasks.md' },
+                tags: ['queue', 'verification'],
+                confidence: 0.9
+            })
+        ]);
+        writeJsonl('/mock/workspace/.autocode/memory/project/facts.jsonl', [
+            createMemoryRecord('project-fact', 'project', 'fact', 'Queue verification passed as a general project note.', {
+                createdAt: new Date().toISOString(),
+                source: { kind: 'file', path: '/mock/workspace/src/queue.ts' },
+                tags: ['queue', 'verification'],
+                confidence: 0.9
+            })
+        ]);
+
+        const records = await memoryManager.search({
+            query: 'queue verification',
+            specFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            currentFilePath: '/mock/workspace/.autocode/specs/demo/tasks.md',
+            maxItems: 2
+        });
+
+        expect(records.map(record => record.id)).toEqual(['demo-task', 'project-fact']);
+    });
+
     function normalize(filePath: string): string {
         return path.normalize(filePath).replace(/\\/g, '/');
+    }
+
+    function writeJsonl(filePath: string, records: unknown[]): void {
+        files.set(normalize(filePath), Buffer.from(records.map(record => JSON.stringify(record)).join('\n') + '\n'));
+    }
+
+    function createMemoryRecord(
+        id: string,
+        scope: string,
+        type: string,
+        text: string,
+        overrides: Record<string, unknown> = {}
+    ): Record<string, unknown> {
+        return {
+            id,
+            scope,
+            type,
+            text,
+            confidence: 0.8,
+            createdAt: '2026-05-27T00:00:00.000Z',
+            status: 'active',
+            ...overrides
+        };
     }
 });

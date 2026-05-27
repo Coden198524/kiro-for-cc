@@ -48,6 +48,7 @@ export interface AddMemoryRequest {
 export interface MemorySearchRequest {
     query: string;
     specFilePath?: string;
+    currentFilePath?: string;
     includeUserPreferences?: boolean;
     maxItems?: number;
 }
@@ -237,7 +238,7 @@ export class MemoryManager {
             .filter(record => this.isRetrievableStatus(record.status))
             .map(record => ({
                 record,
-                score: this.scoreRecord(record, queryTokens, request.query)
+                score: this.scoreRecord(record, queryTokens, request)
             }))
             .filter(item => item.score > 0)
             .sort((a, b) => b.score - a.score || b.record.createdAt.localeCompare(a.record.createdAt));
@@ -621,9 +622,10 @@ export class MemoryManager {
         return filePath.replace(/\\/g, '/').toLowerCase();
     }
 
-    private scoreRecord(record: MemoryRecord, queryTokens: string[], rawQuery: string): number {
+    private scoreRecord(record: StoredMemoryRecord | MemoryRecord, queryTokens: string[], request: MemorySearchRequest): number {
+        const rawQuery = request.query;
         if (queryTokens.length === 0) {
-            return 1;
+            return this.getContextScore(record, request);
         }
 
         const haystack = [
@@ -638,19 +640,98 @@ export class MemoryManager {
             }
         }
 
+        score += this.getTypeWeight(record);
+        score += this.getContextScore(record, request);
+        score += this.getRecencyScore(record);
+        score += Math.max(0, Math.min(1, record.confidence)) * 2;
+
         if (record.scope === 'user' && /偏好|preference|language|中文|确认|confirm/i.test(rawQuery)) {
-            score += 1;
+            score += 3;
         }
 
         if (record.type === 'pitfall' && /失败|错误|bug|blocked|fail|error/i.test(rawQuery)) {
-            score += 2;
+            score += 4;
         }
 
         if (record.type === 'verification' && /task|任务|验证|完成/i.test(rawQuery)) {
             score += 1;
         }
 
+        if (record.scope === 'session') {
+            score -= 1.5;
+        }
+
         return score;
+    }
+
+    private getTypeWeight(record: MemoryRecord): number {
+        if (record.type === 'preference') {
+            return 3;
+        }
+        if (record.type === 'pitfall') {
+            return 2.5;
+        }
+        if (record.type === 'decision') {
+            return 2;
+        }
+        if (record.type === 'command') {
+            return 1.5;
+        }
+        if (record.type === 'verification') {
+            return 1;
+        }
+        if (record.type === 'summary') {
+            return -0.5;
+        }
+        return 0.5;
+    }
+
+    private getContextScore(record: StoredMemoryRecord | MemoryRecord, request: MemorySearchRequest): number {
+        let score = 0;
+        const specFilePath = request.specFilePath ? this.normalizePathForMemory(request.specFilePath) : undefined;
+        const currentFilePath = request.currentFilePath ? this.normalizePathForMemory(request.currentFilePath) : undefined;
+        const sourcePath = record.source?.path ? this.normalizePathForMemory(record.source.path) : undefined;
+        const storagePath = 'storagePath' in record ? this.normalizePathForMemory(record.storagePath) : undefined;
+
+        if (specFilePath) {
+            const specDir = this.normalizePathForMemory(path.dirname(specFilePath));
+            if (sourcePath?.startsWith(specDir) || storagePath?.startsWith(`${specDir}/memory/`)) {
+                score += 5;
+            }
+        }
+
+        if (currentFilePath && sourcePath) {
+            if (sourcePath === currentFilePath) {
+                score += 4;
+            } else if (this.normalizePathForMemory(path.dirname(sourcePath)) === this.normalizePathForMemory(path.dirname(currentFilePath))) {
+                score += 2;
+            }
+        }
+
+        if (record.scope === 'user') {
+            score += 1;
+        }
+
+        return score;
+    }
+
+    private getRecencyScore(record: MemoryRecord): number {
+        const createdAt = Date.parse(record.updatedAt ?? record.createdAt);
+        if (!Number.isFinite(createdAt)) {
+            return 0;
+        }
+
+        const ageDays = Math.max(0, (Date.now() - createdAt) / (24 * 60 * 60 * 1000));
+        if (ageDays <= 7) {
+            return 2;
+        }
+        if (ageDays <= 30) {
+            return 1;
+        }
+        if (ageDays <= 180) {
+            return 0;
+        }
+        return -1;
     }
 
     private tokenize(text: string): string[] {
